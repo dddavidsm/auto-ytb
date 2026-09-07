@@ -1,4 +1,5 @@
 import { NodeLocalObjectStore, FfmpegRenderer, NodeUploadAssetLoader, NodePostgresSqlClient } from './index.mjs';
+import { FfmpegThumbnailComposer } from './thumbnail.mjs';
 import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
 
@@ -30,10 +31,12 @@ export function createLiveRuntime(env = process.env) {
   }
 
   const renderer = new FfmpegRenderer({ outputRoot: env.LOCAL_RENDER_ROOT || '.data/renders' });
+  const thumbnailComposer = new FfmpegThumbnailComposer({ outputRoot: env.LOCAL_THUMBNAIL_ROOT || '.data/thumbnails' });
   const oauth = new GoogleOAuthTokenProvider({ clientId:req('YOUTUBE_CLIENT_ID'), clientSecret:req('YOUTUBE_CLIENT_SECRET'), refreshToken:req('YOUTUBE_REFRESH_TOKEN') });
-  const publisher = new YouTubePublisher(oauth, new NodeUploadAssetLoader());
+  const loader = new NodeUploadAssetLoader();
+  const publisher = new YouTubePublisher(oauth, loader);
   const analytics = new YouTubeAnalyticsClient(oauth);
   const db = env.DATABASE_URL ? new NodePostgresSqlClient(env.DATABASE_URL, { ssl: env.DATABASE_SSL === 'true' ? { rejectUnauthorized:false } : undefined }) : undefined;
 
-  return { store, search, model, voice, image, video, renderer, oauth, publisher, analytics, db };
+  return { store, search, model, voice, image, video, renderer, thumbnailComposer, oauth, publisher, analytics, db };
 }
