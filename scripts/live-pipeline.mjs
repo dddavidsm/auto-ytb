@@ -68,6 +68,35 @@ function productionProfileFromMetrics(metrics, base){
   return {sampleSize:sample,targetDurationSec,targetSceneDurationSec,maxCostUsd,scriptGuidance:guidance.length?guidance.join('\n'):undefined,adapted:true,metrics:{strongHookRate:hook,averageViewPercentage:avp,averageRoi:roi}};
 }
 
+function packagingLearningFromRows(rows){
+  const attrs=['curiosity','clarity','credibility','differentiation'];
+  const grouped=new Map(attrs.map((attribute)=>[attribute,[]]));
+  const publications=new Set();
+  for(const row of rows){
+    if(!grouped.has(row.feature_key)) continue;
+    const value=row.feature_value ?? {};
+    const x=Number(value.attributeValue);
+    const y=Number(value.outcomeScore);
+    if(!Number.isFinite(x)||!Number.isFinite(y)) continue;
+    grouped.get(row.feature_key).push({x,y,strength:Number(row.strength ?? 50)});
+    if(row.publication_id) publications.add(String(row.publication_id));
+  }
+  const attributes=[];
+  for(const attribute of attrs){
+    const points=grouped.get(attribute);
+    if(!points.length){attributes.push({attribute,sampleSize:0,slope:0,confidence:0});continue;}
+    const weightSum=points.reduce((sum,p)=>sum+Math.max(1,p.strength),0);
+    const meanX=points.reduce((sum,p)=>sum+p.x*Math.max(1,p.strength),0)/weightSum;
+    const meanY=points.reduce((sum,p)=>sum+p.y*Math.max(1,p.strength),0)/weightSum;
+    const covariance=points.reduce((sum,p)=>sum+(p.x-meanX)*(p.y-meanY)*Math.max(1,p.strength),0);
+    const variance=points.reduce((sum,p)=>sum+(p.x-meanX)**2*Math.max(1,p.strength),0);
+    const slope=variance>0?covariance/variance:0;
+    const confidence=Math.min(1,points.length/12);
+    attributes.push({attribute,sampleSize:points.length,slope:Math.max(-0.8,Math.min(0.8,slope)),confidence});
+  }
+  return {sampleSize:publications.size,attributes};
+}
+
 try {
   const channelRow = await db.query(`insert into channels (youtube_channel_id,title,language,country,niche,is_owned) values ($1,$2,$3,$4,$5,true) on conflict (youtube_channel_id) do update set title=excluded.title,language=excluded.language,country=excluded.country,niche=excluded.niche,is_owned=true,updated_at=now() returning id`,[process.env.YOUTUBE_CHANNEL_ID || null, channel.id, channel.language, channel.region, channel.id]);
   const channelId=channelRow.rows[0].id;
@@ -79,6 +108,8 @@ try {
       avg(case when feature_key='economics' then nullif(feature_value->>'roi','')::numeric end)::float as average_roi
     from learning_signals
     where channel_id=$1 and observed_at >= now()-interval '120 days'`,[channelId]);
+  const attributeRows=(await db.query(`select publication_id,feature_key,feature_value,strength from learning_signals where channel_id=$1 and signal_type='packaging_attribute_performance' and observed_at>=now()-interval '180 days'`,[channelId])).rows;
+  const packagingLearning=packagingLearningFromRows(attributeRows);
   const learningMetrics=learningResult.rows[0];
   const packagingGuidance=packagingGuidanceFromMetrics(learningMetrics);
   const baseTargetDurationSec=Number(channel.targetDurationSec || 660);
@@ -88,7 +119,7 @@ try {
   const ideaRow=await db.query(`insert into content_ideas (opportunity_id,format,working_title,premise,target_viewer,hook_hypothesis,status) values ($1,'long',$2,$3,$4,$5,'production') returning id`,[opportunityId,topic,topic,channel.targetViewer,productionProfile.scriptGuidance ?? packagingGuidance ?? 'Generated after research']);
   const contentIdeaId=ideaRow.rows[0].id;
   const productionRepo=new ProductionRepository(db);
-  productionRunId=await productionRepo.createRun({contentIdeaId,state:'RESEARCH',metadata:{topic,channelConfig:channel.id,opportunityId,packagingGuidance:packagingGuidance ?? null,productionProfile}});
+  productionRunId=await productionRepo.createRun({contentIdeaId,state:'RESEARCH',metadata:{topic,channelConfig:channel.id,opportunityId,packagingGuidance:packagingGuidance ?? null,productionProfile,packagingLearning}});
 
   const result=await runContentPipeline({
     projectId:productionRunId,
@@ -110,9 +141,10 @@ try {
     autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE === 'true',
     packagingGuidance,
     scriptGuidance:productionProfile.scriptGuidance,
+    packagingLearning,
   });
 
-  await productionRepo.updateRun(productionRunId,{state:result.state,totalCostUsd:result.manifest?.actualCostUsd ?? 0,metadata:{events:result.events,renderUri:result.renderUri,opportunityId,packagingGuidance:packagingGuidance ?? null,productionProfile}});
+  await productionRepo.updateRun(productionRunId,{state:result.state,totalCostUsd:result.manifest?.actualCostUsd ?? 0,metadata:{events:result.events,renderUri:result.renderUri,opportunityId,packagingGuidance:packagingGuidance ?? null,productionProfile,packagingLearning,packagingSelection:result.manifest?.packagingSelection ?? null}});
   let researchDossierId=null;
   if(result.dossier){
     researchDossierId=await new ResearchRepository(db).create({opportunityId,topic,researchConfidence:result.dossier.researchConfidence,executiveSummary:result.dossier.executiveSummary,blockingIssues:result.dossier.blockingIssues,dossier:result.dossier});
@@ -120,13 +152,21 @@ try {
   if(result.manifest?.script){
     await new ScriptRepository(db).create({contentIdeaId,researchDossierId,language:result.manifest.script.language,targetDurationSeconds:result.manifest.script.targetDurationSec,script:result.manifest.script});
     for(const variant of result.manifest.packaging) await db.query(`insert into packaging_variants (content_idea_id,variant_key,title,thumbnail_concept,score,payload) values ($1,$2,$3,$4,$5,$6::jsonb) on conflict (content_idea_id,variant_key) do update set title=excluded.title,thumbnail_concept=excluded.thumbnail_concept,score=excluded.score,payload=excluded.payload`,[contentIdeaId,variant.id,variant.title,variant.thumbnailConcept,variant.score ?? (variant.curiosity+variant.clarity+variant.credibility+variant.differentiation)/4,JSON.stringify(variant)]);
+    const variants=result.manifest.packaging;
+    await db.query(`insert into model_experiments (channel_id,experiment_type,hypothesis,variant_a,variant_b,variant_c,winner,outcome) values ($1,'packaging_bandit',$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7::jsonb)`,[
+      channelId,
+      'Bounded exploration/exploitation improves packaging outcome while preserving periodic exploration.',
+      JSON.stringify(variants[0] ?? {}),JSON.stringify(variants[1] ?? {}),JSON.stringify(variants[2] ?? {}),
+      result.manifest.selectedPackagingId,
+      JSON.stringify({productionRunId,selection:result.manifest.packagingSelection ?? null,status:'assigned'})
+    ]);
     for(const asset of result.manifest.assets) await productionRepo.addAsset({productionRunId,sceneId:asset.sceneId,assetType:asset.mimeType,uri:asset.uri,provider:asset.provider,model:asset.model,generated:asset.generated,sourceIds:asset.sourceIds,costUsd:asset.costUsd});
     for(const thumbnail of result.manifest.thumbnails) await productionRepo.addAsset({productionRunId,sceneId:`thumbnail:${thumbnail.packagingId}`,assetType:'image/jpeg',uri:thumbnail.uri,provider:thumbnail.provider,model:thumbnail.model,generated:true,sourceIds:[],costUsd:thumbnail.costUsd,metadata:{packagingId:thumbnail.packagingId,text:thumbnail.text ?? null}});
   }
   if(result.qa) await productionRepo.addQaReport({productionRunId,passed:result.qa.passed,score:result.qa.score,containsSyntheticMedia:result.qa.containsSyntheticMedia,blockers:result.qa.blockers,report:result.qa});
-  if(result.externalId) await new PublicationRepository(db).create({productionRunId,channelId,youtubeVideoId:result.externalId,state:'private',containsSyntheticMedia:result.qa?.containsSyntheticMedia ?? false,metadata:{renderUri:result.renderUri,selectedPackagingId:result.manifest?.selectedPackagingId,packagingGuidance:packagingGuidance ?? null,productionProfile}});
+  if(result.externalId) await new PublicationRepository(db).create({productionRunId,channelId,youtubeVideoId:result.externalId,state:'private',containsSyntheticMedia:result.qa?.containsSyntheticMedia ?? false,metadata:{renderUri:result.renderUri,selectedPackagingId:result.manifest?.selectedPackagingId,packagingGuidance:packagingGuidance ?? null,productionProfile,packagingSelection:result.manifest?.packagingSelection ?? null}});
   if(opportunityId && result.state==='READY_FOR_REVIEW') await db.query(`update opportunities set status='produced' where id=$1`,[opportunityId]);
-  console.log(JSON.stringify({productionRunId,state:result.state,qa:result.qa?.score,costUsd:result.manifest?.actualCostUsd,thumbnails:result.manifest?.thumbnails.length ?? 0,renderUri:result.renderUri,youtubeVideoId:result.externalId ?? null,learnedPackaging:Boolean(packagingGuidance),productionProfile},null,2));
+  console.log(JSON.stringify({productionRunId,state:result.state,qa:result.qa?.score,costUsd:result.manifest?.actualCostUsd,thumbnails:result.manifest?.thumbnails.length ?? 0,renderUri:result.renderUri,youtubeVideoId:result.externalId ?? null,learnedPackaging:Boolean(packagingGuidance),productionProfile,packagingSelection:result.manifest?.packagingSelection ?? null},null,2));
 } catch(error) {
   if(productionRunId) await db.query(`update production_runs set state='BLOCKED',metadata=metadata || $2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({error:error instanceof Error?error.message:String(error)})]);
   throw error;
