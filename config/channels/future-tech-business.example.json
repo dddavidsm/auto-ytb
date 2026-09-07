@@ -4,10 +4,19 @@
   "region": "US",
   "positioning": "Cinematic explain-documentaries about technology, AI, internet platforms and the businesses shaping the future.",
   "targetViewer": "18-44 English-speaking curious technology/business viewer",
-  "primaryFormat": "long",
+  "audienceMode": "general",
+  "supportedFormats": ["LONG_HORIZONTAL", "SHORT_VERTICAL", "HYBRID"],
+  "preferredFormat": "AUTO",
   "targetDurationSec": 660,
+  "shortTargetDurationSec": 45,
   "voice": "narrator-01",
   "maxProductionCostUsd": 18,
   "publishing": { "timezone": "Europe/Madrid", "defaultPrivacy": "private", "humanReviewRequired": true },
-  "quality": { "minimumResearchConfidence": 70, "minimumQaScore": 80, "maximumPriorScriptOverlap": 0.5 }
+  "quality": { "minimumResearchConfidence": 70, "minimumQaScore": 80, "maximumPriorScriptOverlap": 0.5 },
+  "formatLearning": {
+    "separateByFormat": true,
+    "allowLongToShorts": true,
+    "allowShortsToLong": true,
+    "minimumSamplesBeforeFormatOverride": 5
+  }
 }
