@@ -57,6 +57,20 @@ export class YouTubePublisher implements Publisher {
     return { externalId: json.id, url: `https://www.youtube.com/watch?v=${json.id}`, status: 'private' };
   }
 
+  async setThumbnail(input: { externalId: string; fileUri: string }): Promise<{ status: 'set' }> {
+    const token = await this.tokenProvider.getAccessToken();
+    const asset = await this.loader.load(input.fileUri);
+    if (!['image/jpeg','image/png'].includes(asset.mimeType)) throw new Error(`Unsupported YouTube thumbnail mime type: ${asset.mimeType}`);
+    if (asset.size > 2 * 1024 * 1024) throw new Error(`YouTube thumbnail exceeds 2 MB: ${asset.size} bytes`);
+    const response = await this.fetchFn(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(input.externalId)}&uploadType=media`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': asset.mimeType, 'content-length': String(asset.size) },
+      body: asset.body,
+    });
+    if (!response.ok) throw new Error(`YouTube thumbnail upload failed ${response.status}: ${(await response.text()).slice(0, 500)}`);
+    return { status: 'set' };
+  }
+
   async schedule(input: { externalId: string; publishAt: string }): Promise<{ status: 'scheduled'; publishAt: string }> {
     const publishAt = new Date(input.publishAt);
     if (!Number.isFinite(publishAt.getTime()) || publishAt.getTime() <= Date.now()) throw new Error('publishAt must be a valid future timestamp');
