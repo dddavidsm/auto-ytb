@@ -11,11 +11,9 @@
     "rootDir": "src"
   },
   "references": [
-    {
-      "path": "../core"
-    }
+    { "path": "../core" },
+    { "path": "../providers" }
   ],
-  "include": [
-    "src/**/*.ts"
-  ]
+  "include": ["src/**/*.ts"],
+  "extends": "../../tsconfig.base.json"
 }

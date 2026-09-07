@@ -1,0 +1,13 @@
+{
+  "name": "@auto-ytb/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "dependencies": {
+    "@auto-ytb/providers": "0.1.0",
+    "@auto-ytb/editorial": "0.1.0",
+    "@auto-ytb/production": "0.1.0",
+    "@auto-ytb/qa": "0.1.0"
+  }
+}

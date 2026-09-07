@@ -9,5 +9,8 @@
       "import": "./dist/index.js"
     }
   },
-  "dependencies": { "@auto-ytb/core": "0.1.0" }
+  "dependencies": {
+    "@auto-ytb/core": "0.1.0",
+    "@auto-ytb/providers": "0.1.0"
+  }
 }
