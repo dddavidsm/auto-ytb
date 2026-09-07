@@ -21,7 +21,7 @@ function run(script){
 async function tick(){
   const startedAt=new Date().toISOString();
   const results=[];
-  for(const script of ['scripts/schedule-production.mjs','scripts/schedule-maintenance.mjs']){
+  for(const script of ['scripts/schedule-intelligence.mjs','scripts/schedule-production.mjs','scripts/schedule-maintenance.mjs']){
     try{await run(script);results.push({script,status:'ok'});}
     catch(error){results.push({script,status:'error',error:error instanceof Error?error.message:String(error)});}
   }
