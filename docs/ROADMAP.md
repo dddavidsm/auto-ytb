@@ -14,12 +14,13 @@
 - [x] Channel metadata + uploads playlist retrieval
 - [x] Recent competitor upload retrieval
 - [x] PostgreSQL intelligence schema
+- [x] GitHub Actions CI
 
 ### Next
-- [ ] Persistence repositories (Postgres)
+- [x] Persistence repositories (provider-agnostic Postgres SQL)
 - [ ] Scheduled snapshot jobs
-- [ ] Seed-query generator / deduplicator
-- [ ] Competitor discovery ranker
+- [x] Seed-query generator / deduplicator
+- [x] Competitor discovery ranker
 - [ ] Topic/entity clustering
 - [ ] Current-market niche evidence collection
 - [ ] Niche winner decision gate

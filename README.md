@@ -2,7 +2,7 @@
 
 Autonomous YouTube intelligence and production system focused on profitable, monetizable, original content.
 
-## Current milestone: Intelligence Engine v0.2
+## Current milestone: Intelligence Engine v0.3
 
 Implemented:
 - opportunity scoring with risk penalties
@@ -16,6 +16,9 @@ Implemented:
 - quota-aware daily query planning
 - competitor channel metadata + recent uploads retrieval
 - deterministic tests
+- competitor discovery + ranking from niche seed queries
+- provider-agnostic PostgreSQL persistence repositories
+- GitHub Actions CI
 
 ## Run
 
@@ -24,6 +27,7 @@ npm install
 npm test
 npm run typecheck
 npm run demo
+npm run discover:competitors -- --niche future-tech-business
 ```
 
 For real YouTube discovery:

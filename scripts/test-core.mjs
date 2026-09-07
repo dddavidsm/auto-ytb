@@ -53,3 +53,16 @@ assert.equal(allocation.reduce((s,a)=>s+a.calls,0),100);
 console.log('✓ temporal trend breakout analysis');
 console.log('✓ cross-source evidence confidence');
 console.log('✓ quota-aware query planning');
+
+const { rankCompetitors, dedupeSeedQueries, expandSeedQueries } = await import('../packages/core/dist/index.js');
+const rankedCompetitors = rankCompetitors([
+  {channelId:'a',channelTitle:'A',subscriberCount:120000,queryHits:8,uniqueQueryHits:5,medianViews:80000,medianViewsPerDay:22000,breakoutCount:5,strongestOutlier:96,recentVideos:20},
+  {channelId:'b',channelTitle:'B',subscriberCount:9000000,queryHits:3,uniqueQueryHits:2,medianViews:200000,medianViewsPerDay:9000,breakoutCount:1,strongestOutlier:72,recentVideos:20},
+]);
+assert.equal(rankedCompetitors[0].channelId, 'a');
+assert.ok(rankedCompetitors[0].score > rankedCompetitors[1].score);
+const seeds = expandSeedQueries(['AI Agents', 'ai agents', 'AI Browsers'], 8);
+assert.ok(seeds.length <= 8);
+assert.equal(dedupeSeedQueries([{query:' AI Agents ',priority:50},{query:'ai agents',priority:80}])[0].priority,80);
+console.log('✓ competitor discovery ranking');
+console.log('✓ seed query expansion/deduplication');

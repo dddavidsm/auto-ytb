@@ -7,3 +7,5 @@ export * from './competitor.js';
 export * from './trend.js';
 export * from './evidence.js';
 export * from './planner.js';
+export * from './competitor-ranker.js';
+export * from './query.js';

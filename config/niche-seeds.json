@@ -1,0 +1,10 @@
+{
+  "future-tech-business": ["AI agents", "AI infrastructure", "AI browsers", "robotics startups", "semiconductor race", "AI data centers", "future of work AI", "tech company strategy"],
+  "internet-stories": ["internet outage", "cloud outage", "data breach explained", "browser war", "platform algorithm", "social media collapse", "cyber attack company", "internet infrastructure"],
+  "business-wars": ["business war", "company rivalry", "corporate strategy", "startup collapse", "market disruption", "billion dollar failure", "acquisition strategy", "monopoly business"],
+  "science-future": ["future energy", "fusion breakthrough", "space technology", "quantum computing", "biotech breakthrough", "materials science", "climate technology", "future transportation"],
+  "consumer-tech": ["new smartphone technology", "wearable technology", "AI device", "consumer robotics", "smart glasses", "laptop technology", "gaming hardware", "home technology"],
+  "finance-stories": ["market bubble", "company valuation", "financial crisis story", "hedge fund story", "bank failure", "market manipulation explained", "investing trend", "economic disruption"],
+  "history-systems": ["history of technology", "history of infrastructure", "industrial revolution technology", "history of computing", "history of aviation", "history of logistics", "history of energy", "history of communication"],
+  "luxury-business": ["luxury brand business", "watch manufacturing", "supercar manufacturing", "private jet business", "luxury hotel business", "fashion empire", "high end manufacturing", "luxury market strategy"]
+}

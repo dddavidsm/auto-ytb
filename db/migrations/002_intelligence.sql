@@ -8,9 +8,10 @@ create table if not exists search_queries (
   next_run_at timestamptz,
   priority numeric not null default 50,
   active boolean not null default true,
-  metadata jsonb not null default '{}'::jsonb,
-  unique(query, lane, coalesce(language,''), coalesce(region,''))
+  metadata jsonb not null default '{}'::jsonb
 );
+create unique index if not exists idx_search_queries_unique_scope
+  on search_queries(query, lane, coalesce(language,''), coalesce(region,''));
 
 create table if not exists search_runs (
   id uuid primary key default gen_random_uuid(),
