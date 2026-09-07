@@ -30,10 +30,14 @@
     "analytics:sync": "npm run build && node scripts/analytics-sync.mjs",
     "schedule:production": "npm run build && node scripts/schedule-production.mjs",
     "schedule:maintenance": "npm run build && node scripts/schedule-maintenance.mjs",
+    "scheduler": "npm run build && node scripts/scheduler.mjs",
     "worker": "npm run build && node scripts/worker.mjs",
     "worker:once": "npm run build && node scripts/worker.mjs --once",
     "ops:schedule": "npm run build && node scripts/schedule-production.mjs && node scripts/schedule-maintenance.mjs",
     "ops:tick": "npm run build && node scripts/schedule-production.mjs && node scripts/schedule-maintenance.mjs && node scripts/worker.mjs --once"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
   },
   "devDependencies": {
     "typescript": "^5.8.3"
