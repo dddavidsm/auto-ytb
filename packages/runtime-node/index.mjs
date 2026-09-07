@@ -60,6 +60,8 @@ function mimeFor(path) {
   return 'application/octet-stream';
 }
 
+function escapeFilterPath(path) { return path.replaceAll("'", "\\'"); }
+
 export class FfmpegRenderer {
   name = 'ffmpeg-local';
   constructor(options = {}) {
@@ -85,6 +87,23 @@ export class FfmpegRenderer {
     return null;
   }
 
+  async renderProcedural({ scene, asset, clip, work, index, width, height, duration }) {
+    const textFile = join(work, `procedural-${index}.txt`);
+    const text = String(asset?.metadata?.instruction ?? scene.instruction ?? '').replace(/\s+/g,' ').slice(0,180);
+    await writeFile(textFile, text);
+    const fontSize = Math.max(28, Math.round(Math.min(width,height) * 0.034));
+    const margin = Math.round(Math.min(width,height) * 0.07);
+    const boxHeight = Math.round(height * 0.42);
+    const text = `drawtext=textfile='${escapeFilterPath(textFile)}':fontcolor=white:fontsize=${fontSize}:line_spacing=10:x=${margin}:y=h*0.16:box=1:boxcolor=0x0b0d12cc:boxborderw=20`;
+    const progress = `drawbox=x=${margin}:y=h-${margin}:w=(w-${margin*2})*t/${Math.max(0.2,duration)}:h=${Math.max(8,Math.round(height*0.008))}:color=white@0.85:t=fill`;
+    const baseBoxes = `drawbox=x=${margin}:y=h*0.62:w=w-${margin*2}:h=${boxHeight}:color=0x171a22@0.72:t=fill`;
+    const chartBars = scene.kind === 'chart'
+      ? [0.18,0.34,0.52,0.70].map((x,i)=>`drawbox=x=w*${x}:y=h*${0.80-i*0.06}:w=w*0.08:h=h*${0.12+i*0.06}:color=white@${0.42+i*0.12}:t=fill`).join(',')
+      : `drawbox=x=w*0.16:y=h*0.72:w=w*0.22:h=h*0.035:color=white@0.45:t=fill,drawbox=x=w*0.16:y=h*0.78:w=w*0.42:h=h*0.022:color=white@0.28:t=fill,drawbox=x=w*0.16:y=h*0.83:w=w*0.31:h=h*0.022:color=white@0.22:t=fill`;
+    const filter = `${baseBoxes},${chartBars},${text},${progress},format=yuv420p`;
+    await run(this.ffmpeg, ['-y','-f','lavfi','-i',`color=c=0x0b0d12:s=${width}x${height}:r=${this.fps}:d=${duration}`,'-vf',filter,'-an','-c:v','libx264','-preset','veryfast',clip]);
+  }
+
   async render(input) {
     const manifestPath = pathFromUri(input.manifestUri);
     if (!manifestPath) throw new Error('FfmpegRenderer requires a local/file:// manifest URI');
@@ -98,18 +117,19 @@ export class FfmpegRenderer {
       const scene = manifest.scenes[index];
       const clip = join(work, `scene-${String(index).padStart(4, '0')}.mp4`);
       const asset = manifest.assets.find((candidate) => candidate.sceneId === scene.id);
-      const source = asset ? await this.materialize(asset.uri, join(work, `asset-${index}`)) : null;
       const duration = Math.max(0.2, Number(scene.durationSec));
+      if (asset?.uri?.startsWith('procedural://')) {
+        await this.renderProcedural({ scene, asset, clip, work, index, width, height, duration });
+        clips.push(clip);
+        continue;
+      }
+      const source = asset ? await this.materialize(asset.uri, join(work, `asset-${index}`)) : null;
       if (source && mimeFor(source).startsWith('image/')) {
         await run(this.ffmpeg, ['-y','-loop','1','-i',source,'-t',String(duration),'-vf',`scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
       } else if (source && mimeFor(source).startsWith('video/')) {
         await run(this.ffmpeg, ['-y','-stream_loop','-1','-i',source,'-t',String(duration),'-vf',`scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
       } else {
-        const textFile = join(work, `scene-${index}.txt`);
-        await writeFile(textFile, String(scene.instruction ?? '').slice(0, 240));
-        const fontSize = Math.max(32, Math.round(Math.min(width,height) * 0.038));
-        const filter = `drawtext=textfile='${textFile.replaceAll("'", "\\'")}':fontcolor=white:fontsize=${fontSize}:line_spacing=12:x=(w-text_w)/2:y=(h-text_h)/2,format=yuv420p`;
-        await run(this.ffmpeg, ['-y','-f','lavfi','-i',`color=c=0x101114:s=${width}x${height}:r=${this.fps}:d=${duration}`,'-vf',filter,'-an','-c:v','libx264','-preset','veryfast',clip]);
+        throw new Error(`Scene ${scene.id} has no renderable visual asset`);
       }
       clips.push(clip);
     }
