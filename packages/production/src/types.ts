@@ -47,10 +47,14 @@ export type Scene = {
 };
 
 export type AssetRecord = BinaryAsset & { sceneId: string; generated: boolean; sourceIds: string[] };
+export type ProductionContentFormat = 'LONG_HORIZONTAL' | 'SHORT_VERTICAL';
 
 export type ProductionManifest = {
   projectId: string;
   createdAt: string;
+  contentFormat: ProductionContentFormat;
+  aspectRatio: '16:9' | '9:16';
+  frame: { width: number; height: number };
   script: VideoScript;
   packaging: PackagingVariant[];
   thumbnails: ThumbnailAsset[];
