@@ -40,6 +40,7 @@ const clamp=(v:number,min=0,max=100)=>Math.max(min,Math.min(max,v));
 const r=(v:number)=>Math.round(v*10)/10;
 
 export function recommendContentFormat(signals: FormatSignals, risks: FormatRisk = {}): FormatRecommendation {
+  const complexity=clamp(signals.productionComplexity ?? 50);
   const longScore =
     signals.narrativeDepth*0.18 +
     signals.searchIntentDepth*0.10 +
@@ -48,7 +49,7 @@ export function recommendContentFormat(signals: FormatSignals, risks: FormatRisk
     signals.longRetentionPotential*0.20 +
     signals.tvConsumptionFit*0.10 +
     (signals.episodicPotential ?? 50)*0.08 +
-    (100-signals.productionComplexity! || 50)*0;
+    (100-complexity)*0.10;
 
   const shortScore =
     signals.visualSnackability*0.18 +
@@ -57,7 +58,8 @@ export function recommendContentFormat(signals: FormatSignals, risks: FormatRisk
     signals.shortHookStrength*0.20 +
     signals.mobileConsumptionFit*0.16 +
     (signals.episodicPotential ?? 50)*0.06 +
-    (signals.kidAudienceFit ?? 0)*0.10;
+    (signals.kidAudienceFit ?? 0)*0.06 +
+    (100-complexity)*0.04;
 
   let long = longScore;
   let short = shortScore;
@@ -68,7 +70,6 @@ export function recommendContentFormat(signals: FormatSignals, risks: FormatRisk
   long -= lowEffortPenalty*0.65 + copyrightPenalty + policyPenalty;
   short -= lowEffortPenalty + copyrightPenalty + policyPenalty;
 
-  // Made-for-kids is not automatically bad, but it materially changes monetization, personalization and compliance.
   const kidRisk=clamp(risks.madeForKidsRisk ?? 0);
   if(kidRisk >= 60) {
     long -= 3;
@@ -86,7 +87,7 @@ export function recommendContentFormat(signals: FormatSignals, risks: FormatRisk
   if(long>=70) rationale.push('Strong depth/retention/monetization signals support long-form horizontal.');
   if(short>=70) rationale.push('Strong hook/velocity/mobile/repeatability signals support Shorts.');
   if(Math.abs(long-short)<=12) rationale.push('Both formats are viable; use a hybrid funnel and learn them independently.');
-  if((signals.kidAudienceFit ?? 0)>=65) rationale.push('Kid-audience fit is high; treat made-for-kids compliance and economics as a separate channel model, not a generic format shortcut.');
+  if((signals.kidAudienceFit ?? 0)>=65) rationale.push('Kid-audience fit is high; treat made-for-kids compliance and economics as a separate audience model, not a generic format shortcut.');
   if((risks.lowEffortRisk ?? 0)>=60) rationale.push('High low-effort/repetitive-content risk: require stronger originality and editorial value regardless of format.');
 
   let derivativeStrategy: FormatRecommendation['derivativeStrategy']='NONE';
