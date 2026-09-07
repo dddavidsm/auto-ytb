@@ -1,4 +1,4 @@
-import type { BinaryAsset, ImageProvider, ObjectStore, Publisher, SearchProvider, SearchResult, TextModel, VideoProvider, VideoRenderer, VoiceProvider } from './types.js';
+import type { BinaryAsset, ImageProvider, ObjectStore, Publisher, SearchProvider, SearchResult, TextModel, ThumbnailComposer, VideoProvider, VideoRenderer, VoiceProvider } from './types.js';
 
 function stableHash(text: string): string {
   let hash = 2166136261;
@@ -49,6 +49,13 @@ export class MockVideoProvider implements VideoProvider {
   }
 }
 
+export class MockThumbnailComposer implements ThumbnailComposer {
+  readonly name = 'mock-thumbnail-composer';
+  async compose(input: { backgroundUri: string; text?: string; outputKey: string }) {
+    return { ...mockAsset('thumbnail', `${input.backgroundUri}:${input.text ?? ''}:${input.outputKey}`, 'image/jpeg', this.name), uri: `mock://thumbnail/${input.outputKey}` };
+  }
+}
+
 export class MockObjectStore implements ObjectStore {
   readonly name = 'mock-store';
   async put(input: { key: string; contentType: string; data: string | Uint8Array }) {
@@ -69,6 +76,7 @@ export class MockPublisher implements Publisher {
   async uploadPrivate(input: { fileUri: string; title: string; description: string; tags: string[]; language: string; containsSyntheticMedia: boolean }) {
     return { externalId: `yt_mock_${stableHash(`${input.fileUri}:${input.title}`)}`, url: undefined, status: 'private' as const };
   }
+  async setThumbnail(_input: { externalId: string; fileUri: string }) { return { status: 'set' as const }; }
   async schedule(input: { externalId: string; publishAt: string }) {
     return { status: 'scheduled' as const, publishAt: input.publishAt };
   }
