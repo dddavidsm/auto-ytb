@@ -13,6 +13,7 @@
     "@auto-ytb/qa": "0.1.0",
     "@auto-ytb/analytics": "0.1.0",
     "@auto-ytb/orchestrator": "0.1.0",
-    "@auto-ytb/os": "0.1.0"
+    "@auto-ytb/os": "0.1.0",
+    "@auto-ytb/persistence": "0.1.0"
   }
 }
