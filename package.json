@@ -11,7 +11,7 @@
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty false",
     "test": "npm run build && node scripts/test-core.mjs",
-    "test:syntax": "node --check scripts/live-pipeline.mjs && node --check scripts/worker.mjs && node --check scripts/scheduler.mjs && node --check scripts/market-cycle.mjs && node --check scripts/schedule-intelligence.mjs && node --check scripts/schedule-production.mjs && node --check scripts/schedule-maintenance.mjs && node --check scripts/schedule-publication.mjs && node --check scripts/analytics-sync.mjs && node --check apps/dashboard/server.mjs",
+    "test:syntax": "node --check packages/runtime-node/index.mjs && node --check packages/runtime-node/factory.mjs && node --check scripts/live-pipeline.mjs && node --check scripts/worker.mjs && node --check scripts/scheduler.mjs && node --check scripts/market-cycle.mjs && node --check scripts/schedule-intelligence.mjs && node --check scripts/schedule-production.mjs && node --check scripts/schedule-maintenance.mjs && node --check scripts/schedule-publication.mjs && node --check scripts/analytics-sync.mjs && node --check apps/dashboard/server.mjs",
     "demo": "npm run build && node apps/cli/dist/demo.js",
     "radar": "npm run build && node apps/cli/dist/radar.js",
     "niches": "npm run build && node apps/cli/dist/niches.js",
