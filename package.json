@@ -1,6 +1,6 @@
 {
   "name": "auto-ytb",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -18,15 +18,19 @@
     "discover:competitors": "npm run build && node apps/cli/dist/discover-competitors.js",
     "niche:live": "npm run build && node apps/cli/dist/niche-live.js",
     "pipeline:mock": "npm run build && node apps/cli/dist/pipeline-mock.js",
+    "pipeline:live": "npm run build && node scripts/live-pipeline.mjs",
     "test:all": "npm run build && node scripts/test-core.mjs && node scripts/test-pipeline.mjs && node scripts/test-live-adapters.mjs",
+    "test:adapters": "npm run build && node scripts/test-live-adapters.mjs",
     "doctor": "npm run build && node apps/cli/dist/doctor.js",
     "dashboard": "node apps/dashboard/server.mjs",
     "migrate": "npm run build && node scripts/migrate.mjs",
     "oauth:url": "npm run build && node scripts/youtube-oauth.mjs",
     "oauth:exchange": "npm run build && node scripts/youtube-oauth.mjs",
     "analytics:sync": "npm run build && node scripts/analytics-sync.mjs",
-    "test:adapters": "npm run build && node scripts/test-live-adapters.mjs",
-    "pipeline:live": "npm run build && node scripts/live-pipeline.mjs"
+    "schedule:production": "npm run build && node scripts/schedule-production.mjs",
+    "worker": "npm run build && node scripts/worker.mjs",
+    "worker:once": "npm run build && node scripts/worker.mjs --once",
+    "ops:tick": "npm run build && node scripts/schedule-production.mjs && node scripts/worker.mjs --once"
   },
   "devDependencies": {
     "typescript": "^5.8.3"
