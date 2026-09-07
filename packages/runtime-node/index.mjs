@@ -89,6 +89,8 @@ export class FfmpegRenderer {
     const manifestPath = pathFromUri(input.manifestUri);
     if (!manifestPath) throw new Error('FfmpegRenderer requires a local/file:// manifest URI');
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    const width = Math.max(320, Number(manifest.frame?.width ?? this.width));
+    const height = Math.max(320, Number(manifest.frame?.height ?? this.height));
     const work = join(tmpdir(), `auto-ytb-${manifest.projectId}-${Date.now()}`);
     await mkdir(work, { recursive: true });
     const clips = [];
@@ -99,14 +101,15 @@ export class FfmpegRenderer {
       const source = asset ? await this.materialize(asset.uri, join(work, `asset-${index}`)) : null;
       const duration = Math.max(0.2, Number(scene.durationSec));
       if (source && mimeFor(source).startsWith('image/')) {
-        await run(this.ffmpeg, ['-y','-loop','1','-i',source,'-t',String(duration),'-vf',`scale=${this.width}:${this.height}:force_original_aspect_ratio=decrease,pad=${this.width}:${this.height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
+        await run(this.ffmpeg, ['-y','-loop','1','-i',source,'-t',String(duration),'-vf',`scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
       } else if (source && mimeFor(source).startsWith('video/')) {
-        await run(this.ffmpeg, ['-y','-stream_loop','-1','-i',source,'-t',String(duration),'-vf',`scale=${this.width}:${this.height}:force_original_aspect_ratio=decrease,pad=${this.width}:${this.height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
+        await run(this.ffmpeg, ['-y','-stream_loop','-1','-i',source,'-t',String(duration),'-vf',`scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
       } else {
         const textFile = join(work, `scene-${index}.txt`);
         await writeFile(textFile, String(scene.instruction ?? '').slice(0, 240));
-        const filter = `drawtext=textfile='${textFile.replaceAll("'", "\\'")}':fontcolor=white:fontsize=42:line_spacing=12:x=(w-text_w)/2:y=(h-text_h)/2,format=yuv420p`;
-        await run(this.ffmpeg, ['-y','-f','lavfi','-i',`color=c=0x101114:s=${this.width}x${this.height}:r=${this.fps}:d=${duration}`,'-vf',filter,'-an','-c:v','libx264','-preset','veryfast',clip]);
+        const fontSize = Math.max(32, Math.round(Math.min(width,height) * 0.038));
+        const filter = `drawtext=textfile='${textFile.replaceAll("'", "\\'")}':fontcolor=white:fontsize=${fontSize}:line_spacing=12:x=(w-text_w)/2:y=(h-text_h)/2,format=yuv420p`;
+        await run(this.ffmpeg, ['-y','-f','lavfi','-i',`color=c=0x101114:s=${width}x${height}:r=${this.fps}:d=${duration}`,'-vf',filter,'-an','-c:v','libx264','-preset','veryfast',clip]);
       }
       clips.push(clip);
     }
@@ -124,7 +127,7 @@ export class FfmpegRenderer {
     } else {
       await copyFile(joined, out);
     }
-    return { id:`render-${manifest.projectId}`, uri:fileUri(out), mimeType:'video/mp4', provider:this.name, durationSeconds:manifest.script?.targetDurationSec, costUsd:0 };
+    return { id:`render-${manifest.projectId}`, uri:fileUri(out), mimeType:'video/mp4', provider:this.name, durationSeconds:manifest.script?.targetDurationSec, costUsd:0, metadata:{width,height,contentFormat:manifest.contentFormat,aspectRatio:manifest.aspectRatio} };
   }
 }
 
