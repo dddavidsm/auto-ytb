@@ -30,17 +30,18 @@ try {
     await repo.addSnapshot({publicationId:pub.id,views:perf.views,watchTimeMinutes:perf.watchTimeMinutes,averageViewDurationSeconds:perf.averageViewDurationSec,averageViewPercentage:perf.averageViewPercentage,likes:perf.likes,comments:perf.comments,shares:perf.shares,subscribersGained:perf.subscribersGained,revenueUsd:perf.revenueUsd,trafficSources,retention:points});
     const learning=deriveLearningSignals(perf);
     for (const [featureKey, featureValue] of Object.entries(learning)) await repo.addLearningSignal({channelId:pub.channel_id,publicationId:pub.id,signalType:'video_performance',featureKey,featureValue,strength:75});
+    const strength=Math.min(100,Math.max(25,Math.round(35+Math.log10(Math.max(1,perf.views))*12)));
+    const outcomeScore=Math.round(Math.max(0,Math.min(100,
+      perf.averageViewPercentage*0.55 +
+      Math.min(100,learning.subscriberConversionPerThousand*12)*0.15 +
+      Math.min(100,learning.shareRate*20)*0.10 +
+      (learning.strongHook?100:35)*0.20
+    ))*10)/10;
+
     const selectedPackagingId=pub.metadata?.selectedPackagingId ? String(pub.metadata.selectedPackagingId) : null;
     if(selectedPackagingId){
       const variantResult=await db.query(`select pv.payload from packaging_variants pv join production_runs pr on pr.content_idea_id=pv.content_idea_id where pr.id=$1 and pv.variant_key=$2 limit 1`,[pub.production_run_id,selectedPackagingId]);
       const variant=variantResult.rows[0]?.payload ?? null;
-      const strength=Math.min(100,Math.max(25,Math.round(35+Math.log10(Math.max(1,perf.views))*12)));
-      const outcomeScore=Math.round(Math.max(0,Math.min(100,
-        perf.averageViewPercentage*0.55 +
-        Math.min(100,learning.subscriberConversionPerThousand*12)*0.15 +
-        Math.min(100,learning.shareRate*20)*0.10 +
-        (learning.strongHook?100:35)*0.20
-      ))*10)/10;
       await repo.addLearningSignal({channelId:pub.channel_id,publicationId:pub.id,signalType:'packaging_performance',featureKey:selectedPackagingId,featureValue:{views:perf.views,averageViewPercentage:perf.averageViewPercentage,subscribersGained:perf.subscribersGained,shares:perf.shares,revenueUsd:perf.revenueUsd,productionCostUsd:perf.productionCostUsd,economics:learning.economics,strongHook:learning.strongHook,outcomeScore},strength});
       if(variant){
         for(const attribute of ['curiosity','clarity','credibility','differentiation']){
@@ -49,15 +50,15 @@ try {
           await repo.addLearningSignal({channelId:pub.channel_id,publicationId:pub.id,signalType:'packaging_attribute_performance',featureKey:attribute,featureValue:{attributeValue,outcomeScore,variantKey:selectedPackagingId},strength});
         }
       }
-      await db.query(`update model_experiments
-        set outcome=coalesce(outcome,'{}'::jsonb) || $2::jsonb,
-            completed_at=case when $3::int >= 500 then now() else completed_at end
-        where experiment_type='packaging_bandit' and outcome->>'productionRunId'=$1`,[
-          String(pub.production_run_id),
-          JSON.stringify({status:perf.views>=500?'completed':'observing',publicationId:pub.id,youtubeVideoId:pub.youtube_video_id,views:perf.views,outcomeScore,averageViewPercentage:perf.averageViewPercentage,strongHook:learning.strongHook,shareRate:learning.shareRate,subscriberConversionPerThousand:learning.subscriberConversionPerThousand,economics:learning.economics,capturedAt:new Date().toISOString()}),
-          perf.views
-        ]);
+      await db.query(`update model_experiments set outcome=coalesce(outcome,'{}'::jsonb) || $2::jsonb, completed_at=case when $3::int >= 500 then now() else completed_at end where experiment_type='packaging_bandit' and outcome->>'productionRunId'=$1`,[String(pub.production_run_id),JSON.stringify({status:perf.views>=500?'completed':'observing',publicationId:pub.id,youtubeVideoId:pub.youtube_video_id,views:perf.views,outcomeScore,averageViewPercentage:perf.averageViewPercentage,strongHook:learning.strongHook,shareRate:learning.shareRate,subscriberConversionPerThousand:learning.subscriberConversionPerThousand,economics:learning.economics,capturedAt:new Date().toISOString()}),perf.views]);
     }
-    console.log(`${pub.youtube_video_id}: ${perf.views} views, ${perf.averageViewPercentage.toFixed(1)}% avg viewed, $${perf.revenueUsd.toFixed(2)} revenue${selectedPackagingId?`, packaging=${selectedPackagingId}`:''}`);
+
+    const structural=pub.metadata?.structuralExperiment ?? null;
+    if(structural?.selected?.axis && structural?.selected?.arm){
+      const axis=String(structural.selected.axis), arm=String(structural.selected.arm);
+      await repo.addLearningSignal({channelId:pub.channel_id,publicationId:pub.id,signalType:'structural_experiment_performance',featureKey:`${axis}:${arm}`,featureValue:{axis,arm,mode:structural.mode,views:perf.views,outcomeScore,averageViewPercentage:perf.averageViewPercentage,averageViewDurationSec:perf.averageViewDurationSec,strongHook:learning.strongHook,shareRate:learning.shareRate,subscriberConversionPerThousand:learning.subscriberConversionPerThousand,economics:learning.economics,productionCostUsd:perf.productionCostUsd},strength});
+      await db.query(`update model_experiments set outcome=coalesce(outcome,'{}'::jsonb) || $2::jsonb, completed_at=case when $3::int >= 500 then now() else completed_at end where experiment_type='structural_bandit' and outcome->>'productionRunId'=$1`,[String(pub.production_run_id),JSON.stringify({status:perf.views>=500?'completed':'observing',publicationId:pub.id,youtubeVideoId:pub.youtube_video_id,axis,arm,mode:structural.mode,views:perf.views,outcomeScore,averageViewPercentage:perf.averageViewPercentage,strongHook:learning.strongHook,shareRate:learning.shareRate,subscriberConversionPerThousand:learning.subscriberConversionPerThousand,economics:learning.economics,productionCostUsd:perf.productionCostUsd,capturedAt:new Date().toISOString()}),perf.views]);
+    }
+    console.log(`${pub.youtube_video_id}: ${perf.views} views, ${perf.averageViewPercentage.toFixed(1)}% avg viewed, $${perf.revenueUsd.toFixed(2)} revenue${selectedPackagingId?`, packaging=${selectedPackagingId}`:''}${structural?.selected?.arm?`, structural=${structural.selected.axis}:${structural.selected.arm}`:''}`);
   }
 } finally { await db.close(); }
