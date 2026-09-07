@@ -1,0 +1,31 @@
+services:
+  worker:
+    build: .
+    command: ["node","scripts/worker.mjs"]
+    env_file: [.env]
+    restart: unless-stopped
+    volumes:
+      - auto_ytb_data:/app/.data
+
+  scheduler:
+    build: .
+    command: ["node","scripts/scheduler.mjs"]
+    env_file: [.env]
+    restart: unless-stopped
+    depends_on:
+      - worker
+    volumes:
+      - auto_ytb_data:/app/.data
+
+  dashboard:
+    build: .
+    command: ["node","apps/dashboard/server.mjs"]
+    env_file: [.env]
+    restart: unless-stopped
+    ports:
+      - "4310:4310"
+    volumes:
+      - auto_ytb_data:/app/.data
+
+volumes:
+  auto_ytb_data:
