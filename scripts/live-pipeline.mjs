@@ -17,10 +17,11 @@ let productionRunId;
 try {
   const channelRow = await db.query(`insert into channels (youtube_channel_id,title,language,country,niche,is_owned) values ($1,$2,$3,$4,$5,true) on conflict (youtube_channel_id) do update set title=excluded.title,language=excluded.language,country=excluded.country,niche=excluded.niche,is_owned=true,updated_at=now() returning id`,[process.env.YOUTUBE_CHANNEL_ID || null, channel.id, channel.language, channel.region, channel.id]);
   const channelId=channelRow.rows[0].id;
-  const ideaRow=await db.query(`insert into content_ideas (format,working_title,premise,target_viewer,hook_hypothesis,status) values ('long',$1,$2,$3,$4,'production') returning id`,[topic,topic,channel.targetViewer,'Generated after research']);
+  const opportunityId=arg('opportunity-id',null);
+  const ideaRow=await db.query(`insert into content_ideas (opportunity_id,format,working_title,premise,target_viewer,hook_hypothesis,status) values ($1,'long',$2,$3,$4,$5,'production') returning id`,[opportunityId,topic,topic,channel.targetViewer,'Generated after research']);
   const contentIdeaId=ideaRow.rows[0].id;
   const productionRepo=new ProductionRepository(db);
-  productionRunId=await productionRepo.createRun({contentIdeaId,state:'RESEARCH',metadata:{topic,channelConfig:channel.id}});
+  productionRunId=await productionRepo.createRun({contentIdeaId,state:'RESEARCH',metadata:{topic,channelConfig:channel.id,opportunityId}});
 
   const result=await runContentPipeline({
     projectId:productionRunId,
@@ -34,25 +35,28 @@ try {
     voiceProvider:runtime.voice,
     imageProvider:runtime.image,
     videoProvider:runtime.video,
+    thumbnailComposer:runtime.thumbnailComposer,
     store:runtime.store,
     renderer:runtime.renderer,
     publisher:runtime.publisher,
     autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE === 'true',
   });
 
-  await productionRepo.updateRun(productionRunId,{state:result.state,totalCostUsd:result.manifest?.actualCostUsd ?? 0,metadata:{events:result.events,renderUri:result.renderUri}});
+  await productionRepo.updateRun(productionRunId,{state:result.state,totalCostUsd:result.manifest?.actualCostUsd ?? 0,metadata:{events:result.events,renderUri:result.renderUri,opportunityId}});
   let researchDossierId=null;
   if(result.dossier){
-    researchDossierId=await new ResearchRepository(db).create({topic,researchConfidence:result.dossier.researchConfidence,executiveSummary:result.dossier.executiveSummary,blockingIssues:result.dossier.blockingIssues,dossier:result.dossier});
+    researchDossierId=await new ResearchRepository(db).create({opportunityId,topic,researchConfidence:result.dossier.researchConfidence,executiveSummary:result.dossier.executiveSummary,blockingIssues:result.dossier.blockingIssues,dossier:result.dossier});
   }
   if(result.manifest?.script){
     await new ScriptRepository(db).create({contentIdeaId,researchDossierId,language:result.manifest.script.language,targetDurationSeconds:result.manifest.script.targetDurationSec,script:result.manifest.script});
-    for(const variant of result.manifest.packaging) await db.query(`insert into packaging_variants (content_idea_id,variant_id,title,thumbnail_concept,thumbnail_text,score,metadata) values ($1,$2,$3,$4,$5,$6,$7::jsonb) on conflict (content_idea_id,variant_id) do update set title=excluded.title,thumbnail_concept=excluded.thumbnail_concept,thumbnail_text=excluded.thumbnail_text,score=excluded.score,metadata=excluded.metadata`,[contentIdeaId,variant.id,variant.title,variant.thumbnailConcept,variant.thumbnailText ?? null,(variant.curiosity+variant.clarity+variant.credibility+variant.differentiation)/4,JSON.stringify(variant)]);
+    for(const variant of result.manifest.packaging) await db.query(`insert into packaging_variants (content_idea_id,variant_key,title,thumbnail_concept,score,payload) values ($1,$2,$3,$4,$5,$6::jsonb) on conflict (content_idea_id,variant_key) do update set title=excluded.title,thumbnail_concept=excluded.thumbnail_concept,score=excluded.score,payload=excluded.payload`,[contentIdeaId,variant.id,variant.title,variant.thumbnailConcept,variant.score ?? (variant.curiosity+variant.clarity+variant.credibility+variant.differentiation)/4,JSON.stringify(variant)]);
     for(const asset of result.manifest.assets) await productionRepo.addAsset({productionRunId,sceneId:asset.sceneId,assetType:asset.mimeType,uri:asset.uri,provider:asset.provider,model:asset.model,generated:asset.generated,sourceIds:asset.sourceIds,costUsd:asset.costUsd});
+    for(const thumbnail of result.manifest.thumbnails) await productionRepo.addAsset({productionRunId,sceneId:`thumbnail:${thumbnail.packagingId}`,assetType:'image/jpeg',uri:thumbnail.uri,provider:thumbnail.provider,model:thumbnail.model,generated:true,sourceIds:[],costUsd:thumbnail.costUsd,metadata:{packagingId:thumbnail.packagingId,text:thumbnail.text ?? null}});
   }
   if(result.qa) await productionRepo.addQaReport({productionRunId,passed:result.qa.passed,score:result.qa.score,containsSyntheticMedia:result.qa.containsSyntheticMedia,blockers:result.qa.blockers,report:result.qa});
-  if(result.externalId) await new PublicationRepository(db).create({productionRunId,channelId,youtubeVideoId:result.externalId,state:'private',containsSyntheticMedia:result.qa?.containsSyntheticMedia ?? false,metadata:{renderUri:result.renderUri}});
-  console.log(JSON.stringify({productionRunId,state:result.state,qa:result.qa?.score,costUsd:result.manifest?.actualCostUsd,renderUri:result.renderUri,youtubeVideoId:result.externalId ?? null},null,2));
+  if(result.externalId) await new PublicationRepository(db).create({productionRunId,channelId,youtubeVideoId:result.externalId,state:'private',containsSyntheticMedia:result.qa?.containsSyntheticMedia ?? false,metadata:{renderUri:result.renderUri,selectedPackagingId:result.manifest?.selectedPackagingId}});
+  if(opportunityId && result.state==='READY_FOR_REVIEW') await db.query(`update opportunities set status='produced' where id=$1`,[opportunityId]);
+  console.log(JSON.stringify({productionRunId,state:result.state,qa:result.qa?.score,costUsd:result.manifest?.actualCostUsd,thumbnails:result.manifest?.thumbnails.length ?? 0,renderUri:result.renderUri,youtubeVideoId:result.externalId ?? null},null,2));
 } catch(error) {
   if(productionRunId) await db.query(`update production_runs set state='BLOCKED',metadata=metadata || $2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({error:error instanceof Error?error.message:String(error)})]);
   throw error;
