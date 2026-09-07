@@ -34,6 +34,8 @@ export type PackagingVariant = {
   score: number;
 };
 
+export type ThumbnailAsset = BinaryAsset & { packagingId: string; text?: string };
+
 export type Scene = {
   id: string;
   startSec: number;
@@ -51,6 +53,7 @@ export type ProductionManifest = {
   createdAt: string;
   script: VideoScript;
   packaging: PackagingVariant[];
+  thumbnails: ThumbnailAsset[];
   selectedPackagingId: string;
   scenes: Scene[];
   assets: AssetRecord[];
