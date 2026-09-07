@@ -47,6 +47,13 @@ async function execute(job){
     await runNode('scripts/market-cycle.mjs',args);
     return {};
   }
+  if(job.kind==='schedule_publication'){
+    const publicationId=String(payload.publicationId ?? '').trim();
+    const publishAt=String(payload.publishAt ?? '').trim();
+    if(!publicationId||!publishAt) throw new Error('schedule_publication job missing publicationId or publishAt');
+    await runNode('scripts/schedule-publication.mjs',[`--publication-id=${publicationId}`,`--publish-at=${publishAt}`]);
+    return {};
+  }
   throw new Error(`Unsupported job kind ${job.kind}`);
 }
 
