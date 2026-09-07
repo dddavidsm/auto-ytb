@@ -59,6 +59,11 @@ export interface VideoProvider {
   generate(input: { prompt: string; durationSeconds: number; aspectRatio: string; referenceUris?: string[] }): Promise<BinaryAsset>;
 }
 
+export interface ThumbnailComposer {
+  readonly name: string;
+  compose(input: { backgroundUri: string; text?: string; outputKey: string }): Promise<BinaryAsset>;
+}
+
 export interface ObjectStore {
   readonly name: string;
   put(input: { key: string; contentType: string; data: string | Uint8Array }): Promise<{ uri: string; bytes?: number }>;
@@ -80,5 +85,6 @@ export interface Publisher {
     language: string;
     containsSyntheticMedia: boolean;
   }): Promise<{ externalId: string; url?: string; status: 'private' }>;
+  setThumbnail(input: { externalId: string; fileUri: string }): Promise<{ status: 'set' }>;
   schedule(input: { externalId: string; publishAt: string }): Promise<{ status: 'scheduled'; publishAt: string }>;
 }
