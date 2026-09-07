@@ -83,6 +83,26 @@ export function shouldRetry(attempts: number, maxAttempts: number): boolean {
   return attempts < Math.max(1, maxAttempts);
 }
 
+export type LearningPerformance = {
+  sampleSize: number;
+  strongHookRate?: number;
+  averageViewPercentage?: number;
+  shareRate?: number;
+  roi?: number;
+};
+
+export function calculateLearningBoost(metrics: LearningPerformance): number {
+  const samples = Math.max(0, Math.floor(metrics.sampleSize));
+  if (!samples) return 0;
+  const confidence = Math.min(1, samples / 8);
+  const hook = Math.max(0, Math.min(1, metrics.strongHookRate ?? 0.5));
+  const avp = Math.max(0, Math.min(100, metrics.averageViewPercentage ?? 50));
+  const share = Math.max(0, Math.min(10, metrics.shareRate ?? 0));
+  const roi = Math.max(-1, Math.min(5, metrics.roi ?? 0));
+  const raw = (hook - 0.5) * 8 + (avp - 50) / 12 + Math.min(3, share * 0.6) + Math.max(-3, Math.min(3, roi * 0.8));
+  return Math.round(Math.max(-8, Math.min(8, raw * confidence)) * 10) / 10;
+}
+
 export type ProductionCandidate = {
   id: string;
   score: number;
@@ -90,6 +110,7 @@ export type ProductionCandidate = {
   expiresAt?: string | null;
   riskPenalty?: number;
   expectedCostUsd?: number;
+  learningBoost?: number;
 };
 
 export function rankProductionCandidates(candidates: ProductionCandidate[], now = new Date()): Array<ProductionCandidate & { productionPriority: number }> {
@@ -103,7 +124,8 @@ export function rankProductionCandidates(candidates: ProductionCandidate[], now 
     const urgency = Number.isFinite(expiresMs) ? Math.max(0, 100 - Math.min(100, hoursToExpiry * 2)) : 20;
     const risk = Math.max(0, Math.min(100, candidate.riskPenalty ?? 0));
     const costPenalty = Math.max(0, Math.min(25, (candidate.expectedCostUsd ?? 0) * 1.2));
-    const productionPriority = Math.round(Math.max(0, Math.min(100, candidate.score * 0.58 + freshness * 0.2 + urgency * 0.12 + (100 - risk) * 0.1 - costPenalty)) * 10) / 10;
-    return { ...candidate, productionPriority };
+    const learningBoost = Math.max(-8, Math.min(8, candidate.learningBoost ?? 0));
+    const productionPriority = Math.round(Math.max(0, Math.min(100, candidate.score * 0.58 + freshness * 0.2 + urgency * 0.12 + (100 - risk) * 0.1 - costPenalty + learningBoost)) * 10) / 10;
+    return { ...candidate, learningBoost, productionPriority };
   }).sort((a,b)=>b.productionPriority-a.productionPriority || b.score-a.score);
 }
