@@ -14,7 +14,7 @@ const end = new Date();
 const start = new Date(end.getTime()-days*86400000);
 const iso = (d)=>d.toISOString().slice(0,10);
 try {
-  const publications = (await db.query(`select p.id,p.youtube_video_id,p.channel_id,p.metadata,coalesce(pr.total_cost_usd,0)::float as production_cost_usd from publications p left join production_runs pr on pr.id=p.production_run_id where p.youtube_video_id is not null and p.state in ('private','reviewed','scheduled','public') order by p.updated_at desc`)).rows;
+  const publications = (await db.query(`select p.id,p.youtube_video_id,p.channel_id,p.production_run_id,p.metadata,coalesce(pr.total_cost_usd,0)::float as production_cost_usd from publications p left join production_runs pr on pr.id=p.production_run_id where p.youtube_video_id is not null and p.state in ('private','reviewed','scheduled','public') order by p.updated_at desc`)).rows;
   for (const pub of publications) {
     const [performance, retention, traffic] = await Promise.all([
       yt.getVideoPerformance({videoId:pub.youtube_video_id,startDate:iso(start),endDate:iso(end)}),
@@ -32,23 +32,23 @@ try {
     for (const [featureKey, featureValue] of Object.entries(learning)) await repo.addLearningSignal({channelId:pub.channel_id,publicationId:pub.id,signalType:'video_performance',featureKey,featureValue,strength:75});
     const selectedPackagingId=pub.metadata?.selectedPackagingId ? String(pub.metadata.selectedPackagingId) : null;
     if(selectedPackagingId){
-      await repo.addLearningSignal({
-        channelId:pub.channel_id,
-        publicationId:pub.id,
-        signalType:'packaging_performance',
-        featureKey:selectedPackagingId,
-        featureValue:{
-          views:perf.views,
-          averageViewPercentage:perf.averageViewPercentage,
-          subscribersGained:perf.subscribersGained,
-          shares:perf.shares,
-          revenueUsd:perf.revenueUsd,
-          productionCostUsd:perf.productionCostUsd,
-          economics:learning.economics,
-          strongHook:learning.strongHook,
-        },
-        strength:Math.min(100,Math.max(25,Math.round(35+Math.log10(Math.max(1,perf.views))*12))),
-      });
+      const variantResult=await db.query(`select pv.payload from packaging_variants pv join production_runs pr on pr.content_idea_id=pv.content_idea_id where pr.id=$1 and pv.variant_key=$2 limit 1`,[pub.production_run_id,selectedPackagingId]);
+      const variant=variantResult.rows[0]?.payload ?? null;
+      const strength=Math.min(100,Math.max(25,Math.round(35+Math.log10(Math.max(1,perf.views))*12)));
+      const outcomeScore=Math.round(Math.max(0,Math.min(100,
+        perf.averageViewPercentage*0.55 +
+        Math.min(100,learning.subscriberConversionPerThousand*12)*0.15 +
+        Math.min(100,learning.shareRate*20)*0.10 +
+        (learning.strongHook?100:35)*0.20
+      ))*10)/10;
+      await repo.addLearningSignal({channelId:pub.channel_id,publicationId:pub.id,signalType:'packaging_performance',featureKey:selectedPackagingId,featureValue:{views:perf.views,averageViewPercentage:perf.averageViewPercentage,subscribersGained:perf.subscribersGained,shares:perf.shares,revenueUsd:perf.revenueUsd,productionCostUsd:perf.productionCostUsd,economics:learning.economics,strongHook:learning.strongHook,outcomeScore},strength});
+      if(variant){
+        for(const attribute of ['curiosity','clarity','credibility','differentiation']){
+          const attributeValue=Number(variant[attribute]);
+          if(!Number.isFinite(attributeValue)) continue;
+          await repo.addLearningSignal({channelId:pub.channel_id,publicationId:pub.id,signalType:'packaging_attribute_performance',featureKey:attribute,featureValue:{attributeValue,outcomeScore,variantKey:selectedPackagingId},strength});
+        }
+      }
     }
     console.log(`${pub.youtube_video_id}: ${perf.views} views, ${perf.averageViewPercentage.toFixed(1)}% avg viewed, $${perf.revenueUsd.toFixed(2)} revenue${selectedPackagingId?`, packaging=${selectedPackagingId}`:''}`);
   }
