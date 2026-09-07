@@ -9,18 +9,19 @@ const maxPerDay = Math.max(0,Math.floor(num('AUTO_PRODUCTION_MAX_PER_DAY',1)));
 const dailyBudget = Math.max(0,num('AUTO_PRODUCTION_DAILY_BUDGET_USD',25));
 const reservePerJob = Math.max(0,num('AUTO_PRODUCTION_RESERVED_COST_USD',Math.min(dailyBudget,18)));
 const maxAttempts = Math.max(1,Math.min(20,Math.floor(num('JOB_MAX_ATTEMPTS',4))));
+const budgetDate = new Date().toISOString().slice(0,10);
 const db = new NodePostgresSqlClient(req('DATABASE_URL'), { ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized:false } : undefined });
 
 try {
-  await db.query(`insert into daily_budget_ledger (channel_key,spend_date) values ($1,current_date) on conflict (channel_key,spend_date) do nothing`,[channelKey]);
-  const ledgerResult=await db.query(`select reserved_usd::float,actual_usd::float,jobs_scheduled from daily_budget_ledger where channel_key=$1 and spend_date=current_date`,[channelKey]);
+  await db.query(`insert into daily_budget_ledger (channel_key,spend_date) values ($1,$2::date) on conflict (channel_key,spend_date) do nothing`,[channelKey,budgetDate]);
+  const ledgerResult=await db.query(`select reserved_usd::float,actual_usd::float,jobs_scheduled from daily_budget_ledger where channel_key=$1 and spend_date=$2::date`,[channelKey,budgetDate]);
   const ledger=ledgerResult.rows[0] ?? {reserved_usd:0,actual_usd:0,jobs_scheduled:0};
   const slots=Math.max(0,maxPerDay-Number(ledger.jobs_scheduled || 0));
   const budgetLeft=Math.max(0,dailyBudget-Number(ledger.reserved_usd || 0)-Number(ledger.actual_usd || 0));
   const budgetSlots=reservePerJob > 0 ? Math.floor(budgetLeft/reservePerJob) : slots;
   const capacity=Math.max(0,Math.min(slots,budgetSlots));
   if(!capacity){
-    console.log(JSON.stringify({scheduled:0,reason:'daily capacity exhausted',channelKey,dailyBudget,budgetLeft,slots},null,2));
+    console.log(JSON.stringify({scheduled:0,reason:'daily capacity exhausted',channelKey,budgetDate,dailyBudget,budgetLeft,slots},null,2));
     process.exitCode=0;
   } else {
     const result=await db.query(`
@@ -49,14 +50,14 @@ try {
       const topic=row?.canonical_name || row?.angle;
       if(!topic) continue;
       const priority=Math.max(0,Math.min(100,Math.round(candidate.productionPriority)));
-      const payload={topic,angle:row.angle,channelKey,score:Number(row.score),productionPriority:candidate.productionPriority,reservedCostUsd:reservePerJob};
+      const payload={topic,angle:row.angle,channelKey,budgetDate,score:Number(row.score),productionPriority:candidate.productionPriority,reservedCostUsd:reservePerJob};
       const insert=await db.query(`insert into jobs (job_key,kind,opportunity_id,state,priority,max_attempts,payload) values ($1,'produce_opportunity',$2,'queued',$3,$4,$5::jsonb) on conflict (job_key) do nothing returning id`,[`produce-opportunity:${candidate.id}`,candidate.id,priority,maxAttempts,JSON.stringify(payload)]);
       if(!insert.rows[0]) continue;
       await db.query(`update opportunities set status='approved' where id=$1 and status not in ('approved','produced')`,[candidate.id]);
-      await db.query(`update daily_budget_ledger set reserved_usd=reserved_usd+$2,jobs_scheduled=jobs_scheduled+1,updated_at=now() where channel_key=$1 and spend_date=current_date`,[channelKey,reservePerJob]);
+      await db.query(`update daily_budget_ledger set reserved_usd=reserved_usd+$3,jobs_scheduled=jobs_scheduled+1,updated_at=now() where channel_key=$1 and spend_date=$2::date`,[channelKey,budgetDate,reservePerJob]);
       await db.query(`insert into job_events (job_id,event_type,detail) values ($1,'scheduled',$2::jsonb)`,[insert.rows[0].id,JSON.stringify(payload)]);
-      scheduled.push({jobId:insert.rows[0].id,opportunityId:candidate.id,topic,priority,score:candidate.score,reservedCostUsd:reservePerJob});
+      scheduled.push({jobId:insert.rows[0].id,opportunityId:candidate.id,topic,priority,score:candidate.score,reservedCostUsd:reservePerJob,budgetDate});
     }
-    console.log(JSON.stringify({scheduled:scheduled.length,channelKey,minScore,dailyBudget,reservedCostUsd:reservePerJob,jobs:scheduled},null,2));
+    console.log(JSON.stringify({scheduled:scheduled.length,channelKey,budgetDate,minScore,dailyBudget,reservedCostUsd:reservePerJob,jobs:scheduled},null,2));
   }
 } finally { await db.close(); }
