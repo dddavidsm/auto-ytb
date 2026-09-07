@@ -44,9 +44,17 @@ export type Scene = {
   instruction: string;
   sourceIds: string[];
   generated: boolean;
+  visualValue?: number;
+  costTier?: 'free' | 'low' | 'premium';
+  selectionReason?: string;
 };
 
-export type AssetRecord = BinaryAsset & { sceneId: string; generated: boolean; sourceIds: string[] };
+export type AssetRecord = BinaryAsset & {
+  sceneId: string;
+  generated: boolean;
+  sourceIds: string[];
+  metadata?: Record<string, unknown>;
+};
 export type ProductionContentFormat = 'LONG_HORIZONTAL' | 'SHORT_VERTICAL';
 
 export type ProductionManifest = {
