@@ -1,6 +1,6 @@
 import type { ImageProvider, ObjectStore, Publisher, SearchProvider, TextModel, ThumbnailComposer, VideoProvider, VideoRenderer, VoiceProvider } from '@auto-ytb/providers';
 import { buildResearchDossier, type ResearchDossier } from '@auto-ytb/editorial';
-import { estimateProductionCost, generatePackaging, generateScript, planScenes, type AssetRecord, type ProductionManifest, type ThumbnailAsset } from '@auto-ytb/production';
+import { estimateProductionCost, generatePackaging, generateScript, planScenes, selectPackagingWithExploration, type AssetRecord, type PackagingLearningProfile, type ProductionManifest, type ThumbnailAsset } from '@auto-ytb/production';
 import { runQa, type QaReport } from '@auto-ytb/qa';
 
 export type PipelineState = 'RESEARCH' | 'SCRIPT' | 'PACKAGING' | 'PLAN' | 'ASSETS' | 'QA' | 'RENDER' | 'PRIVATE_UPLOAD' | 'READY_FOR_REVIEW' | 'BLOCKED';
@@ -26,6 +26,7 @@ export async function runContentPipeline(input: {
   autoUploadPrivate?: boolean;
   packagingGuidance?: string;
   scriptGuidance?: string;
+  packagingLearning?: PackagingLearningProfile;
 }): Promise<{ state: PipelineState; events: PipelineEvent[]; dossier?: ResearchDossier; manifest?: ProductionManifest; qa?: QaReport; renderUri?: string; externalId?: string }> {
   const events: PipelineEvent[] = [];
   const event = (state: PipelineState, message: string) => events.push({ at: new Date().toISOString(), state, message });
@@ -42,6 +43,8 @@ export async function runContentPipeline(input: {
   const script = await generateScript({ dossier, angle, model: input.model, language: input.language, targetDurationSec: input.targetDurationSec, guidance: input.scriptGuidance });
   event('PACKAGING', input.packagingGuidance ? 'Generating title/thumbnail hypotheses with bounded owned-channel learning guidance' : 'Generating title/thumbnail hypotheses');
   const packaging = await generatePackaging({ angle, model: input.model, count: 3, guidance: input.packagingGuidance });
+  const packagingChoice = selectPackagingWithExploration({ variants: packaging, profile: input.packagingLearning, experimentSeed: input.projectId });
+  event('PACKAGING', `${packagingChoice.mode} selected packaging ${packagingChoice.selected.id} at ${(packagingChoice.explorationRate * 100).toFixed(0)}% exploration policy`);
   event('PLAN', 'Planning scenes and production cost');
   const scenes = planScenes(script, { targetSceneDurationSec: input.targetSceneDurationSec });
   const estimatedCostUsd = estimateProductionCost({ narrationSeconds: input.targetDurationSec, scenes }) + packaging.length * 0.12;
@@ -76,7 +79,12 @@ export async function runContentPipeline(input: {
     script,
     packaging,
     thumbnails,
-    selectedPackagingId: packaging[0]?.id ?? '',
+    selectedPackagingId: packagingChoice.selected.id,
+    packagingSelection: {
+      mode: packagingChoice.mode,
+      explorationRate: packagingChoice.explorationRate,
+      scores: packagingChoice.scores,
+    },
     scenes,
     assets,
     voice,
