@@ -1,5 +1,5 @@
 import type { ImageProvider, ObjectStore, Publisher, SearchProvider, TextModel, VideoProvider, VideoRenderer, VoiceProvider } from '@auto-ytb/providers';
-import { buildResearchDossier } from '@auto-ytb/editorial';
+import { buildResearchDossier, type ResearchDossier } from '@auto-ytb/editorial';
 import { estimateProductionCost, generatePackaging, generateScript, planScenes, type AssetRecord, type ProductionManifest } from '@auto-ytb/production';
 import { runQa, type QaReport } from '@auto-ytb/qa';
 
@@ -22,7 +22,7 @@ export async function runContentPipeline(input: {
   renderer: VideoRenderer;
   publisher: Publisher;
   autoUploadPrivate?: boolean;
-}): Promise<{ state: PipelineState; events: PipelineEvent[]; manifest?: ProductionManifest; qa?: QaReport; externalId?: string }> {
+}): Promise<{ state: PipelineState; events: PipelineEvent[]; dossier?: ResearchDossier; manifest?: ProductionManifest; qa?: QaReport; renderUri?: string; externalId?: string }> {
   const events: PipelineEvent[] = [];
   const event = (state: PipelineState, message: string) => events.push({ at: new Date().toISOString(), state, message });
 
@@ -30,7 +30,7 @@ export async function runContentPipeline(input: {
   const dossier = await buildResearchDossier({ topic: input.topic, search: input.search, model: input.model });
   if (dossier.blockingIssues.length || !dossier.recommendedAngleId) {
     event('BLOCKED', `Research blocked: ${dossier.blockingIssues.join('; ')}`);
-    return { state: 'BLOCKED', events };
+    return { state: 'BLOCKED', events, dossier };
   }
   const angle = dossier.angles.find((candidate) => candidate.id === dossier.recommendedAngleId)!;
 
@@ -70,7 +70,7 @@ export async function runContentPipeline(input: {
   const qa = runQa({ dossier, script, manifest, maxCostUsd: input.maxCostUsd });
   if (!qa.passed) {
     event('BLOCKED', `QA blockers: ${qa.blockers.join(', ')}`);
-    return { state: 'BLOCKED', events, manifest, qa };
+    return { state: 'BLOCKED', events, dossier, manifest, qa };
   }
 
   const stored = await input.store.put({ key: `projects/${input.projectId}/manifest.json`, contentType: 'application/json', data: JSON.stringify(manifest) });
@@ -79,7 +79,7 @@ export async function runContentPipeline(input: {
 
   if (!input.autoUploadPrivate) {
     event('READY_FOR_REVIEW', `Render ready at ${render.uri}`);
-    return { state: 'READY_FOR_REVIEW', events, manifest, qa };
+    return { state: 'READY_FOR_REVIEW', events, dossier, manifest, qa, renderUri: render.uri };
   }
 
   event('PRIVATE_UPLOAD', 'Uploading private video');
@@ -93,5 +93,5 @@ export async function runContentPipeline(input: {
     containsSyntheticMedia: qa.containsSyntheticMedia,
   });
   event('READY_FOR_REVIEW', `Private upload ${upload.externalId} ready for human review`);
-  return { state: 'READY_FOR_REVIEW', events, manifest, qa, externalId: upload.externalId };
+  return { state: 'READY_FOR_REVIEW', events, dossier, manifest, qa, renderUri: render.uri, externalId: upload.externalId };
 }
