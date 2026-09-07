@@ -19,7 +19,7 @@
     "niche:live": "npm run build && node apps/cli/dist/niche-live.js",
     "pipeline:mock": "npm run build && node apps/cli/dist/pipeline-mock.js",
     "pipeline:live": "npm run build && node scripts/live-pipeline.mjs",
-    "test:all": "npm run build && node scripts/test-core.mjs && node scripts/test-pipeline.mjs && node scripts/test-format.mjs && node scripts/test-live-adapters.mjs && node scripts/test-ops.mjs",
+    "test:all": "npm run build && node scripts/test-core.mjs && node scripts/test-pipeline.mjs && node scripts/test-format.mjs && node scripts/test-live-adapters.mjs && node scripts/test-ops.mjs && node scripts/test-learning-bandits.mjs",
     "test:adapters": "npm run build && node scripts/test-live-adapters.mjs",
     "test:ops": "npm run build && node scripts/test-ops.mjs",
     "doctor": "npm run build && node apps/cli/dist/doctor.js",
@@ -33,8 +33,8 @@
     "scheduler": "npm run build && node scripts/scheduler.mjs",
     "worker": "npm run build && node scripts/worker.mjs",
     "worker:once": "npm run build && node scripts/worker.mjs --once",
-    "ops:schedule": "npm run build && node scripts/schedule-production.mjs && node scripts/schedule-maintenance.mjs",
-    "ops:tick": "npm run build && node scripts/schedule-production.mjs && node scripts/schedule-maintenance.mjs && node scripts/worker.mjs --once"
+    "ops:schedule": "npm run build && node scripts/schedule-intelligence.mjs && node scripts/schedule-production.mjs && node scripts/schedule-maintenance.mjs",
+    "ops:tick": "npm run build && node scripts/schedule-intelligence.mjs && node scripts/schedule-production.mjs && node scripts/schedule-maintenance.mjs && node scripts/worker.mjs --once"
   },
   "dependencies": {
     "pg": "^8.16.3"
