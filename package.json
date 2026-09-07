@@ -25,7 +25,8 @@
     "oauth:url": "npm run build && node scripts/youtube-oauth.mjs",
     "oauth:exchange": "npm run build && node scripts/youtube-oauth.mjs",
     "analytics:sync": "npm run build && node scripts/analytics-sync.mjs",
-    "test:adapters": "npm run build && node scripts/test-live-adapters.mjs"
+    "test:adapters": "npm run build && node scripts/test-live-adapters.mjs",
+    "pipeline:live": "npm run build && node scripts/live-pipeline.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.3"
