@@ -22,6 +22,10 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
   const maxSimilarity = Math.max(0, ...(input.priorScripts ?? []).map((script) => overlap(input.script.beats.map((beat) => beat.narration).join(' '), script.beats.map((beat) => beat.narration).join(' '))));
   checks.push({ id: 'originality', status: maxSimilarity > 0.72 ? 'FAIL' : maxSimilarity > 0.5 ? 'WARN' : 'PASS', score: Math.round((1 - maxSimilarity) * 100), message: `Maximum prior-script lexical overlap ${(maxSimilarity * 100).toFixed(1)}%` });
 
+  const coveredSceneIds = new Set(input.manifest.assets.map((asset) => asset.sceneId));
+  const uncoveredScenes = input.manifest.scenes.filter((scene) => !coveredSceneIds.has(scene.id));
+  checks.push({ id: 'visual-coverage', status: uncoveredScenes.length ? 'FAIL' : 'PASS', score: uncoveredScenes.length ? Math.max(0, Math.round(100 * (1 - uncoveredScenes.length / Math.max(1, input.manifest.scenes.length)))) : 100, message: uncoveredScenes.length ? `${uncoveredScenes.length} scenes have no visual asset` : 'Every scene has a concrete visual asset' });
+
   const synthetic = input.manifest.scenes.some((scene) => scene.generated) || input.manifest.assets.some((asset) => asset.generated);
   checks.push({ id: 'synthetic-disclosure', status: 'PASS', score: 100, message: synthetic ? 'Synthetic media disclosure required' : 'No synthetic-media disclosure required by asset plan' });
 
