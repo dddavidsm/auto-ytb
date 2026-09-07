@@ -55,6 +55,11 @@ export type ProductionManifest = {
   packaging: PackagingVariant[];
   thumbnails: ThumbnailAsset[];
   selectedPackagingId: string;
+  packagingSelection?: {
+    mode: 'EXPLOIT' | 'EXPLORE';
+    explorationRate: number;
+    scores: Array<{ id: string; baseScore: number; learnedScore: number; noveltyScore: number; banditScore: number }>;
+  };
   scenes: Scene[];
   assets: AssetRecord[];
   voice?: BinaryAsset & { durationSeconds?: number };
