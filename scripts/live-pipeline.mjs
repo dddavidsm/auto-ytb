@@ -86,6 +86,30 @@ function packagingLearningFromRows(rows){
   return {sampleSize:publications.size,attributes};
 }
 
+function structuralLearningFromRows(rows){
+  const grouped=new Map();
+  const publications=new Set();
+  for(const row of rows){
+    const value=row.feature_value ?? {};
+    const axis=String(value.axis ?? '');
+    const arm=String(value.arm ?? '');
+    const outcome=Number(value.outcomeScore);
+    if(!axis||!arm||!Number.isFinite(outcome)) continue;
+    const key=`${axis}:${arm}`;
+    const bucket=grouped.get(key) ?? {axis,arm,weighted:0,weight:0,count:0};
+    const weight=Math.max(1,Number(row.strength ?? 50));
+    bucket.weighted+=Math.max(0,Math.min(100,outcome))*weight;
+    bucket.weight+=weight;
+    bucket.count+=1;
+    grouped.set(key,bucket);
+    if(row.publication_id) publications.add(String(row.publication_id));
+  }
+  return {
+    sampleSize:publications.size,
+    arms:[...grouped.values()].map((bucket)=>({axis:bucket.axis,arm:bucket.arm,sampleSize:bucket.count,meanOutcomeScore:Math.round((bucket.weighted/Math.max(1,bucket.weight))*10)/10})),
+  };
+}
+
 try {
   const channelRow = await db.query(`insert into channels (youtube_channel_id,title,language,country,niche,is_owned) values ($1,$2,$3,$4,$5,true) on conflict (youtube_channel_id) do update set title=excluded.title,language=excluded.language,country=excluded.country,niche=excluded.niche,is_owned=true,updated_at=now() returning id`,[process.env.YOUTUBE_CHANNEL_ID || null, channel.id, channel.language, channel.region, channel.id]);
   const channelId=channelRow.rows[0].id;
@@ -104,7 +128,13 @@ try {
     from learning_signals ls join publications p on p.id=ls.publication_id
     where ls.channel_id=$1 and ls.signal_type='packaging_attribute_performance' and ls.observed_at>=now()-interval '180 days'
       and (p.content_format=$2 or ($2='LONG_HORIZONTAL' and p.content_format is null))`,[channelId,contentFormat])).rows;
+  const structuralRows=(await db.query(`
+    select ls.publication_id,ls.feature_key,ls.feature_value,ls.strength
+    from learning_signals ls join publications p on p.id=ls.publication_id
+    where ls.channel_id=$1 and ls.signal_type='structural_experiment_performance' and ls.observed_at>=now()-interval '240 days'
+      and (p.content_format=$2 or ($2='LONG_HORIZONTAL' and p.content_format is null))`,[channelId,contentFormat])).rows;
   const packagingLearning=packagingLearningFromRows(attributeRows);
+  const structuralLearning=structuralLearningFromRows(structuralRows);
   const learningMetrics=learningResult.rows[0];
   const packagingGuidance=packagingGuidanceFromMetrics(learningMetrics);
   const baseTargetDurationSec=isShort?Number(channel.shortTargetDurationSec || 45):Number(channel.targetDurationSec || 660);
@@ -115,7 +145,7 @@ try {
   const ideaFormat=isShort?'short':'long';
   const ideaRow=await db.query(`insert into content_ideas (opportunity_id,format,working_title,premise,target_viewer,hook_hypothesis,status) values ($1,$2,$3,$4,$5,$6,'production') returning id`,[opportunityId,ideaFormat,topic,topic,channel.targetViewer,learnedProfile.scriptGuidance ?? packagingGuidance ?? 'Generated after research']);
   const contentIdeaId=ideaRow.rows[0].id;
-  const structuralExperiment=selectStructuralExperiment({sampleSize:Number(learningMetrics?.sample_size ?? 0),experimentSeed:`${channelId}:${contentFormat}:${contentIdeaId}:${topic}`,allowCostExperiment:process.env.ALLOW_COST_EXPERIMENTS!=='false'});
+  const structuralExperiment=selectStructuralExperiment({sampleSize:Number(learningMetrics?.sample_size ?? 0),experimentSeed:`${channelId}:${contentFormat}:${contentIdeaId}:${topic}`,allowCostExperiment:process.env.ALLOW_COST_EXPERIMENTS!=='false',learning:structuralLearning});
   const arm=structuralExperiment.selected;
   const durationBounds=isShort?{min:20,max:180}:{min:480,max:900};
   const sceneBounds=isShort?{min:2.5,max:8}:{min:5,max:16};
@@ -127,14 +157,15 @@ try {
     maxCostUsd:Math.round(Math.max(costFloor,Math.min(baseMaxCostUsd*1.25,learnedProfile.maxCostUsd*arm.maxCostFactor))*100)/100,
     scriptGuidance:[learnedProfile.scriptGuidance,arm.scriptGuidance].filter(Boolean).join('\n')||undefined,
     structuralExperiment,
+    structuralLearning,
     contentFormat,
   };
   const productionRepo=new ProductionRepository(db);
-  productionRunId=await productionRepo.createRun({contentIdeaId,state:'RESEARCH',metadata:{topic,channelConfig:channel.id,opportunityId,contentFormat,packagingGuidance:packagingGuidance ?? null,productionProfile,packagingLearning,structuralExperiment}});
+  productionRunId=await productionRepo.createRun({contentIdeaId,state:'RESEARCH',metadata:{topic,channelConfig:channel.id,opportunityId,contentFormat,packagingGuidance:packagingGuidance ?? null,productionProfile,packagingLearning,structuralLearning,structuralExperiment}});
 
   const result=await runContentPipeline({projectId:productionRunId,topic,language:channel.language,contentFormat,targetDurationSec:productionProfile.targetDurationSec,targetSceneDurationSec:productionProfile.targetSceneDurationSec,voice:process.env.VOICE_ID || channel.voice,maxCostUsd:productionProfile.maxCostUsd,search:runtime.search,model:runtime.model,voiceProvider:runtime.voice,imageProvider:runtime.image,videoProvider:runtime.video,thumbnailComposer:runtime.thumbnailComposer,store:runtime.store,renderer:runtime.renderer,publisher:runtime.publisher,autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE === 'true',packagingGuidance,scriptGuidance:productionProfile.scriptGuidance,packagingLearning});
 
-  await productionRepo.updateRun(productionRunId,{state:result.state,totalCostUsd:result.manifest?.actualCostUsd ?? 0,metadata:{events:result.events,renderUri:result.renderUri,opportunityId,contentFormat,packagingGuidance:packagingGuidance ?? null,productionProfile,packagingLearning,packagingSelection:result.manifest?.packagingSelection ?? null,structuralExperiment}});
+  await productionRepo.updateRun(productionRunId,{state:result.state,totalCostUsd:result.manifest?.actualCostUsd ?? 0,metadata:{events:result.events,renderUri:result.renderUri,opportunityId,contentFormat,packagingGuidance:packagingGuidance ?? null,productionProfile,packagingLearning,structuralLearning,packagingSelection:result.manifest?.packagingSelection ?? null,structuralExperiment}});
   let researchDossierId=null;
   if(result.dossier) researchDossierId=await new ResearchRepository(db).create({opportunityId,topic,researchConfidence:result.dossier.researchConfidence,executiveSummary:result.dossier.executiveSummary,blockingIssues:result.dossier.blockingIssues,dossier:result.dossier});
   if(result.manifest?.script){
@@ -142,14 +173,14 @@ try {
     for(const variant of result.manifest.packaging) await db.query(`insert into packaging_variants (content_idea_id,variant_key,title,thumbnail_concept,score,payload) values ($1,$2,$3,$4,$5,$6::jsonb) on conflict (content_idea_id,variant_key) do update set title=excluded.title,thumbnail_concept=excluded.thumbnail_concept,score=excluded.score,payload=excluded.payload`,[contentIdeaId,variant.id,variant.title,variant.thumbnailConcept,variant.score ?? (variant.curiosity+variant.clarity+variant.credibility+variant.differentiation)/4,JSON.stringify(variant)]);
     const variants=result.manifest.packaging;
     await db.query(`insert into model_experiments (channel_id,experiment_type,hypothesis,variant_a,variant_b,variant_c,winner,outcome) values ($1,'packaging_bandit',$2,$3::jsonb,$4::jsonb,$5::jsonb,$6,$7::jsonb)`,[channelId,`Bounded packaging exploration improves ${contentFormat} outcome while preserving periodic exploration.`,JSON.stringify(variants[0] ?? {}),JSON.stringify(variants[1] ?? {}),JSON.stringify(variants[2] ?? {}),result.manifest.selectedPackagingId,JSON.stringify({productionRunId,contentFormat,selection:result.manifest.packagingSelection ?? null,status:'assigned'})]);
-    await db.query(`insert into model_experiments (channel_id,experiment_type,hypothesis,variant_a,winner,outcome) values ($1,'structural_bandit',$2,$3::jsonb,$4,$5::jsonb)`,[channelId,`One-axis bounded structural exploration can improve ${contentFormat} retention and unit economics.`,JSON.stringify(structuralExperiment),arm.arm,JSON.stringify({productionRunId,contentFormat,axis:arm.axis,arm:arm.arm,status:'assigned'})]);
+    await db.query(`insert into model_experiments (channel_id,experiment_type,hypothesis,variant_a,winner,outcome) values ($1,'structural_bandit',$2,$3::jsonb,$4,$5::jsonb)`,[channelId,`One-axis bounded structural exploration can improve ${contentFormat} retention and unit economics.`,JSON.stringify(structuralExperiment),arm.arm,JSON.stringify({productionRunId,contentFormat,axis:arm.axis,arm:arm.arm,mode:structuralExperiment.mode,status:'assigned'})]);
     for(const asset of result.manifest.assets) await productionRepo.addAsset({productionRunId,sceneId:asset.sceneId,assetType:asset.mimeType,uri:asset.uri,provider:asset.provider,model:asset.model,generated:asset.generated,sourceIds:asset.sourceIds,costUsd:asset.costUsd});
     for(const thumbnail of result.manifest.thumbnails) await productionRepo.addAsset({productionRunId,sceneId:`thumbnail:${thumbnail.packagingId}`,assetType:'image/jpeg',uri:thumbnail.uri,provider:thumbnail.provider,model:thumbnail.model,generated:true,sourceIds:[],costUsd:thumbnail.costUsd,metadata:{packagingId:thumbnail.packagingId,text:thumbnail.text ?? null}});
   }
   if(result.qa) await productionRepo.addQaReport({productionRunId,passed:result.qa.passed,score:result.qa.score,containsSyntheticMedia:result.qa.containsSyntheticMedia,blockers:result.qa.blockers,report:result.qa});
-  if(result.externalId) await new PublicationRepository(db).create({productionRunId,channelId,youtubeVideoId:result.externalId,state:'private',contentFormat,containsSyntheticMedia:result.qa?.containsSyntheticMedia ?? false,metadata:{renderUri:result.renderUri,contentFormat,selectedPackagingId:result.manifest?.selectedPackagingId,packagingGuidance:packagingGuidance ?? null,productionProfile,packagingSelection:result.manifest?.packagingSelection ?? null,structuralExperiment}});
+  if(result.externalId) await new PublicationRepository(db).create({productionRunId,channelId,youtubeVideoId:result.externalId,state:'private',contentFormat,containsSyntheticMedia:result.qa?.containsSyntheticMedia ?? false,metadata:{renderUri:result.renderUri,contentFormat,selectedPackagingId:result.manifest?.selectedPackagingId,packagingGuidance:packagingGuidance ?? null,productionProfile,packagingSelection:result.manifest?.packagingSelection ?? null,structuralLearning,structuralExperiment}});
   if(opportunityId && result.state==='READY_FOR_REVIEW') await db.query(`update opportunities set status='produced',recommended_format=coalesce(recommended_format,$2) where id=$1`,[opportunityId,contentFormat]);
-  console.log(JSON.stringify({productionRunId,contentFormat,state:result.state,qa:result.qa?.score,costUsd:result.manifest?.actualCostUsd,thumbnails:result.manifest?.thumbnails.length ?? 0,renderUri:result.renderUri,youtubeVideoId:result.externalId ?? null,learnedPackaging:Boolean(packagingGuidance),productionProfile,packagingSelection:result.manifest?.packagingSelection ?? null,structuralExperiment},null,2));
+  console.log(JSON.stringify({productionRunId,contentFormat,state:result.state,qa:result.qa?.score,costUsd:result.manifest?.actualCostUsd,thumbnails:result.manifest?.thumbnails.length ?? 0,renderUri:result.renderUri,youtubeVideoId:result.externalId ?? null,learnedPackaging:Boolean(packagingGuidance),productionProfile,packagingSelection:result.manifest?.packagingSelection ?? null,structuralLearning,structuralExperiment},null,2));
 } catch(error) {
   if(productionRunId) await db.query(`update production_runs set state='BLOCKED',metadata=metadata || $2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({error:error instanceof Error?error.message:String(error),contentFormat})]);
   throw error;
