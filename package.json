@@ -3,10 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty false",
@@ -16,9 +13,11 @@
     "niches": "npm run build && node apps/cli/dist/niches.js",
     "plan": "npm run build && node apps/cli/dist/plan.js",
     "discover:competitors": "npm run build && node apps/cli/dist/discover-competitors.js",
-    "niche:live": "npm run build && node apps/cli/dist/niche-live.js"
+    "niche:live": "npm run build && node apps/cli/dist/niche-live.js",
+    "pipeline:mock": "npm run build && node apps/cli/dist/pipeline-mock.js",
+    "test:all": "npm run build && node scripts/test-core.mjs && node scripts/test-pipeline.mjs",
+    "doctor": "npm run build && node apps/cli/dist/doctor.js",
+    "dashboard": "node apps/dashboard/server.mjs"
   },
-  "devDependencies": {
-    "typescript": "^5.8.3"
-  }
+  "devDependencies": { "typescript": "^5.8.3" }
 }

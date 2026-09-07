@@ -1,0 +1,31 @@
+name: Daily Market Radar
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 5 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    env:
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      YOUTUBE_REGION: US
+      YOUTUBE_RELEVANCE_LANGUAGE: en
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Require API connection
+        run: test -n "$YOUTUBE_API_KEY" || (echo "Configure repository secret YOUTUBE_API_KEY" && exit 1)
+      - run: npm run niche:live
+      - uses: actions/upload-artifact@v4
+        with:
+          name: niche-live-${{ github.run_id }}
+          path: .data/niche-live-latest.json
+          retention-days: 30

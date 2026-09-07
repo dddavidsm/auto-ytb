@@ -6,6 +6,13 @@
   "dependencies": {
     "@auto-ytb/core": "0.1.0",
     "@auto-ytb/youtube": "0.1.0",
-    "@auto-ytb/intelligence": "0.1.0"
+    "@auto-ytb/intelligence": "0.1.0",
+    "@auto-ytb/providers": "0.1.0",
+    "@auto-ytb/editorial": "0.1.0",
+    "@auto-ytb/production": "0.1.0",
+    "@auto-ytb/qa": "0.1.0",
+    "@auto-ytb/analytics": "0.1.0",
+    "@auto-ytb/orchestrator": "0.1.0",
+    "@auto-ytb/os": "0.1.0"
   }
 }

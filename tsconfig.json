@@ -1,20 +1,17 @@
 {
   "files": [],
   "references": [
-    {
-      "path": "./packages/core"
-    },
-    {
-      "path": "./packages/youtube"
-    },
-    {
-      "path": "./packages/persistence"
-    },
-    {
-      "path": "./packages/intelligence"
-    },
-    {
-      "path": "./apps/cli"
-    }
+    { "path": "./packages/core" },
+    { "path": "./packages/youtube" },
+    { "path": "./packages/persistence" },
+    { "path": "./packages/intelligence" },
+    { "path": "./apps/cli" },
+    { "path": "./packages/providers" },
+    { "path": "./packages/editorial" },
+    { "path": "./packages/production" },
+    { "path": "./packages/qa" },
+    { "path": "./packages/analytics" },
+    { "path": "./packages/orchestrator" },
+    { "path": "./packages/os" }
   ]
 }

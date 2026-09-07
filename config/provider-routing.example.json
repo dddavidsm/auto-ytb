@@ -1,0 +1,10 @@
+{
+  "search": { "primary": "SEARCH_PROVIDER", "fallback": null },
+  "text": { "research": "TEXT_MODEL_RESEARCH", "creative": "TEXT_MODEL_CREATIVE", "fallback": null },
+  "voice": { "primary": "VOICE_PROVIDER", "fallback": null },
+  "image": { "primary": "IMAGE_PROVIDER", "fallback": null },
+  "video": { "primary": "VIDEO_PROVIDER", "fallback": null },
+  "storage": { "primary": "OBJECT_STORE", "fallback": null },
+  "renderer": { "primary": "RENDERER", "fallback": null },
+  "publisher": { "primary": "YOUTUBE", "fallback": null }
+}

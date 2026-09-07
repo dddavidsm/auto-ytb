@@ -1,0 +1,11 @@
+{
+  "autoPublishPublic": false,
+  "privateUploadAllowed": true,
+  "humanReviewRequiredBeforePublic": true,
+  "rejectUnsupportedCriticalClaims": true,
+  "rejectUnknownAssetProvenance": true,
+  "syntheticMediaDisclosure": "auto",
+  "maxProductionCostUsd": 25,
+  "minResearchConfidence": 65,
+  "minQaScore": 80
+}
