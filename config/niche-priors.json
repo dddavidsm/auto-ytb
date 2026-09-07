@@ -1,0 +1,50 @@
+[
+  {
+    "id":"future-tech-business",
+    "label":"Future / Tech / Business Documentaries",
+    "signals":{"monetizationPotential":88,"trendFrequency":92,"evergreenDepth":82,"audienceBreadth":88,"storytellingPotential":94,"packagingPotential":94,"sponsorAffiliatePotential":90,"automationFit":86,"assetAvailability":82,"crossLanguagePotential":91,"differentiationPotential":74,"evidenceConfidence":45},
+    "risks":{"policyRisk":12,"copyrightRisk":18,"expertiseRisk":20,"productionCostRisk":32,"saturationRisk":45}
+  },
+  {
+    "id":"internet-stories",
+    "label":"Internet / Platform / Cyber Stories",
+    "signals":{"monetizationPotential":82,"trendFrequency":84,"evergreenDepth":80,"audienceBreadth":84,"storytellingPotential":96,"packagingPotential":94,"sponsorAffiliatePotential":82,"automationFit":87,"assetAvailability":86,"crossLanguagePotential":88,"differentiationPotential":82,"evidenceConfidence":40},
+    "risks":{"policyRisk":18,"copyrightRisk":15,"expertiseRisk":24,"productionCostRisk":27,"saturationRisk":37}
+  },
+  {
+    "id":"business-wars",
+    "label":"Business Wars / Corporate Strategy",
+    "signals":{"monetizationPotential":92,"trendFrequency":72,"evergreenDepth":92,"audienceBreadth":82,"storytellingPotential":95,"packagingPotential":91,"sponsorAffiliatePotential":94,"automationFit":80,"assetAvailability":78,"crossLanguagePotential":88,"differentiationPotential":76,"evidenceConfidence":40},
+    "risks":{"policyRisk":10,"copyrightRisk":14,"expertiseRisk":27,"productionCostRisk":30,"saturationRisk":42}
+  },
+  {
+    "id":"science-future",
+    "label":"Science / Future Explain-Documentaries",
+    "signals":{"monetizationPotential":76,"trendFrequency":74,"evergreenDepth":94,"audienceBreadth":79,"storytellingPotential":89,"packagingPotential":88,"sponsorAffiliatePotential":72,"automationFit":73,"assetAvailability":72,"crossLanguagePotential":91,"differentiationPotential":79,"evidenceConfidence":35},
+    "risks":{"policyRisk":12,"copyrightRisk":11,"expertiseRisk":55,"productionCostRisk":42,"saturationRisk":30}
+  },
+  {
+    "id":"consumer-tech",
+    "label":"Consumer Technology Explain-Documentaries",
+    "signals":{"monetizationPotential":91,"trendFrequency":89,"evergreenDepth":62,"audienceBreadth":93,"storytellingPotential":77,"packagingPotential":90,"sponsorAffiliatePotential":96,"automationFit":79,"assetAvailability":90,"crossLanguagePotential":92,"differentiationPotential":56,"evidenceConfidence":45},
+    "risks":{"policyRisk":8,"copyrightRisk":19,"expertiseRisk":18,"productionCostRisk":27,"saturationRisk":71}
+  },
+  {
+    "id":"finance-stories",
+    "label":"Finance / Market Stories",
+    "signals":{"monetizationPotential":98,"trendFrequency":92,"evergreenDepth":80,"audienceBreadth":84,"storytellingPotential":90,"packagingPotential":91,"sponsorAffiliatePotential":98,"automationFit":72,"assetAvailability":82,"crossLanguagePotential":86,"differentiationPotential":70,"evidenceConfidence":35},
+    "risks":{"policyRisk":38,"copyrightRisk":9,"expertiseRisk":65,"productionCostRisk":25,"saturationRisk":58}
+  },
+  {
+    "id":"history-systems",
+    "label":"History Through Systems / Technology",
+    "signals":{"monetizationPotential":68,"trendFrequency":55,"evergreenDepth":99,"audienceBreadth":81,"storytellingPotential":97,"packagingPotential":90,"sponsorAffiliatePotential":61,"automationFit":81,"assetAvailability":74,"crossLanguagePotential":94,"differentiationPotential":87,"evidenceConfidence":30},
+    "risks":{"policyRisk":7,"copyrightRisk":13,"expertiseRisk":38,"productionCostRisk":36,"saturationRisk":28}
+  },
+  {
+    "id":"luxury-business",
+    "label":"Luxury / Business / Manufacturing",
+    "signals":{"monetizationPotential":90,"trendFrequency":64,"evergreenDepth":90,"audienceBreadth":79,"storytellingPotential":88,"packagingPotential":96,"sponsorAffiliatePotential":92,"automationFit":80,"assetAvailability":75,"crossLanguagePotential":92,"differentiationPotential":79,"evidenceConfidence":30},
+    "risks":{"policyRisk":7,"copyrightRisk":18,"expertiseRisk":24,"productionCostRisk":38,"saturationRisk":36}
+  }
+]

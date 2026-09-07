@@ -1,0 +1,11 @@
+{
+  "dailySearchCalls": 100,
+  "lanes": [
+    {"name":"global-emerging","weight":18,"minCalls":15,"maxCalls":22},
+    {"name":"primary-niche","weight":34,"minCalls":28,"maxCalls":40},
+    {"name":"competitor-discovery","weight":22,"minCalls":18,"maxCalls":28},
+    {"name":"content-gap-proxies","weight":14,"minCalls":10,"maxCalls":18},
+    {"name":"experiments","weight":8,"minCalls":5,"maxCalls":10},
+    {"name":"reserve","weight":4,"minCalls":4,"maxCalls":8}
+  ]
+}

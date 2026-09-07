@@ -1,0 +1,10 @@
+[
+  {"id":"future-tech-business","label":"Future / Tech / Business Documentaries","priority":1,"language":"en"},
+  {"id":"internet-stories","label":"Internet / Platform / Cyber Stories","priority":2,"language":"en"},
+  {"id":"business-wars","label":"Business Wars / Corporate Strategy","priority":3,"language":"en"},
+  {"id":"science-future","label":"Science / Future Explain-Documentaries","priority":4,"language":"en"},
+  {"id":"consumer-tech","label":"Consumer Technology Explain-Documentaries","priority":5,"language":"en"},
+  {"id":"finance-stories","label":"Finance / Market Stories","priority":6,"language":"en"},
+  {"id":"history-systems","label":"History Through Systems / Technology","priority":7,"language":"en"},
+  {"id":"luxury-business","label":"Luxury / Business / Manufacturing","priority":8,"language":"en"}
+]

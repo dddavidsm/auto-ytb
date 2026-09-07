@@ -1,0 +1,19 @@
+{
+  "name": "auto-ytb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "test": "npm run build && node scripts/test-core.mjs",
+    "demo": "npm run build && node apps/cli/dist/demo.js",
+    "radar": "npm run build && node apps/cli/dist/radar.js",
+    "niches": "npm run build && node apps/cli/dist/niches.js",
+    "plan": "npm run build && node apps/cli/dist/plan.js"
+  }
+}
