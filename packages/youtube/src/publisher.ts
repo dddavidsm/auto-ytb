@@ -5,6 +5,10 @@ export interface UploadAssetLoader {
   load(uri: string): Promise<{ body: Uint8Array | Blob; mimeType: string; size: number }>;
 }
 
+function asRequestBody(body: Uint8Array | Blob): BodyInit {
+  return body as BodyInit;
+}
+
 export class YouTubePublisher implements Publisher {
   readonly name = 'youtube-data-api';
   constructor(private readonly tokenProvider: GoogleOAuthTokenProvider, private readonly loader: UploadAssetLoader, private readonly fetchFn: typeof fetch = fetch) {}
@@ -50,7 +54,7 @@ export class YouTubePublisher implements Publisher {
     const upload = await this.fetchFn(location, {
       method: 'PUT',
       headers: { 'content-type': asset.mimeType, 'content-length': String(asset.size) },
-      body: asset.body,
+      body: asRequestBody(asset.body),
     });
     if (!upload.ok) throw new Error(`YouTube upload failed ${upload.status}: ${(await upload.text()).slice(0, 500)}`);
     const json = await upload.json() as { id: string };
@@ -65,7 +69,7 @@ export class YouTubePublisher implements Publisher {
     const response = await this.fetchFn(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(input.externalId)}&uploadType=media`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': asset.mimeType, 'content-length': String(asset.size) },
-      body: asset.body,
+      body: asRequestBody(asset.body),
     });
     if (!response.ok) throw new Error(`YouTube thumbnail upload failed ${response.status}: ${(await response.text()).slice(0, 500)}`);
     return { status: 'set' };
