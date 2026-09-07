@@ -1,9 +1,10 @@
 import type { VideoScript, Scene } from './types.js';
 
-export function planScenes(script: VideoScript): Scene[] {
+export function planScenes(script: VideoScript, options: { targetSceneDurationSec?: number } = {}): Scene[] {
+  const targetSceneDurationSec = Math.max(5, Math.min(16, options.targetSceneDurationSec ?? 10));
   const scenes: Scene[] = [];
   for (const beat of script.beats) {
-    const sceneCount = Math.max(1, Math.ceil(beat.targetDurationSec / 10));
+    const sceneCount = Math.max(1, Math.ceil(beat.targetDurationSec / targetSceneDurationSec));
     const duration = beat.targetDurationSec / sceneCount;
     for (let index = 0; index < sceneCount; index += 1) {
       const highImpact = /impossible|conceptual|future|reconstruction|visualize|transformation|explosion|collapse|race|battle/i.test(beat.visualIntent) && index === 0;
