@@ -96,3 +96,18 @@ assert.equal(snapshotPlan[0].isDue,true);
 console.log('✓ topic clustering baseline');
 console.log('✓ observed niche evidence normalization + winner gate');
 console.log('✓ adaptive competitor snapshot planning');
+
+const { calculateLearningBoost, rankProductionCandidates } = await import('../packages/os/dist/index.js');
+const positiveLearning = calculateLearningBoost({sampleSize:8,strongHookRate:0.88,averageViewPercentage:67,shareRate:1.4,roi:1.8});
+const negativeLearning = calculateLearningBoost({sampleSize:8,strongHookRate:0.3,averageViewPercentage:34,shareRate:0.1,roi:-0.8});
+const sparseLearning = calculateLearningBoost({sampleSize:1,strongHookRate:1,averageViewPercentage:90,shareRate:5,roi:5});
+assert.ok(positiveLearning > 0 && positiveLearning <= 8);
+assert.ok(negativeLearning < 0 && negativeLearning >= -8);
+assert.ok(sparseLearning < positiveLearning, 'single-video evidence must be confidence-limited');
+const adaptiveRank = rankProductionCandidates([
+  {id:'learned',score:84,detectedAt:'2026-09-07T10:00:00Z',riskPenalty:10,expectedCostUsd:10,learningBoost:6},
+  {id:'baseline',score:84,detectedAt:'2026-09-07T10:00:00Z',riskPenalty:10,expectedCostUsd:10,learningBoost:0},
+], new Date('2026-09-07T12:00:00Z'));
+assert.equal(adaptiveRank[0].id,'learned');
+console.log('✓ bounded owned-channel learning boost');
+console.log('✓ learning-aware production ranking');
