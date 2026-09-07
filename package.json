@@ -15,7 +15,8 @@
     "radar": "npm run build && node apps/cli/dist/radar.js",
     "niches": "npm run build && node apps/cli/dist/niches.js",
     "plan": "npm run build && node apps/cli/dist/plan.js",
-    "discover:competitors": "npm run build && node apps/cli/dist/discover-competitors.js"
+    "discover:competitors": "npm run build && node apps/cli/dist/discover-competitors.js",
+    "niche:live": "npm run build && node apps/cli/dist/niche-live.js"
   },
   "devDependencies": {
     "typescript": "^5.8.3"

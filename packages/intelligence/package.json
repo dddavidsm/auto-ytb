@@ -1,0 +1,16 @@
+{
+  "name": "@auto-ytb/intelligence",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@auto-ytb/core": "0.1.0",
+    "@auto-ytb/youtube": "0.1.0"
+  }
+}

@@ -9,3 +9,6 @@ export * from './evidence.js';
 export * from './planner.js';
 export * from './competitor-ranker.js';
 export * from './query.js';
+export * from './topic-cluster.js';
+export * from './niche-observation.js';
+export * from './snapshot-plan.js';

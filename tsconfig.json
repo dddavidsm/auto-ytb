@@ -11,6 +11,9 @@
       "path": "./packages/persistence"
     },
     {
+      "path": "./packages/intelligence"
+    },
+    {
       "path": "./apps/cli"
     }
   ]

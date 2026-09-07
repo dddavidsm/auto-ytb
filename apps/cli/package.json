@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@auto-ytb/core": "0.1.0",
-    "@auto-ytb/youtube": "0.1.0"
+    "@auto-ytb/youtube": "0.1.0",
+    "@auto-ytb/intelligence": "0.1.0"
   }
 }

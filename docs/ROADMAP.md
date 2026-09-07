@@ -18,12 +18,15 @@
 
 ### Next
 - [x] Persistence repositories (provider-agnostic Postgres SQL)
-- [ ] Scheduled snapshot jobs
+- [x] Adaptive snapshot scheduling policy
 - [x] Seed-query generator / deduplicator
 - [x] Competitor discovery ranker
-- [ ] Topic/entity clustering
-- [ ] Current-market niche evidence collection
-- [ ] Niche winner decision gate
+- [x] Topic clustering baseline (lexical; embeddings later)
+- [x] Current-market niche evidence collector CLI
+- [x] Niche winner decision gate
+
+### M1 code-complete gate
+The live winner remains evidence-gated until `npm run niche:live` collects enough market samples.
 
 ## M2 — Editorial Research Engine
 - source discovery / claim extraction

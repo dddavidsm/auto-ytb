@@ -4,23 +4,15 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "declaration": true,
     "composite": true,
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": "src"
   },
   "references": [
-    {
-      "path": "../../packages/core"
-    },
-    {
-      "path": "../../packages/youtube"
-    },
-    {
-      "path": "../../packages/intelligence"
-    }
+    {"path":"../core"},
+    {"path":"../youtube"}
   ],
-  "include": [
-    "src/**/*.ts"
-  ]
+  "include": ["src/**/*.ts"]
 }

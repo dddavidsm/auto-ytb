@@ -66,3 +66,33 @@ assert.ok(seeds.length <= 8);
 assert.equal(dedupeSeedQueries([{query:' AI Agents ',priority:50},{query:'ai agents',priority:80}])[0].priority,80);
 console.log('✓ competitor discovery ranking');
 console.log('✓ seed query expansion/deduplication');
+
+const { clusterTopics, topicSimilarity, normalizeNicheObservations, evaluateNiches, selectNicheWinner, planCompetitorSnapshots } = await import('../packages/core/dist/index.js');
+assert.ok(topicSimilarity('AI browser agents are changing search', 'autonomous AI browser agent changes search') >= 48);
+const clusters = clusterTopics([
+  {id:'1',text:'AI browser agents are changing search'},
+  {id:'2',text:'autonomous AI browser agent changes search'},
+  {id:'3',text:'fusion energy breakthrough reactor'},
+]);
+assert.equal(clusters.length, 2);
+const observations = normalizeNicheObservations([
+  {nicheId:'a',competitorCount:16,priorityCompetitors:6,trackCompetitors:5,totalRecentVideos:260,totalBreakouts:28,medianViewsPerDay:18000,medianCompetitorScore:74,strongestOutlier:98},
+  {nicheId:'b',competitorCount:10,priorityCompetitors:1,trackCompetitors:3,totalRecentVideos:150,totalBreakouts:6,medianViewsPerDay:5000,medianCompetitorScore:55,strongestOutlier:82},
+]);
+assert.ok(observations[0].observedOpportunity > observations[1].observedOpportunity);
+const priorBase = {monetizationPotential:90,trendFrequency:80,evergreenDepth:85,audienceBreadth:85,storytellingPotential:90,packagingPotential:90,sponsorAffiliatePotential:90,automationFit:85,assetAvailability:85,crossLanguagePotential:90,differentiationPotential:75,evidenceConfidence:20};
+const risksBase = {policyRisk:10,copyrightRisk:10,expertiseRisk:20,productionCostRisk:25,saturationRisk:35};
+const evaluatedNiches = evaluateNiches([
+  {id:'a',label:'A',signals:priorBase,risks:risksBase},
+  {id:'b',label:'B',signals:{...priorBase,monetizationPotential:85},risks:risksBase},
+], [
+  {nicheId:'a',competitorCount:16,priorityCompetitors:8,trackCompetitors:5,totalRecentVideos:300,totalBreakouts:36,medianViewsPerDay:22000,medianCompetitorScore:80,strongestOutlier:100},
+  {nicheId:'b',competitorCount:8,priorityCompetitors:1,trackCompetitors:2,totalRecentVideos:120,totalBreakouts:4,medianViewsPerDay:3500,medianCompetitorScore:50,strongestOutlier:75},
+]);
+assert.equal(selectNicheWinner(evaluatedNiches).decision, 'PRIMARY');
+const snapshotPlan = planCompetitorSnapshots([{id:'x',tier:'PRIORITY',lastCapturedAt:new Date('2026-09-07T00:00:00Z'),breakoutActive:true}], new Date('2026-09-07T04:00:00Z'));
+assert.equal(snapshotPlan[0].intervalHours,3);
+assert.equal(snapshotPlan[0].isDue,true);
+console.log('✓ topic clustering baseline');
+console.log('✓ observed niche evidence normalization + winner gate');
+console.log('✓ adaptive competitor snapshot planning');
