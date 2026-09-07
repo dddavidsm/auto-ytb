@@ -27,7 +27,17 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
   const uncoveredScenes = input.manifest.scenes.filter((scene) => !coveredSceneIds.has(scene.id));
   checks.push({ id: 'visual-coverage', status: uncoveredScenes.length ? 'FAIL' : 'PASS', score: uncoveredScenes.length ? Math.max(0, Math.round(100 * (1 - uncoveredScenes.length / Math.max(1, input.manifest.scenes.length)))) : 100, message: uncoveredScenes.length ? `${uncoveredScenes.length} scenes have no visual asset` : 'Every scene has a concrete visual asset' });
 
+  const totalVisualSeconds = input.manifest.scenes.reduce((sum,scene)=>sum+Math.max(0,scene.durationSec),0);
+  const aiVideoSeconds = input.manifest.scenes.filter((scene)=>scene.kind==='ai_video').reduce((sum,scene)=>sum+Math.max(0,scene.durationSec),0);
+  const proceduralSeconds = input.manifest.scenes.filter((scene)=>['chart','motion_graphic','text'].includes(scene.kind)).reduce((sum,scene)=>sum+Math.max(0,scene.durationSec),0);
+  const aiVideoShare = totalVisualSeconds ? aiVideoSeconds / totalVisualSeconds : 0;
+  const proceduralShare = totalVisualSeconds ? proceduralSeconds / totalVisualSeconds : 0;
+  const visualKinds = new Set(input.manifest.scenes.map((scene)=>scene.kind)).size;
   const isShort = input.manifest.contentFormat === 'SHORT_VERTICAL';
+  const hybridWarn = aiVideoShare > (isShort ? 0.65 : 0.45) || (!isShort && input.manifest.scenes.length >= 4 && proceduralShare < 0.15) || (!isShort && input.manifest.scenes.length >= 4 && visualKinds < 2);
+  const hybridScore = clamp(Math.round(100 - Math.max(0,aiVideoShare-(isShort?0.45:0.25))*80 - Math.max(0,(isShort?0:0.20)-proceduralShare)*55 - (visualKinds<2?12:0)));
+  checks.push({ id:'hybrid-visual-balance', status:hybridWarn?'WARN':'PASS', score:hybridScore, message:`AI video ${(aiVideoShare*100).toFixed(0)}% · procedural ${(proceduralShare*100).toFixed(0)}% · ${visualKinds} visual types` });
+
   const packagingIds = new Set(input.manifest.packaging.map((variant) => variant.id));
   const thumbnailIds = new Set(input.manifest.thumbnails.map((thumbnail) => thumbnail.packagingId));
   const missingThumbnails = isShort ? [] : [...packagingIds].filter((id) => !thumbnailIds.has(id));
@@ -56,8 +66,8 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
   const expectedPortrait = isShort ? input.manifest.frame.height > input.manifest.frame.width : input.manifest.frame.width > input.manifest.frame.height;
   checks.push({ id:'format-frame', status:input.manifest.aspectRatio===expectedAspect && expectedPortrait?'PASS':'FAIL', score:input.manifest.aspectRatio===expectedAspect && expectedPortrait?100:0, message:`${input.manifest.contentFormat} ${input.manifest.frame.width}x${input.manifest.frame.height} ${input.manifest.aspectRatio}` });
 
-  const synthetic = input.manifest.scenes.some((scene) => scene.generated) || input.manifest.assets.some((asset) => asset.generated) || input.manifest.thumbnails.some((thumbnail) => thumbnail.provider !== 'human');
-  checks.push({ id: 'synthetic-disclosure', status: 'PASS', score: 100, message: synthetic ? 'Synthetic media disclosure required where applicable' : 'No synthetic-media disclosure required by asset plan' });
+  const synthetic = input.manifest.scenes.some((scene) => scene.generated) || input.manifest.assets.some((asset) => asset.generated);
+  checks.push({ id: 'synthetic-disclosure', status: 'PASS', score: 100, message: synthetic ? 'Synthetic media disclosure required where applicable' : 'No synthetic-media disclosure required by video asset plan' });
 
   const estimated = input.manifest.estimatedCostUsd;
   const maxCost = input.maxCostUsd ?? 25;
