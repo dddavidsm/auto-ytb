@@ -67,3 +67,43 @@ export function dedupeJobs(jobs: Job[]): Job[] {
   }
   return [...byKey.values()].sort((a, b) => b.priority - a.priority);
 }
+
+export type RetryPolicy = { baseDelayMs?: number; maxDelayMs?: number; jitterRatio?: number };
+export function computeRetryDelayMs(attempt: number, policy: RetryPolicy = {}): number {
+  if (!Number.isFinite(attempt) || attempt < 1) throw new Error('attempt must be >= 1');
+  const base = Math.max(1000, policy.baseDelayMs ?? 60_000);
+  const max = Math.max(base, policy.maxDelayMs ?? 6 * 60 * 60_000);
+  const jitterRatio = Math.max(0, Math.min(0.5, policy.jitterRatio ?? 0));
+  const exponential = Math.min(max, base * 2 ** Math.min(20, attempt - 1));
+  const deterministicJitter = exponential * jitterRatio * (((attempt * 9301 + 49297) % 233280) / 233280);
+  return Math.round(Math.min(max, exponential + deterministicJitter));
+}
+
+export function shouldRetry(attempts: number, maxAttempts: number): boolean {
+  return attempts < Math.max(1, maxAttempts);
+}
+
+export type ProductionCandidate = {
+  id: string;
+  score: number;
+  detectedAt: string;
+  expiresAt?: string | null;
+  riskPenalty?: number;
+  expectedCostUsd?: number;
+};
+
+export function rankProductionCandidates(candidates: ProductionCandidate[], now = new Date()): Array<ProductionCandidate & { productionPriority: number }> {
+  const nowMs = now.getTime();
+  return candidates.map((candidate) => {
+    const detectedMs = new Date(candidate.detectedAt).getTime();
+    const ageHours = Number.isFinite(detectedMs) ? Math.max(0, (nowMs - detectedMs) / 3_600_000) : 0;
+    const freshness = Math.max(0, 100 - ageHours * 1.5);
+    const expiresMs = candidate.expiresAt ? new Date(candidate.expiresAt).getTime() : NaN;
+    const hoursToExpiry = Number.isFinite(expiresMs) ? Math.max(0, (expiresMs - nowMs) / 3_600_000) : 168;
+    const urgency = Number.isFinite(expiresMs) ? Math.max(0, 100 - Math.min(100, hoursToExpiry * 2)) : 20;
+    const risk = Math.max(0, Math.min(100, candidate.riskPenalty ?? 0));
+    const costPenalty = Math.max(0, Math.min(25, (candidate.expectedCostUsd ?? 0) * 1.2));
+    const productionPriority = Math.round(Math.max(0, Math.min(100, candidate.score * 0.58 + freshness * 0.2 + urgency * 0.12 + (100 - risk) * 0.1 - costPenalty)) * 10) / 10;
+    return { ...candidate, productionPriority };
+  }).sort((a,b)=>b.productionPriority-a.productionPriority || b.score-a.score);
+}
