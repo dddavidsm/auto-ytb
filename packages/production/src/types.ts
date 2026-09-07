@@ -1,0 +1,61 @@
+import type { BinaryAsset } from '@auto-ytb/providers';
+
+export type ScriptBeat = {
+  id: string;
+  startSec: number;
+  targetDurationSec: number;
+  purpose: 'hook' | 'setup' | 'evidence' | 'escalation' | 'reveal' | 'payoff' | 'cta';
+  narration: string;
+  onScreenText?: string;
+  visualIntent: string;
+  sourceIds: string[];
+  retentionDevice?: 'open_loop' | 'pattern_interrupt' | 'question' | 'contrast' | 'reveal' | 'none';
+};
+
+export type VideoScript = {
+  title: string;
+  language: string;
+  targetDurationSec: number;
+  thesis: string;
+  beats: ScriptBeat[];
+  outro: string;
+};
+
+export type PackagingVariant = {
+  id: string;
+  title: string;
+  thumbnailConcept: string;
+  thumbnailText?: string;
+  promise: string;
+  curiosity: number;
+  clarity: number;
+  credibility: number;
+  differentiation: number;
+  score: number;
+};
+
+export type Scene = {
+  id: string;
+  startSec: number;
+  durationSec: number;
+  kind: 'archive' | 'screenshot' | 'chart' | 'map' | 'motion_graphic' | 'ai_image' | 'ai_video' | 'text' | 'broll';
+  instruction: string;
+  sourceIds: string[];
+  generated: boolean;
+};
+
+export type AssetRecord = BinaryAsset & { sceneId: string; generated: boolean; sourceIds: string[] };
+
+export type ProductionManifest = {
+  projectId: string;
+  createdAt: string;
+  script: VideoScript;
+  packaging: PackagingVariant[];
+  selectedPackagingId: string;
+  scenes: Scene[];
+  assets: AssetRecord[];
+  voice?: BinaryAsset & { durationSeconds?: number };
+  estimatedCostUsd: number;
+  actualCostUsd: number;
+  containsSyntheticMedia: boolean;
+};
