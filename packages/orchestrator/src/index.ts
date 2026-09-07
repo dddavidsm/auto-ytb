@@ -23,6 +23,7 @@ export async function runContentPipeline(input: {
   renderer: VideoRenderer;
   publisher: Publisher;
   autoUploadPrivate?: boolean;
+  packagingGuidance?: string;
 }): Promise<{ state: PipelineState; events: PipelineEvent[]; dossier?: ResearchDossier; manifest?: ProductionManifest; qa?: QaReport; renderUri?: string; externalId?: string }> {
   const events: PipelineEvent[] = [];
   const event = (state: PipelineState, message: string) => events.push({ at: new Date().toISOString(), state, message });
@@ -37,8 +38,8 @@ export async function runContentPipeline(input: {
 
   event('SCRIPT', `Writing script for angle ${angle.title}`);
   const script = await generateScript({ dossier, angle, model: input.model, language: input.language, targetDurationSec: input.targetDurationSec });
-  event('PACKAGING', 'Generating title/thumbnail hypotheses');
-  const packaging = await generatePackaging({ angle, model: input.model, count: 3 });
+  event('PACKAGING', input.packagingGuidance ? 'Generating title/thumbnail hypotheses with bounded owned-channel learning guidance' : 'Generating title/thumbnail hypotheses');
+  const packaging = await generatePackaging({ angle, model: input.model, count: 3, guidance: input.packagingGuidance });
   event('PLAN', 'Planning scenes and production cost');
   const scenes = planScenes(script);
   const estimatedCostUsd = estimateProductionCost({ narrationSeconds: input.targetDurationSec, scenes }) + packaging.length * 0.12;
