@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { runContentPipeline } from '@auto-ytb/orchestrator';
-import { MockImageProvider, MockObjectStore, MockPublisher, MockRenderer, MockSearchProvider, MockTextModel, MockVideoProvider, MockVoiceProvider } from '@auto-ytb/providers';
+import { MockImageProvider, MockObjectStore, MockPublisher, MockRenderer, MockSearchProvider, MockTextModel, MockThumbnailComposer, MockVideoProvider, MockVoiceProvider } from '@auto-ytb/providers';
 
 const source = { id: 'official-1', title: 'Official technical report', url: 'https://example.com/report', snippet: 'The system increased adoption and changed browser workflows.', publishedAt: '2026-09-01T00:00:00Z', sourceType: 'official' as const };
 const search = new MockSearchProvider({
@@ -45,9 +45,9 @@ const model = new MockTextModel((schema) => {
 const result = await runContentPipeline({
   projectId: `mock-${Date.now()}`,
   topic: 'AI browser agents', language: 'en', targetDurationSec: 600, voice: 'narrator-01', maxCostUsd: 25,
-  search, model, voiceProvider: new MockVoiceProvider(), imageProvider: new MockImageProvider(), videoProvider: new MockVideoProvider(),
+  search, model, voiceProvider: new MockVoiceProvider(), imageProvider: new MockImageProvider(), videoProvider: new MockVideoProvider(), thumbnailComposer: new MockThumbnailComposer(),
   store: new MockObjectStore(), renderer: new MockRenderer(), publisher: new MockPublisher(), autoUploadPrivate: true,
 });
 await mkdir(`${process.cwd()}/.data`, { recursive: true });
 await writeFile(`${process.cwd()}/.data/pipeline-mock-latest.json`, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
-console.log(JSON.stringify({ state: result.state, qa: result.qa?.score, externalId: result.externalId, estimatedCost: result.manifest?.estimatedCostUsd, events: result.events }, null, 2));
+console.log(JSON.stringify({ state: result.state, qa: result.qa?.score, externalId: result.externalId, estimatedCost: result.manifest?.estimatedCostUsd, thumbnails: result.manifest?.thumbnails.length, events: result.events }, null, 2));
