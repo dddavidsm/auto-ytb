@@ -49,6 +49,14 @@ try {
           await repo.addLearningSignal({channelId:pub.channel_id,publicationId:pub.id,signalType:'packaging_attribute_performance',featureKey:attribute,featureValue:{attributeValue,outcomeScore,variantKey:selectedPackagingId},strength});
         }
       }
+      await db.query(`update model_experiments
+        set outcome=coalesce(outcome,'{}'::jsonb) || $2::jsonb,
+            completed_at=case when $3::int >= 500 then now() else completed_at end
+        where experiment_type='packaging_bandit' and outcome->>'productionRunId'=$1`,[
+          String(pub.production_run_id),
+          JSON.stringify({status:perf.views>=500?'completed':'observing',publicationId:pub.id,youtubeVideoId:pub.youtube_video_id,views:perf.views,outcomeScore,averageViewPercentage:perf.averageViewPercentage,strongHook:learning.strongHook,shareRate:learning.shareRate,subscriberConversionPerThousand:learning.subscriberConversionPerThousand,economics:learning.economics,capturedAt:new Date().toISOString()}),
+          perf.views
+        ]);
     }
     console.log(`${pub.youtube_video_id}: ${perf.views} views, ${perf.averageViewPercentage.toFixed(1)}% avg viewed, $${perf.revenueUsd.toFixed(2)} revenue${selectedPackagingId?`, packaging=${selectedPackagingId}`:''}`);
   }
