@@ -11,6 +11,7 @@ export async function runContentPipeline(input: {
   topic: string;
   language: string;
   targetDurationSec: number;
+  targetSceneDurationSec?: number;
   voice: string;
   maxCostUsd: number;
   search: SearchProvider;
@@ -41,7 +42,7 @@ export async function runContentPipeline(input: {
   event('PACKAGING', input.packagingGuidance ? 'Generating title/thumbnail hypotheses with bounded owned-channel learning guidance' : 'Generating title/thumbnail hypotheses');
   const packaging = await generatePackaging({ angle, model: input.model, count: 3, guidance: input.packagingGuidance });
   event('PLAN', 'Planning scenes and production cost');
-  const scenes = planScenes(script);
+  const scenes = planScenes(script, { targetSceneDurationSec: input.targetSceneDurationSec });
   const estimatedCostUsd = estimateProductionCost({ narrationSeconds: input.targetDurationSec, scenes }) + packaging.length * 0.12;
 
   event('ASSETS', 'Generating narration, scene visuals and thumbnail variants');
