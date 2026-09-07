@@ -14,12 +14,15 @@ export function validateScript(script: VideoScript, dossier: ResearchDossier): s
   return [...new Set(errors)];
 }
 
-export async function generateScript(input: { dossier: ResearchDossier; angle: StoryAngle; model: TextModel; language?: string; targetDurationSec?: number }): Promise<VideoScript> {
+export async function generateScript(input: { dossier: ResearchDossier; angle: StoryAngle; model: TextModel; language?: string; targetDurationSec?: number; guidance?: string }): Promise<VideoScript> {
   const targetDurationSec = input.targetDurationSec ?? 600;
   const claims = input.dossier.claims.map((claim) => `[${claim.id}] ${claim.text} sources=${claim.sourceIds.join(',')}`).join('\n');
+  const guidance = input.guidance?.trim()
+    ? `\nOwned-channel learning guidance (secondary to factual accuracy and the supplied viewer promise):\n${input.guidance.trim()}\nDo not use this guidance to invent claims, exaggerate stakes, or add unsupported certainty.\n`
+    : '';
   const response = await input.model.generateJson<VideoScript>({
     system: 'You are a high-retention YouTube documentary writer. Be precise, visual, original, source-grounded and concise. Do not invent facts. Build curiosity without misleading clickbait.',
-    prompt: `Angle: ${input.angle.title}\nThesis: ${input.angle.thesis}\nViewer promise: ${input.angle.viewerPromise}\nTarget duration: ${targetDurationSec}s\nClaims:\n${claims}\n\nCreate a beat-by-beat script. Use source IDs from the dossier for factual beats.`,
+    prompt: `Angle: ${input.angle.title}\nThesis: ${input.angle.thesis}\nViewer promise: ${input.angle.viewerPromise}\nTarget duration: ${targetDurationSec}s\nClaims:\n${claims}\n${guidance}\nCreate a beat-by-beat script. Use source IDs from the dossier for factual beats.`,
     schemaName: 'video_script',
     temperature: 0.45,
   });
