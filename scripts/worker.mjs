@@ -70,6 +70,14 @@ async function execute(job){
     await runNode('scripts/analytics-sync.mjs',[`--days=${Number(payload.days ?? 28)}`]);
     return {};
   }
+  if(job.kind==='market_cycle'){
+    const args=[];
+    if(payload.niche) args.push(`--niche=${String(payload.niche)}`);
+    if(payload.maxQueries) args.push(`--max-queries=${Math.max(1,Math.floor(Number(payload.maxQueries)))}`);
+    if(payload.days) args.push(`--days=${Math.max(1,Math.floor(Number(payload.days)))}`);
+    await runNode('scripts/market-cycle.mjs',args);
+    return {};
+  }
   throw new Error(`Unsupported job kind ${job.kind}`);
 }
 
@@ -77,6 +85,7 @@ async function settleBudget(job,actualCostUsd,releaseOnly=false){
   const payload=job.payload ?? {};
   const channelKey=String(payload.channelKey ?? 'future-tech-business');
   const reserved=Math.max(0,Number(payload.reservedCostUsd ?? 0));
+  if(!reserved) return;
   const budgetDate=String(payload.budgetDate ?? new Date().toISOString().slice(0,10));
   await db.query(`update daily_budget_ledger set reserved_usd=greatest(0,reserved_usd-$3),actual_usd=actual_usd+$4,updated_at=now() where channel_key=$1 and spend_date=$2::date`,[channelKey,budgetDate,reserved,releaseOnly?0:Math.max(0,actualCostUsd)]);
 }
