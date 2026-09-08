@@ -1,6 +1,6 @@
 import type { ImageProvider, ObjectStore, Publisher, SearchProvider, TextModel, ThumbnailComposer, VideoProvider, VideoRenderer, VoiceProvider } from '@auto-ytb/providers';
 import { buildResearchDossier, type ResearchDossier } from '@auto-ytb/editorial';
-import { estimateProductionCost, generatePackaging, generateScript, planScenes, selectPackagingWithExploration, type AssetRecord, type PackagingLearningProfile, type ProductionContentFormat, type ProductionManifest, type ThumbnailAsset } from '@auto-ytb/production';
+import { estimateProductionCost, generatePackaging, generateScript, planScenes, selectPackagingWithExploration, synchronizeTimelineToVoice, type AssetRecord, type PackagingLearningProfile, type ProductionContentFormat, type ProductionManifest, type ThumbnailAsset } from '@auto-ytb/production';
 import { runQa, type QaReport } from '@auto-ytb/qa';
 
 export type PipelineState = 'RESEARCH' | 'SCRIPT' | 'PACKAGING' | 'PLAN' | 'ASSETS' | 'QA' | 'RENDER' | 'PRIVATE_UPLOAD' | 'READY_FOR_REVIEW' | 'BLOCKED';
@@ -47,22 +47,32 @@ export async function runContentPipeline(input: {
   const formatScriptGuidance = isShort
     ? 'This is a native vertical YouTube Short. Deliver the promise immediately, use one focused narrative arc, remove nonessential context, and finish with a concrete payoff. Do not write a compressed long-form intro.'
     : 'This is a horizontal long-form YouTube video. Build sustained curiosity, evidence and payoff without filler.';
-  const scriptGuidance = [input.scriptGuidance,formatScriptGuidance].filter(Boolean).join('\n');
-  event('SCRIPT', `Writing ${contentFormat} script for angle ${angle.title}`);
-  const script = await generateScript({ dossier, angle, model: input.model, language: input.language, targetDurationSec: input.targetDurationSec, guidance: scriptGuidance });
+  const scriptGuidance = [input.scriptGuidance,formatScriptGuidance,`Write the narration natively in ${input.language}. Do not translate literally from another language.`].filter(Boolean).join('\n');
+  event('SCRIPT', `Writing native-${input.language} ${contentFormat} script for angle ${angle.title}`);
+  const draftScript = await generateScript({ dossier, angle, model: input.model, language: input.language, targetDurationSec: input.targetDurationSec, guidance: scriptGuidance });
+
   event('PACKAGING', input.packagingGuidance ? 'Generating packaging hypotheses with bounded owned-channel learning guidance' : 'Generating packaging hypotheses');
   const packaging = await generatePackaging({ angle, model: input.model, count: 3, guidance: input.packagingGuidance });
   const packagingChoice = selectPackagingWithExploration({ variants: packaging, profile: input.packagingLearning, experimentSeed: `${input.projectId}:${contentFormat}` });
   event('PACKAGING', `${packagingChoice.mode} selected packaging ${packagingChoice.selected.id} at ${(packagingChoice.explorationRate * 100).toFixed(0)}% exploration policy`);
-  event('PLAN', `Planning ${aspectRatio} scenes and production cost`);
-  const scenes = planScenes(script, { targetSceneDurationSec: input.targetSceneDurationSec, sources:dossier.sources });
+
+  event('PLAN', `Planning ${aspectRatio} hybrid visual timeline`);
+  const draftScenes = planScenes(draftScript, { targetSceneDurationSec: input.targetSceneDurationSec, sources:dossier.sources });
+
+  event('ASSETS', `Generating ${input.language} narration with timestamp alignment`);
+  const narrationText=draftScript.beats.map((beat) => beat.narration).join('\n\n');
+  const voice = await input.voiceProvider.synthesize({ text:narrationText, voice: input.voice, language: input.language });
+  const sync=synchronizeTimelineToVoice(draftScript,draftScenes,voice.alignment,voice.durationSeconds);
+  const script=sync.script;
+  const scenes=sync.scenes;
+  event('PLAN', `Narration timeline synchronized to ${sync.durationSeconds.toFixed(1)}s audio · alignment coverage ${(sync.alignmentCoverage*100).toFixed(0)}%`);
+
   const visualKinds = ['ai_video','ai_image','source_card','chart','motion_graphic'];
   const visualMix = Object.fromEntries(visualKinds.map((kind) => [kind, scenes.filter((scene) => scene.kind === kind).length]));
-  const estimatedCostUsd = estimateProductionCost({ narrationSeconds: input.targetDurationSec, scenes }) + (isShort ? 0 : packaging.length * 0.12);
+  const estimatedCostUsd = estimateProductionCost({ narrationSeconds: sync.durationSeconds, scenes }) + (isShort ? 0 : packaging.length * 0.12);
   event('PLAN', `Hybrid visual mix: ${Object.entries(visualMix).map(([kind,count]) => `${kind}=${count}`).join(', ')}`);
 
-  event('ASSETS', `Generating narration and ${aspectRatio} scene visuals${isShort ? '' : ' plus thumbnail variants'}`);
-  const voice = await input.voiceProvider.synthesize({ text: script.beats.map((beat) => beat.narration).join('\n\n'), voice: input.voice, language: input.language });
+  event('ASSETS', `Generating ${aspectRatio} scene visuals${isShort ? '' : ' plus thumbnail variants'}`);
   const assets: AssetRecord[] = [];
 
   for (const scene of scenes.filter((candidate) => !candidate.generated && ['chart','motion_graphic','text','source_card'].includes(candidate.kind))) {
@@ -146,7 +156,7 @@ export async function runContentPipeline(input: {
     containsSyntheticMedia: scenes.some((scene) => scene.generated),
   };
 
-  event('QA', 'Running factual, provenance, originality, visual coverage, source-rights, hybrid-media, format, packaging and cost gates');
+  event('QA', 'Running factual, provenance, originality, language, audio-sync, visual coverage, source-rights, hybrid-media, format, packaging and cost gates');
   const qa = runQa({ dossier, script, manifest, maxCostUsd: input.maxCostUsd });
   if (!qa.passed) {
     event('BLOCKED', `QA blockers: ${qa.blockers.join(', ')}`);
@@ -154,7 +164,7 @@ export async function runContentPipeline(input: {
   }
 
   const stored = await input.store.put({ key: `projects/${input.projectId}/manifest.json`, contentType: 'application/json', data: JSON.stringify(manifest) });
-  event('RENDER', `Rendering ${frame.width}x${frame.height} from ${stored.uri}`);
+  event('RENDER', `Rendering ${frame.width}x${frame.height} synchronized to narration from ${stored.uri}`);
   const render = await input.renderer.render({ manifestUri: stored.uri, outputKey: `projects/${input.projectId}/final.mp4` });
 
   if (!input.autoUploadPrivate) {
@@ -176,6 +186,6 @@ export async function runContentPipeline(input: {
     const selectedThumbnail = thumbnails.find((thumbnail) => thumbnail.packagingId === manifest.selectedPackagingId) ?? thumbnails[0];
     if (selectedThumbnail) await input.publisher.setThumbnail({ externalId: upload.externalId, fileUri: selectedThumbnail.uri });
   }
-  event('READY_FOR_REVIEW', `Private ${contentFormat} upload ${upload.externalId} ready for human review`);
+  event('READY_FOR_REVIEW', `Private ${contentFormat} upload ${upload.externalId} ready for downstream publication policy`);
   return { state: 'READY_FOR_REVIEW', events, dossier, manifest, qa, renderUri: render.uri, externalId: upload.externalId };
 }
