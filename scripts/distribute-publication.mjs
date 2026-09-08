@@ -8,6 +8,8 @@ if(!publicationId||!['youtube','tiktok','instagram','facebook'].includes(platfor
 const db=new NodePostgresSqlClient(req('DATABASE_URL'),{ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined});
 const now=()=>new Date().toISOString();
 const isConfigurationBlock=(message)=>/\brequired\b|requires |consent|privacy level|not allowed|public HTTPS|unsupported distribution/i.test(message);
+const terminal=new Set(['published','scheduled','blocked','failed']);
+const tiktokStatus=(status)=>{const value=String(status??'').toUpperCase();if(/PUBLISH_COMPLETE|PUBLISHED|SUCCESS|POSTED|COMPLETE/.test(value))return'published';if(/FAIL|ERROR|REJECT|CANCEL/.test(value))return'failed';return'processing';};
 
 async function upsert(state,patch={}){
   const metadata={...(patch.metadata??{}),updatedBy:'distribute-publication',updatedAt:now()};
@@ -18,35 +20,34 @@ async function upsert(state,patch={}){
 try{
   const row=(await db.query(`select p.id,p.youtube_video_id,p.state,p.publish_at,p.contains_synthetic_media,p.content_format,p.metadata as publication_metadata,pr.id as production_run_id,pr.metadata as production_metadata,ci.id as content_idea_id from publications p left join production_runs pr on pr.id=p.production_run_id left join content_ideas ci on ci.id=pr.content_idea_id where p.id=$1`,[publicationId])).rows[0];
   if(!row)throw new Error(`Publication ${publicationId} not found`);
-  if(platform==='youtube'){
+  const existing=(await db.query(`select * from distribution_attempts where publication_id=$1 and platform=$2`,[publicationId,platform])).rows[0]??null;
+  if(existing&&terminal.has(String(existing.state))){console.log(JSON.stringify({publicationId,platform,state:existing.state,externalId:existing.external_id??null,idempotent:true},null,2));}
+  else if(platform==='youtube'){
     const state=row.state==='public'?'published':row.state==='scheduled'?'scheduled':row.youtube_video_id?'processing':'blocked';
     await upsert(state,{externalId:row.youtube_video_id??null,publishAt:row.publish_at??null,metadata:{source:'canonical-youtube-publication'}});
     console.log(JSON.stringify({publicationId,platform,state,externalId:row.youtube_video_id??null},null,2));
-    process.exitCode=0;
+  }else if(platform==='tiktok'&&existing?.state==='processing'&&existing.external_id){
+    try{
+      const publisher=createDistributionPublisher('tiktok',process.env),raw=await publisher.status(existing.external_id),status=raw.status??raw.publish_status??raw.state,distributionState=tiktokStatus(status);
+      await upsert(distributionState,{externalId:existing.external_id,externalUrl:existing.external_url??null,lastError:distributionState==='failed'?`TikTok processing failed: ${String(status??'unknown')}`:null,metadata:{processingStatus:raw,poll:true}});
+      console.log(JSON.stringify({publicationId,platform,state:distributionState,externalId:existing.external_id,processingStatus:raw},null,2));
+    }catch(error){const message=error instanceof Error?error.message:String(error),blocked=isConfigurationBlock(message);await upsert(blocked?'blocked':'retry',{externalId:existing.external_id,lastError:message,metadata:{poll:true}});if(blocked)console.log(JSON.stringify({publicationId,platform,state:'blocked',reason:message},null,2));else throw error;}
+  }else if(row.content_format!=='SHORT_VERTICAL'){
+    const reason=`${platform} Reels/short-video distribution requires a native SHORT_VERTICAL derivative; horizontal masters are never blindly cross-posted.`;
+    await upsert('blocked',{lastError:reason,metadata:{contentFormat:row.content_format,nativeDerivativeRequired:true}});
+    console.log(JSON.stringify({publicationId,platform,state:'blocked',reason:'native-short-derivative-required'},null,2));
   }else{
-    if(row.content_format!=='SHORT_VERTICAL'){
-      await upsert('blocked',{lastError:`${platform} Reels/short-video distribution requires a native SHORT_VERTICAL derivative; horizontal masters are never blindly cross-posted.`,metadata:{contentFormat:row.content_format}});
-      console.log(JSON.stringify({publicationId,platform,state:'blocked',reason:'native-short-derivative-required'},null,2));
-    }else{
-      const selectedId=row.publication_metadata?.selectedPackagingId??row.production_metadata?.packagingSelection?.selectedPackagingId??null;
-      const packaging=(await db.query(`select title,payload from packaging_variants where content_idea_id=$1 order by case when variant_key=$2 then 0 else 1 end,score desc limit 1`,[row.content_idea_id,selectedId])).rows[0]??{};
-      const title=String(packaging.title??row.production_metadata?.topic??'').trim();
-      const caption=String(packaging.payload?.socialCaption??packaging.payload?.title??title).trim();
-      const renderUri=String(row.publication_metadata?.renderUri??row.production_metadata?.renderUri??'').trim();
-      if(!renderUri)throw new Error('Distribution requires a persisted final render URI');
-      const durationSeconds=Number(row.publication_metadata?.finalInspection?.durationSeconds??row.production_metadata?.finalInspection?.durationSeconds??0)||undefined;
-      await upsert('publishing',{metadata:{contentFormat:row.content_format,productionRunId:row.production_run_id,contentArchetype:row.production_metadata?.contentArchetype??null}});
-      try{
-        const publisher=createDistributionPublisher(platform,process.env);
-        const publicMediaUrl=platform==='instagram'?publicMediaUrlFor({renderUri,productionRunId:row.production_run_id,env:process.env}):null;
-        const result=await publisher.publish({fileUri:renderUri,publicMediaUrl,title,caption,durationSeconds,containsSyntheticMedia:Boolean(row.contains_synthetic_media),privacyLevel:process.env.TIKTOK_PRIVACY_LEVEL,disableDuet:process.env.TIKTOK_DISABLE_DUET==='true',disableComment:process.env.TIKTOK_DISABLE_COMMENT==='true',disableStitch:process.env.TIKTOK_DISABLE_STITCH==='true',brandContent:process.env.TIKTOK_BRAND_CONTENT==='true',brandOrganic:process.env.TIKTOK_BRAND_ORGANIC==='true'});
-        await upsert(result.state,{externalId:result.externalId,externalUrl:result.externalUrl??null,metadata:{...result.metadata,contentFormat:row.content_format,productionRunId:row.production_run_id}});
-        console.log(JSON.stringify({publicationId,platform,...result},null,2));
-      }catch(error){
-        const message=error instanceof Error?error.message:String(error),blocked=isConfigurationBlock(message);
-        await upsert(blocked?'blocked':'retry',{lastError:message,metadata:{contentFormat:row.content_format,productionRunId:row.production_run_id}});
-        if(blocked)console.log(JSON.stringify({publicationId,platform,state:'blocked',reason:message},null,2));else throw error;
-      }
-    }
+    const selectedId=row.publication_metadata?.selectedPackagingId??row.production_metadata?.packagingSelection?.selectedPackagingId??null;
+    const packaging=(await db.query(`select title,payload from packaging_variants where content_idea_id=$1 order by case when variant_key=$2 then 0 else 1 end,score desc limit 1`,[row.content_idea_id,selectedId])).rows[0]??{};
+    const title=String(packaging.title??row.production_metadata?.topic??'').trim(),caption=String(packaging.payload?.socialCaption??packaging.payload?.title??title).trim(),renderUri=String(row.publication_metadata?.renderUri??row.production_metadata?.renderUri??'').trim();
+    if(!renderUri)throw new Error('Distribution requires a persisted final render URI');
+    const durationSeconds=Number(row.publication_metadata?.finalInspection?.durationSeconds??row.production_metadata?.finalInspection?.durationSeconds??0)||undefined;
+    await upsert('publishing',{metadata:{contentFormat:row.content_format,productionRunId:row.production_run_id,contentArchetype:row.production_metadata?.contentArchetype??null}});
+    try{
+      const publisher=createDistributionPublisher(platform,process.env),publicMediaUrl=platform==='instagram'?publicMediaUrlFor({renderUri,productionRunId:row.production_run_id,env:process.env}):null;
+      const result=await publisher.publish({fileUri:renderUri,publicMediaUrl,title,caption,durationSeconds,containsSyntheticMedia:Boolean(row.contains_synthetic_media),privacyLevel:process.env.TIKTOK_PRIVACY_LEVEL,disableDuet:process.env.TIKTOK_DISABLE_DUET==='true',disableComment:process.env.TIKTOK_DISABLE_COMMENT==='true',disableStitch:process.env.TIKTOK_DISABLE_STITCH==='true',brandContent:process.env.TIKTOK_BRAND_CONTENT==='true',brandOrganic:process.env.TIKTOK_BRAND_ORGANIC==='true'});
+      await upsert(result.state,{externalId:result.externalId,externalUrl:result.externalUrl??null,metadata:{...result.metadata,contentFormat:row.content_format,productionRunId:row.production_run_id}});
+      console.log(JSON.stringify({publicationId,platform,...result},null,2));
+    }catch(error){const message=error instanceof Error?error.message:String(error),blocked=isConfigurationBlock(message);await upsert(blocked?'blocked':'retry',{lastError:message,metadata:{contentFormat:row.content_format,productionRunId:row.production_run_id}});if(blocked)console.log(JSON.stringify({publicationId,platform,state:'blocked',reason:message},null,2));else throw error;}
   }
 }finally{await db.close();}

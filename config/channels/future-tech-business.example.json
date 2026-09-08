@@ -14,97 +14,30 @@
   "targetDurationSec": 660,
   "shortTargetDurationSec": 45,
   "maxProductionCostUsd": 18,
-  "portfolio": {
-    "enabled": true,
-    "growthPriority": 100,
-    "maximumDailyBudgetUsd": 25,
-    "maximumVideosPerDay": 1
-  },
+  "portfolio": {"enabled": true,"growthPriority": 100,"maximumDailyBudgetUsd": 25,"maximumVideosPerDay": 1},
   "identity": {
-    "archetype": "cinematic-analyst",
-    "characterMode": "none",
-    "characterName": null,
-    "lore": null,
+    "archetype": "cinematic-analyst","characterMode": "none","characterName": null,"lore": null,
     "tone": ["curious", "precise", "cinematic", "credible", "slightly-mysterious"],
-    "visualRules": [
-      "dark editorial documentary aesthetic",
-      "one strong focal idea per frame",
-      "no fake interfaces or fabricated logos",
-      "prefer real evidence and source-backed graphics when available",
-      "premium generative video only for high-value narrative moments"
-    ],
-    "brandContinuityRequired": true,
-    "socialContinuityRequired": true
+    "visualRules": ["dark editorial documentary aesthetic","one strong focal idea per frame","no fake interfaces or fabricated logos","prefer real evidence and source-backed graphics when available","premium generative video only for high-value narrative moments"],
+    "brandContinuityRequired": true,"socialContinuityRequired": true
   },
-  "voiceProfile": {
-    "provider": "elevenlabs",
-    "voiceId": "narrator-01",
-    "model": "eleven_multilingual_v2",
-    "primaryLanguage": "en",
-    "accent": "neutral-international-english",
-    "paceWpmTarget": 150,
-    "alignmentRequired": true,
-    "wordTimestampsRequired": true,
-    "pronunciationDictionary": null
-  },
+  "voiceProfile": {"provider": "elevenlabs","voiceId": "narrator-01","model": "eleven_multilingual_v2","primaryLanguage": "en","accent": "neutral-international-english","paceWpmTarget": 150,"alignmentRequired": true,"wordTimestampsRequired": true,"pronunciationDictionary": null},
   "publishing": {
-    "timezone": "Europe/Madrid",
-    "defaultPrivacy": "private",
-    "autonomyMode": "FULL_AUTONOMOUS",
-    "humanReviewRequired": false,
-    "allowAutomaticPublicScheduling": true,
-    "autoPublishDelayMinutes": 30,
-    "minimumQaScoreForAutoPublish": 88,
-    "minimumResearchConfidenceForAutoPublish": 78,
-    "minimumAttentionScoreForAutoPublish": 86,
-    "minimumFinalMediaScoreForAutoPublish": 90,
-    "maximumAutoPublishCostUsd": 18,
-    "blockOnUnresolvedRights": true,
-    "blockOnPolicyWarning": true
+    "timezone": "Europe/Madrid","defaultPrivacy": "private","autonomyMode": "FULL_AUTONOMOUS","humanReviewRequired": false,"allowAutomaticPublicScheduling": true,"autoPublishDelayMinutes": 30,
+    "minimumQaScoreForAutoPublish": 88,"minimumResearchConfidenceForAutoPublish": 78,"minimumAttentionScoreForAutoPublish": 86,"minimumFinalMediaScoreForAutoPublish": 90,"maximumAutoPublishCostUsd": 18,"blockOnUnresolvedRights": true,"blockOnPolicyWarning": true,
+    "distribution": {
+      "enabled": true,
+      "nativeShortRequiredForSocial": true,
+      "platforms": {
+        "youtube": {"enabled": true},
+        "tiktok": {"enabled": false,"requiresNativeShort": true},
+        "instagram": {"enabled": false,"requiresNativeShort": true},
+        "facebook": {"enabled": false,"requiresNativeShort": true}
+      }
+    }
   },
-  "library": {
-    "provider": "google-drive",
-    "rootFolder": "AUTO-YTB",
-    "channelFolder": "future-tech-business-en",
-    "structure": [
-      "00_CHANNEL_BRAND",
-      "01_OPPORTUNITIES",
-      "02_RESEARCH",
-      "03_SCRIPTS",
-      "04_AUDIO",
-      "05_ALIGNMENT",
-      "06_VISUALS",
-      "07_THUMBNAILS",
-      "08_RENDERS",
-      "09_PUBLISHED",
-      "10_ANALYTICS",
-      "99_ARCHIVE"
-    ],
-    "keepManifestPerVideo": true,
-    "keepCostReportPerVideo": true,
-    "keepAnalyticsSnapshots": true
-  },
-  "economics": {
-    "currency": "USD",
-    "trackCostByProvider": true,
-    "trackEstimatedRevenue": true,
-    "trackYouTubeRevenue": true,
-    "trackAffiliateRevenue": true,
-    "trackSponsorRevenue": true,
-    "optimizeFor": "PROFIT_AND_WATCH_TIME_PER_DOLLAR"
-  },
-  "quality": {
-    "minimumResearchConfidence": 70,
-    "minimumQaScore": 80,
-    "maximumPriorScriptOverlap": 0.5,
-    "requireAudioVisualSync": true,
-    "requireLanguageConsistency": true,
-    "requireBrandConsistency": true
-  },
-  "formatLearning": {
-    "separateByFormat": true,
-    "allowLongToShorts": true,
-    "allowShortsToLong": true,
-    "minimumSamplesBeforeFormatOverride": 5
-  }
+  "library": {"provider": "google-drive","rootFolder": "AUTO-YTB","channelFolder": "future-tech-business-en","structure": ["00_CHANNEL_BRAND","01_OPPORTUNITIES","02_RESEARCH","03_SCRIPTS","04_AUDIO","05_ALIGNMENT","06_VISUALS","07_THUMBNAILS","08_RENDERS","09_PUBLISHED","10_ANALYTICS","99_ARCHIVE"],"keepManifestPerVideo": true,"keepCostReportPerVideo": true,"keepAnalyticsSnapshots": true},
+  "economics": {"currency": "USD","trackCostByProvider": true,"trackEstimatedRevenue": true,"trackYouTubeRevenue": true,"trackAffiliateRevenue": true,"trackSponsorRevenue": true,"optimizeFor": "PROFIT_AND_WATCH_TIME_PER_DOLLAR"},
+  "quality": {"minimumResearchConfidence": 70,"minimumQaScore": 80,"maximumPriorScriptOverlap": 0.5,"requireAudioVisualSync": true,"requireLanguageConsistency": true,"requireBrandConsistency": true},
+  "formatLearning": {"separateByFormat": true,"allowLongToShorts": true,"allowShortsToLong": true,"minimumSamplesBeforeFormatOverride": 5}
 }

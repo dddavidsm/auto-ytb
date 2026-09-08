@@ -8,78 +8,53 @@ import { auditFinalManifestReleaseSafety } from './lib/release-safety.mjs';
 const arg=(name,fallback)=>process.argv.find((value)=>value.startsWith(`--${name}=`))?.slice(name.length+3)??fallback;
 const req=(name)=>{const value=process.env[name]?.trim();if(!value)throw new Error(`${name} is required`);return value;};
 const finite=(value,fallback)=>Number.isFinite(Number(value))?Number(value):fallback;
+const obj=(value)=>value&&typeof value==='object'&&!Array.isArray(value)?value:{};
+const arr=(value)=>Array.isArray(value)?value:[];
 const productionRunId=arg('production-run-id');if(!productionRunId)throw new Error('Use --production-run-id=<uuid>');
 const configPath=resolve(arg('channel-config','config/channels/future-tech-business.example.json'));
-const channel=JSON.parse(await readFile(configPath,'utf8'));const publishing=channel.publishing??{};const credentialsRef=String(channel.credentialsRef??process.env.CHANNEL_CREDENTIALS_REF??'PRIMARY');
+const channel=JSON.parse(await readFile(configPath,'utf8')),publishing=channel.publishing??{},credentialsRef=String(channel.credentialsRef??process.env.CHANNEL_CREDENTIALS_REF??'PRIMARY');
 const db=new NodePostgresSqlClient(req('DATABASE_URL'),{ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined});
 
+function channelPlatforms(){const distribution=obj(publishing.distribution),configured=distribution.platforms;if(Array.isArray(configured))return configured.map((item)=>String(item).toLowerCase());if(configured&&typeof configured==='object')return Object.entries(configured).filter(([,value])=>obj(value).enabled===true).map(([key])=>key);return['youtube'];}
+function enabledPlatforms(seriesProfile){const series=arr(obj(seriesProfile).distribution?.platforms).map((item)=>String(item).toLowerCase()),base=channelPlatforms(),selected=series.length?series:base,valid=[...new Set(selected.filter((item)=>['youtube','tiktok','instagram','facebook'].includes(item)))];if(!valid.includes('youtube'))valid.unshift('youtube');return valid;}
+async function upsertAttempt(publicationId,platform,state,patch={}){await db.query(`insert into distribution_attempts (publication_id,platform,state,external_id,publish_at,last_error,metadata) values ($1,$2,$3,$4,$5,$6,$7::jsonb) on conflict (publication_id,platform) do update set state=excluded.state,external_id=coalesce(excluded.external_id,distribution_attempts.external_id),publish_at=coalesce(excluded.publish_at,distribution_attempts.publish_at),last_error=excluded.last_error,metadata=distribution_attempts.metadata||excluded.metadata,updated_at=now()`,[publicationId,platform,state,patch.externalId??null,patch.publishAt??null,patch.lastError??null,JSON.stringify(patch.metadata??{})]);}
+async function queueSocialDistribution({publicationId,platform,publishAt,seriesEpisode,seriesProfile,contentFormat,gateSnapshot}){if(contentFormat!=='SHORT_VERTICAL'){const reason=`${platform} requires a native SHORT_VERTICAL production; horizontal masters are never blindly cropped or cross-posted.`;await upsertAttempt(publicationId,platform,'blocked',{publishAt,lastError:reason,metadata:{nativeDerivativeRequired:true,contentFormat}});return{platform,state:'blocked',reason};}const jobKey=`distribute-publication:${publicationId}:${platform}:${publishAt}`,payload={publicationId,platform,publishAt,source:'full-autonomous-distribution',credentialsRef,channelKey:channel.channelKey??channel.id,channelConfigPath:configPath,contentFormat,seriesId:seriesEpisode?.series_id??null,seriesKey:seriesEpisode?.series_key??null,seriesEpisodeId:seriesEpisode?.id??null,seriesAutomationProfileVersion:seriesEpisode?.current_automation_profile_version??null,gateSnapshot};await upsertAttempt(publicationId,platform,'queued',{publishAt,metadata:{jobKey,contentFormat,seriesAutomationProfileVersion:payload.seriesAutomationProfileVersion}});const inserted=await db.query(`insert into jobs (job_key,kind,channel_id,state,priority,max_attempts,not_before,payload) select $1,'distribute_publication',p.channel_id,'queued',92,4,$2::timestamptz,$3::jsonb from publications p where p.id=$4 on conflict (job_key) do nothing returning id`,[jobKey,publishAt,JSON.stringify(payload),publicationId]);return{platform,state:'queued',jobId:inserted.rows[0]?.id??null,publishAt};}
+
 try{
-  const row=(await db.query(`select p.id as publication_id,p.youtube_video_id,p.state,q.score::float as qa_score,q.blockers,q.report,r.research_confidence::float as research_confidence,pr.total_cost_usd::float as total_cost_usd,pr.state as production_state,pr.metadata as production_metadata from production_runs pr left join publications p on p.production_run_id=pr.id left join lateral (select score,blockers,report from qa_reports where production_run_id=pr.id order by created_at desc limit 1) q on true left join content_ideas ci on ci.id=pr.content_idea_id left join lateral (select research_confidence from research_dossiers rd where rd.opportunity_id=ci.opportunity_id order by rd.created_at desc limit 1) r on true where pr.id=$1`,[productionRunId])).rows[0];
+  const row=(await db.query(`select p.id as publication_id,p.youtube_video_id,p.state,p.content_format,q.score::float as qa_score,q.blockers,q.report,r.research_confidence::float as research_confidence,pr.total_cost_usd::float as total_cost_usd,pr.state as production_state,pr.metadata as production_metadata from production_runs pr left join publications p on p.production_run_id=pr.id left join lateral (select score,blockers,report from qa_reports where production_run_id=pr.id order by created_at desc limit 1) q on true left join content_ideas ci on ci.id=pr.content_idea_id left join lateral (select research_confidence from research_dossiers rd where rd.opportunity_id=ci.opportunity_id order by rd.created_at desc limit 1) r on true where pr.id=$1`,[productionRunId])).rows[0];
   if(!row)throw new Error(`Production run ${productionRunId} not found`);
   const rights=await db.query(`select id from production_assets where production_run_id=$1 and provider='source-backed-direct' and (license is null or license='verify-before-public')`,[productionRunId]);
-  const seriesEpisode=(await db.query(`select se.id,se.episode_key,se.continuity_status,se.memory_compiled_at,se.continuity_snapshot,s.series_key,s.title as series_title,s.audience_mode from series_episodes se join series s on s.id=se.series_id where se.production_run_id=$1 limit 1`,[productionRunId])).rows[0]??null;
+  const seriesEpisode=(await db.query(`select se.id,se.series_id,se.episode_key,se.continuity_status,se.memory_compiled_at,se.continuity_snapshot,s.series_key,s.title as series_title,s.audience_mode,s.automation_profile,s.current_automation_profile_version from series_episodes se join series s on s.id=se.series_id where se.production_run_id=$1 limit 1`,[productionRunId])).rows[0]??null,seriesProfile=obj(seriesEpisode?.automation_profile);
   const seriesContinuity=seriesEpisode?{required:true,passed:seriesEpisode.continuity_status==='passed'&&Boolean(seriesEpisode.memory_compiled_at),episodeId:seriesEpisode.id,episodeKey:seriesEpisode.episode_key,seriesKey:seriesEpisode.series_key,seriesTitle:seriesEpisode.series_title,status:seriesEpisode.continuity_status,memoryCompiledAt:seriesEpisode.memory_compiled_at??null}:{required:false,passed:true};
   let seriesQuality={required:false,passed:true,visual:null,kids:null};
-  if(seriesEpisode){
-    const qualityRows=(await db.query(`select report_type,status,score::float,updated_at from series_episode_quality_reports where episode_id=$1 and report_type in ('kids_family','visual_continuity')`,[seriesEpisode.id])).rows;
-    const visual=qualityRows.find((item)=>item.report_type==='visual_continuity')??null,kids=qualityRows.find((item)=>item.report_type==='kids_family')??null;
-    const accepted=(item)=>Boolean(item&&['passed','warn'].includes(String(item.status)));
-    seriesQuality={required:true,passed:accepted(visual)&&(seriesEpisode.audience_mode!=='MADE_FOR_KIDS'||accepted(kids)),visual,kids};
-  }
-  const manifestPath=resolve(process.env.LOCAL_STORAGE_ROOT||'.data/storage','projects',productionRunId,'manifest.json');
-  let manifest=null,manifestReadError=null;
-  try{manifest=JSON.parse(await readFile(manifestPath,'utf8'));}catch(error){manifestReadError=error instanceof Error?error.message:String(error);}
-  const seriesVoice=seriesEpisode
-    ? auditSeriesVoiceContinuity(manifest?.voice??null,seriesEpisode.continuity_snapshot??{})
-    : {required:false,passed:true,score:100,issues:[]};
-  const manifestRights=(manifest?.assets??[]).filter((asset)=>asset.provider==='source-backed-direct'&&(!asset.license||asset.license==='verify-before-public')).length;
-  const unresolvedRights=Math.max(rights.rows.length,manifestRights);
-  const releaseSafety=manifest
-    ? auditFinalManifestReleaseSafety(manifest,channel)
-    : {passed:false,audioReady:false,brandReady:false,issues:[`Final manifest unavailable: ${manifestReadError??'unknown error'}`],warnings:[],audio:{cueCount:0,rightsReady:false},brand:{required:false,generatedAssetCount:0,compliantAssetCount:0,continuityKey:null}};
-  const checks=Array.isArray(row.report?.checks)?row.report.checks:[];
-  const policyWarnings=checks.filter((check)=>check?.status==='WARN'&&['policy','advertiser-friendly','synthetic-disclosure'].includes(check?.id)).length;
-  const attention=row.report?.attention??row.production_metadata?.attention??null;
-  const finalInspection=row.report?.finalInspection??row.production_metadata?.finalInspection??null;
-  const minimumAttentionScore=finite(publishing.minimumAttentionScoreForAutoPublish,Math.max(86,finite(process.env.MIN_ATTENTION_SCORE,86)));
-  const minimumFinalMediaScore=finite(publishing.minimumFinalMediaScoreForAutoPublish,90);
-  const maximumAutoPublishCostUsd=finite(publishing.maximumAutoPublishCostUsd,finite(channel.maxProductionCostUsd,finite(process.env.MAX_PRODUCTION_COST_USD,25)));
-
-  const policy={
-    autonomyMode:publishing.autonomyMode==='FULL_AUTONOMOUS'?'FULL_AUTONOMOUS':'REVIEW_REQUIRED',
-    allowAutomaticPublicScheduling:Boolean(publishing.allowAutomaticPublicScheduling),
-    minimumQaScoreForAutoPublish:Number(publishing.minimumQaScoreForAutoPublish??88),
-    minimumResearchConfidenceForAutoPublish:Number(publishing.minimumResearchConfidenceForAutoPublish??78),
-    minimumAttentionScoreForAutoPublish:minimumAttentionScore,
-    minimumFinalMediaScoreForAutoPublish:minimumFinalMediaScore,
-    maximumAutoPublishCostUsd,
-    blockOnUnresolvedRights:publishing.blockOnUnresolvedRights!==false,
-    blockOnPolicyWarning:publishing.blockOnPolicyWarning!==false,
-    autoPublishDelayMinutes:Number(publishing.autoPublishDelayMinutes??30),
-  };
-  const releaseBlockers=releaseSafety.passed?[]:releaseSafety.issues.map((issue)=>`release-safety: ${issue}`);
-  if(seriesContinuity.required&&!seriesContinuity.passed)releaseBlockers.push(`series-continuity: ${seriesContinuity.seriesKey}/${seriesContinuity.episodeKey} memory is ${seriesContinuity.status} and must be compiled/passed before public scheduling`);
-  if(seriesQuality.required&&!seriesQuality.passed)releaseBlockers.push(`series-quality: ${seriesContinuity.seriesKey}/${seriesContinuity.episodeKey} requires accepted visual continuity${seriesEpisode?.audience_mode==='MADE_FOR_KIDS'?' and kids-family quality':''} reports before public scheduling`);
-  if(seriesVoice.required&&!seriesVoice.passed)releaseBlockers.push(`series-voice: ${seriesContinuity.seriesKey}/${seriesContinuity.episodeKey} voice continuity failed (${seriesVoice.issues.join(', ')})`);
-  const context={
-    qaScore:Number(row.qa_score??0),researchConfidence:Number(row.research_confidence??0),qaBlockers:[...(row.blockers??[]),...releaseBlockers],
-    attentionScore:finite(attention?.score,0),attentionReady:attention?.ready===true,
-    finalMediaScore:finite(finalInspection?.score,0),finalMediaPassed:finalInspection?.passed===true,
-    totalCostUsd:finite(row.total_cost_usd,0),productionState:row.production_state,
-    unresolvedRights,policyWarnings,youtubeVideoId:row.youtube_video_id,
-  };
-  const decision=decideAutonomousPublication(policy,context);
-  const gateSnapshot={...context,maximumAutoPublishCostUsd,minimumAttentionScore,minimumFinalMediaScore,minimumQaScore:policy.minimumQaScoreForAutoPublish,minimumResearchConfidence:policy.minimumResearchConfidenceForAutoPublish,releaseSafety,seriesContinuity,seriesQuality,seriesVoice};
-
+  if(seriesEpisode){const qualityRows=(await db.query(`select report_type,status,score::float,updated_at from series_episode_quality_reports where episode_id=$1 and report_type in ('kids_family','visual_continuity')`,[seriesEpisode.id])).rows,visual=qualityRows.find((item)=>item.report_type==='visual_continuity')??null,kids=qualityRows.find((item)=>item.report_type==='kids_family')??null,accepted=(item)=>Boolean(item&&['passed','warn'].includes(String(item.status)));seriesQuality={required:true,passed:accepted(visual)&&(seriesEpisode.audience_mode!=='MADE_FOR_KIDS'||accepted(kids)),visual,kids};}
+  const manifestPath=resolve(process.env.LOCAL_STORAGE_ROOT||'.data/storage','projects',productionRunId,'manifest.json');let manifest=null,manifestReadError=null;try{manifest=JSON.parse(await readFile(manifestPath,'utf8'));}catch(error){manifestReadError=error instanceof Error?error.message:String(error);}
+  const seriesVoice=seriesEpisode?auditSeriesVoiceContinuity(manifest?.voice??null,seriesEpisode.continuity_snapshot??{}):{required:false,passed:true,score:100,issues:[]};
+  const manifestRights=(manifest?.assets??[]).filter((asset)=>asset.provider==='source-backed-direct'&&(!asset.license||asset.license==='verify-before-public')).length,unresolvedRights=Math.max(rights.rows.length,manifestRights);
+  const releaseSafety=manifest?auditFinalManifestReleaseSafety(manifest,channel):{passed:false,audioReady:false,brandReady:false,issues:[`Final manifest unavailable: ${manifestReadError??'unknown error'}`],warnings:[],audio:{cueCount:0,rightsReady:false},brand:{required:false,generatedAssetCount:0,compliantAssetCount:0,continuityKey:null}};
+  const checks=Array.isArray(row.report?.checks)?row.report.checks:[],policyWarnings=checks.filter((check)=>check?.status==='WARN'&&['policy','advertiser-friendly','synthetic-disclosure'].includes(check?.id)).length,attention=row.report?.attention??row.production_metadata?.attention??null,finalInspection=row.report?.finalInspection??row.production_metadata?.finalInspection??null;
+  const seriesQualityPolicy=obj(seriesProfile.quality),seriesEconomics=obj(seriesProfile.economics),seriesDistribution=obj(seriesProfile.distribution);
+  const minimumQaScore=Math.max(Number(publishing.minimumQaScoreForAutoPublish??88),finite(seriesQualityPolicy.minimumQaScore,0));
+  const minimumAttentionScore=Math.max(finite(publishing.minimumAttentionScoreForAutoPublish,Math.max(86,finite(process.env.MIN_ATTENTION_SCORE,86))),finite(seriesQualityPolicy.minimumAttentionScore,0));
+  const minimumFinalMediaScore=Math.max(finite(publishing.minimumFinalMediaScoreForAutoPublish,90),finite(seriesQualityPolicy.minimumFinalMediaScore,0));
+  const channelCostCap=finite(publishing.maximumAutoPublishCostUsd,finite(channel.maxProductionCostUsd,finite(process.env.MAX_PRODUCTION_COST_USD,25))),seriesCostCap=finite(seriesEconomics.maxCostUsd,channelCostCap),maximumAutoPublishCostUsd=Math.min(channelCostCap,seriesCostCap);
+  const seriesReview=String(seriesDistribution.reviewMode??'').toUpperCase(),channelFull=publishing.autonomyMode==='FULL_AUTONOMOUS',seriesAutoPost=seriesDistribution.autoPost!==false;
+  const policy={autonomyMode:channelFull&&seriesReview!=='REVIEW_REQUIRED'?'FULL_AUTONOMOUS':'REVIEW_REQUIRED',allowAutomaticPublicScheduling:Boolean(publishing.allowAutomaticPublicScheduling)&&seriesAutoPost,minimumQaScoreForAutoPublish:minimumQaScore,minimumResearchConfidenceForAutoPublish:Number(publishing.minimumResearchConfidenceForAutoPublish??78),minimumAttentionScoreForAutoPublish:minimumAttentionScore,minimumFinalMediaScoreForAutoPublish:minimumFinalMediaScore,maximumAutoPublishCostUsd,blockOnUnresolvedRights:publishing.blockOnUnresolvedRights!==false,blockOnPolicyWarning:publishing.blockOnPolicyWarning!==false,autoPublishDelayMinutes:Number(publishing.autoPublishDelayMinutes??30)};
+  const releaseBlockers=releaseSafety.passed?[]:releaseSafety.issues.map((issue)=>`release-safety: ${issue}`);if(seriesContinuity.required&&!seriesContinuity.passed)releaseBlockers.push(`series-continuity: ${seriesContinuity.seriesKey}/${seriesContinuity.episodeKey} memory is ${seriesContinuity.status} and must be compiled/passed before public scheduling`);if(seriesQuality.required&&!seriesQuality.passed)releaseBlockers.push(`series-quality: ${seriesContinuity.seriesKey}/${seriesContinuity.episodeKey} requires accepted visual continuity${seriesEpisode?.audience_mode==='MADE_FOR_KIDS'?' and kids-family quality':''} reports before public scheduling`);if(seriesVoice.required&&!seriesVoice.passed)releaseBlockers.push(`series-voice: ${seriesContinuity.seriesKey}/${seriesContinuity.episodeKey} voice continuity failed (${seriesVoice.issues.join(', ')})`);
+  const context={qaScore:Number(row.qa_score??0),researchConfidence:Number(row.research_confidence??0),qaBlockers:[...(row.blockers??[]),...releaseBlockers],attentionScore:finite(attention?.score,0),attentionReady:attention?.ready===true,finalMediaScore:finite(finalInspection?.score,0),finalMediaPassed:finalInspection?.passed===true,totalCostUsd:finite(row.total_cost_usd,0),productionState:row.production_state,unresolvedRights,policyWarnings,youtubeVideoId:row.youtube_video_id};
+  const decision=decideAutonomousPublication(policy,context),platforms=enabledPlatforms(seriesProfile),gateSnapshot={...context,maximumAutoPublishCostUsd,minimumAttentionScore,minimumFinalMediaScore,minimumQaScore,minimumResearchConfidence:policy.minimumResearchConfidenceForAutoPublish,releaseSafety,seriesContinuity,seriesQuality,seriesVoice,seriesAutomationProfileVersion:seriesEpisode?.current_automation_profile_version??null,distributionPlatforms:platforms};
+  if(row.publication_id&&row.youtube_video_id)await upsertAttempt(row.publication_id,'youtube',row.state==='scheduled'?'scheduled':row.state==='public'?'published':'processing',{externalId:row.youtube_video_id,metadata:{source:'canonical-youtube-publication',productionRunId}});
+  let distribution=[];
   if(decision.action==='SCHEDULE'&&row.publication_id&&decision.publishAt){
-    const jobKey=`schedule-publication:${row.publication_id}:${decision.publishAt}`;
-    const payload={publicationId:row.publication_id,publishAt:decision.publishAt,source:'full-autonomous',credentialsRef,channelKey:channel.channelKey??channel.id,gateSnapshot};
+    const jobKey=`schedule-publication:${row.publication_id}:${decision.publishAt}`,payload={publicationId:row.publication_id,publishAt:decision.publishAt,source:'full-autonomous',credentialsRef,channelKey:channel.channelKey??channel.id,gateSnapshot};
     const inserted=await db.query(`insert into jobs (job_key,kind,state,priority,max_attempts,payload) values ($1,'schedule_publication','queued',98,4,$2::jsonb) on conflict (job_key) do nothing returning id`,[jobKey,JSON.stringify(payload)]);
     if(inserted.rows[0])await db.query(`insert into job_events (job_id,event_type,detail) values ($1,'autonomous_publish_scheduled',$2::jsonb)`,[inserted.rows[0].id,JSON.stringify({productionRunId,publicationId:row.publication_id,publishAt:decision.publishAt,reasons:decision.reasons,credentialsRef,gateSnapshot})]);
-    await db.query(`update production_runs set metadata=metadata||$2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({autonomousPublication:{...decision,evaluatedAt:new Date().toISOString(),credentialsRef,gateSnapshot}})]);
-    console.log(JSON.stringify({...decision,jobId:inserted.rows[0]?.id??null,productionRunId,publicationId:row.publication_id,credentialsRef,gateSnapshot},null,2));
+    await upsertAttempt(row.publication_id,'youtube','queued',{externalId:row.youtube_video_id,publishAt:decision.publishAt,metadata:{jobKey}});
+    for(const platform of platforms.filter((item)=>item!=='youtube'))distribution.push(await queueSocialDistribution({publicationId:row.publication_id,platform,publishAt:decision.publishAt,seriesEpisode,seriesProfile,contentFormat:row.content_format??row.production_metadata?.contentFormat??'LONG_HORIZONTAL',gateSnapshot}));
+    await db.query(`update production_runs set metadata=metadata||$2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({autonomousPublication:{...decision,evaluatedAt:new Date().toISOString(),credentialsRef,gateSnapshot,distribution}})]);
+    console.log(JSON.stringify({...decision,jobId:inserted.rows[0]?.id??null,productionRunId,publicationId:row.publication_id,credentialsRef,gateSnapshot,distribution},null,2));
   }else{
-    await db.query(`update production_runs set metadata=metadata||$2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({autonomousPublication:{...decision,evaluatedAt:new Date().toISOString(),credentialsRef,gateSnapshot}})]);
-    console.log(JSON.stringify({...decision,productionRunId,publicationId:row.publication_id??null,credentialsRef,gateSnapshot},null,2));
+    await db.query(`update production_runs set metadata=metadata||$2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({autonomousPublication:{...decision,evaluatedAt:new Date().toISOString(),credentialsRef,gateSnapshot,distribution}})]);
+    console.log(JSON.stringify({...decision,productionRunId,publicationId:row.publication_id??null,credentialsRef,gateSnapshot,distribution},null,2));
   }
 } finally {await db.close();}
