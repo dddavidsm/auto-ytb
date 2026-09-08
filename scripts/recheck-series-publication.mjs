@@ -6,6 +6,7 @@ const req=(name)=>{const value=process.env[name]?.trim();if(!value)throw new Err
 const db=new NodePostgresSqlClient(req('DATABASE_URL'),{ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined});
 const limit=Math.max(1,Math.min(30,Number(process.env.SERIES_RELEASE_RECHECK_LIMIT||10)));
 function runNode(script,args,env){return new Promise((resolve,reject)=>{const child=spawn(process.execPath,[script,...args],{cwd:process.cwd(),env:{...process.env,...env},stdio:['ignore','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',(d)=>stdout+=d.toString());child.stderr.on('data',(d)=>stderr+=d.toString());child.on('error',reject);child.on('exit',(code)=>code===0?resolve({stdout,stderr}):reject(new Error(`${script} failed ${code}: ${stderr.slice(-1800)}`)));});}
+function parseJson(output){try{return JSON.parse(String(output||'').trim());}catch{return null;}}
 
 try{
   const rows=(await db.query(`select distinct se.production_run_id,c.config_path,c.credentials_ref,c.channel_key,p.id as publication_id
@@ -18,7 +19,16 @@ try{
   const results=[];
   for(const row of rows){
     const credentialsRef=String(row.credentials_ref??'PRIMARY'),scoped=projectChannelCredentials(process.env,credentialsRef),configPath=String(row.config_path??'config/channels/future-tech-business.example.json');
-    try{const result=await runNode('scripts/auto-publish.mjs',[`--production-run-id=${row.production_run_id}`,`--channel-config=${configPath}`],scoped);let parsed=null;try{parsed=JSON.parse(result.stdout.trim().split('\n').slice(-1)[0]);}catch{}results.push({productionRunId:row.production_run_id,publicationId:row.publication_id,channelKey:row.channel_key,status:'rechecked',result:parsed??result.stdout.slice(-800)});}
+    try{
+      let archive=null;
+      if(process.env.CONTENT_LIBRARY_ENABLED!=='false'){
+        const archived=await runNode('scripts/archive-series-memory.mjs',[`--production-run-id=${row.production_run_id}`,`--channel-config=${configPath}`],scoped);
+        archive=parseJson(archived.stdout)??{output:archived.stdout.slice(-800)};
+      }
+      const result=await runNode('scripts/auto-publish.mjs',[`--production-run-id=${row.production_run_id}`,`--channel-config=${configPath}`],scoped);
+      const parsed=parseJson(result.stdout);
+      results.push({productionRunId:row.production_run_id,publicationId:row.publication_id,channelKey:row.channel_key,status:'rechecked',archive,result:parsed??result.stdout.slice(-800)});
+    }
     catch(error){results.push({productionRunId:row.production_run_id,publicationId:row.publication_id,channelKey:row.channel_key,status:'error',error:error instanceof Error?error.message:String(error)});}
   }
   console.log(JSON.stringify({processed:results.length,results},null,2));
