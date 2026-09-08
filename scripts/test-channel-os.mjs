@@ -12,8 +12,14 @@ const newCharacter=routeContentToChannel(novaFingerprint,channels);assert.equal(
 const brand=buildChannelBrandBlueprint({candidateKey:'captain-nova-en',proposedName:'Captain Nova',positioning:'Animated space stories told by Captain Nova.',fingerprint:novaFingerprint});
 assert.equal(brand.character.name,'Captain Nova');assert.ok(brand.character.referencePrompt?.includes('canonical character reference'));assert.ok(brand.prompts.avatar.includes('canonical character reference'));assert.ok(brand.visualRules.some((rule)=>rule.includes('face proportions')));assert.ok(brand.character.continuityKey.length>10);
 
-const autonomous=decideAutonomousPublication({autonomyMode:'FULL_AUTONOMOUS',allowAutomaticPublicScheduling:true,minimumQaScoreForAutoPublish:88,minimumResearchConfidenceForAutoPublish:78,blockOnUnresolvedRights:true,blockOnPolicyWarning:true,autoPublishDelayMinutes:30},{qaScore:94,researchConfidence:91,qaBlockers:[],unresolvedRights:0,policyWarnings:0,youtubeVideoId:'yt-1'},new Date('2026-09-08T08:00:00Z'));assert.equal(autonomous.action,'SCHEDULE');assert.equal(autonomous.publishAt,'2026-09-08T08:30:00.000Z');
-const rightsBlocked=decideAutonomousPublication({autonomyMode:'FULL_AUTONOMOUS',allowAutomaticPublicScheduling:true,minimumQaScoreForAutoPublish:88,minimumResearchConfidenceForAutoPublish:78,blockOnUnresolvedRights:true,blockOnPolicyWarning:true},{qaScore:94,researchConfidence:91,qaBlockers:[],unresolvedRights:1,policyWarnings:0,youtubeVideoId:'yt-1'});assert.equal(rightsBlocked.action,'KEEP_PRIVATE');assert.ok(rightsBlocked.reasons.some((reason)=>reason.includes('rights')));
+const publishPolicy={autonomyMode:'FULL_AUTONOMOUS',allowAutomaticPublicScheduling:true,minimumQaScoreForAutoPublish:88,minimumResearchConfidenceForAutoPublish:78,minimumAttentionScoreForAutoPublish:86,minimumFinalMediaScoreForAutoPublish:90,maximumAutoPublishCostUsd:18,blockOnUnresolvedRights:true,blockOnPolicyWarning:true,autoPublishDelayMinutes:30};
+const readyContext={qaScore:94,researchConfidence:91,qaBlockers:[],attentionScore:92,attentionReady:true,finalMediaScore:96,finalMediaPassed:true,totalCostUsd:12.4,productionState:'READY_FOR_REVIEW',unresolvedRights:0,policyWarnings:0,youtubeVideoId:'yt-1'};
+const autonomous=decideAutonomousPublication(publishPolicy,readyContext,new Date('2026-09-08T08:00:00Z'));assert.equal(autonomous.action,'SCHEDULE');assert.equal(autonomous.publishAt,'2026-09-08T08:30:00.000Z');assert.deepEqual(autonomous.reasons,['All autonomous publication gates passed']);
+const rightsBlocked=decideAutonomousPublication(publishPolicy,{...readyContext,unresolvedRights:1});assert.equal(rightsBlocked.action,'KEEP_PRIVATE');assert.ok(rightsBlocked.reasons.some((reason)=>reason.includes('rights')));
+const attentionBlocked=decideAutonomousPublication(publishPolicy,{...readyContext,attentionReady:false,attentionScore:82});assert.equal(attentionBlocked.action,'KEEP_PRIVATE');assert.ok(attentionBlocked.reasons.some((reason)=>reason.includes('Attention')));
+const mediaBlocked=decideAutonomousPublication(publishPolicy,{...readyContext,finalMediaPassed:false,finalMediaScore:89});assert.equal(mediaBlocked.action,'KEEP_PRIVATE');assert.ok(mediaBlocked.reasons.some((reason)=>reason.includes('media')));
+const costBlocked=decideAutonomousPublication(publishPolicy,{...readyContext,totalCostUsd:18.01});assert.equal(costBlocked.action,'KEEP_PRIVATE');assert.ok(costBlocked.reasons.some((reason)=>reason.includes('cost')));
+const productionBlocked=decideAutonomousPublication(publishPolicy,{...readyContext,productionState:'BLOCKED'});assert.equal(productionBlocked.action,'KEEP_PRIVATE');assert.ok(productionBlocked.reasons.some((reason)=>reason.includes('BLOCKED')));
 
 const env={YOUTUBE_CLIENT_ID:'primary-id',YOUTUBE_CLIENT_SECRET:'primary-secret',YOUTUBE_REFRESH_TOKEN:'primary-refresh',YOUTUBE_CHANNEL_ID:'primary-channel',YOUTUBE_CLIENT_ID__OWL:'owl-id',YOUTUBE_CLIENT_SECRET__OWL:'owl-secret',YOUTUBE_REFRESH_TOKEN__OWL:'owl-refresh',YOUTUBE_CHANNEL_ID__OWL:'owl-channel'};
 assert.equal(scopedName('YOUTUBE_REFRESH_TOKEN','OWL'),'YOUTUBE_REFRESH_TOKEN__OWL');
@@ -27,6 +33,6 @@ const synced=synchronizeTimelineToVoice(script,scenes,alignment,chars.length*0.5
 console.log('✓ content identity routes compatible styles to the right channel');
 console.log('✓ distinct persistent characters create isolated channel candidates');
 console.log('✓ brand blueprint preserves a stable character continuity key');
-console.log('✓ full autonomy schedules only when QA/research/rights gates pass');
+console.log('✓ full autonomy requires QA research attention media rights policy cost and production-state gates');
 console.log('✓ channel OAuth credentials stay isolated by credentialsRef');
 console.log('✓ narration timestamps retime script and visual timeline');
