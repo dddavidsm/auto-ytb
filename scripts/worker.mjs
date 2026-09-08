@@ -44,6 +44,7 @@ async function execute(job){
     const productionRunId=runResult?.id;
     if(productionRunId){
       await persistMeter(productionRunId,meterSession,scoped);
+      await runNode('scripts/persist-creative-fingerprint.mjs',[`--production-run-id=${productionRunId}`],scoped);
       await runNode('scripts/economics-sync.mjs',[],scoped);
       if(process.env.CONTENT_LIBRARY_ENABLED!=='false')await runNode('scripts/finalize-production.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`],scoped);
       if(process.env.AUTO_UPLOAD_PRIVATE==='true')await runNode('scripts/auto-publish.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`],scoped);
@@ -55,7 +56,11 @@ async function execute(job){
     const candidateId=String(payload.candidateId??'').trim(),channelId=String(payload.channelId??job.channel_id??'').trim();if(!candidateId&&!channelId)throw new Error('bootstrap_channel_brand requires candidateId or channelId');await runNode('scripts/bootstrap-channel-brand.mjs',[candidateId?`--candidate-id=${candidateId}`:`--channel-id=${channelId}`]);return {};
   }
   if(job.kind==='analytics_sync'){
-    const scoped=channelEnv(payload),channelId=String(payload.channelId??job.channel_id??'').trim();if(!channelId)throw new Error('analytics_sync requires a channelId');await runNode('scripts/analytics-sync-channel.mjs',[`--days=${Number(payload.days??28)}`,`--channel-id=${channelId}`],scoped);await runNode('scripts/economics-sync.mjs',[],scoped);return {};
+    const scoped=channelEnv(payload),channelId=String(payload.channelId??job.channel_id??'').trim();if(!channelId)throw new Error('analytics_sync requires a channelId');const days=Number(payload.days??28);
+    await runNode('scripts/analytics-sync-channel.mjs',[`--days=${days}`,`--channel-id=${channelId}`],scoped);
+    await runNode('scripts/economics-sync.mjs',[],scoped);
+    await runNode('scripts/creative-learning-sync.mjs',[`--days=${Math.max(days,180)}`,`--channel-id=${channelId}`],scoped);
+    return {};
   }
   if(job.kind==='market_cycle'){const args=[];if(payload.niche)args.push(`--niche=${String(payload.niche)}`);if(payload.maxQueries)args.push(`--max-queries=${Math.max(1,Math.floor(Number(payload.maxQueries)))}`);if(payload.days)args.push(`--days=${Math.max(1,Math.floor(Number(payload.days)))}`);await runNode('scripts/market-cycle.mjs',args);return {};}
   if(job.kind==='schedule_publication'){const publicationId=String(payload.publicationId??'').trim(),publishAt=String(payload.publishAt??'').trim();if(!publicationId||!publishAt)throw new Error('schedule_publication job missing publicationId or publishAt');await runNode('scripts/schedule-publication.mjs',[`--publication-id=${publicationId}`,`--publish-at=${publishAt}`],channelEnv(payload));return {};}
