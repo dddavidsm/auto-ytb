@@ -20,20 +20,33 @@ try{
   const unresolvedRights=Math.max(rights.rows.length,manifestRights);
   const checks=Array.isArray(row.report?.checks)?row.report.checks:[];
   const policyWarnings=checks.filter((check)=>check?.status==='WARN'&&['policy','advertiser-friendly','synthetic-disclosure'].includes(check?.id)).length;
-  const baseDecision=decideAutonomousPublication({autonomyMode:publishing.autonomyMode==='FULL_AUTONOMOUS'?'FULL_AUTONOMOUS':'REVIEW_REQUIRED',allowAutomaticPublicScheduling:Boolean(publishing.allowAutomaticPublicScheduling),minimumQaScoreForAutoPublish:Number(publishing.minimumQaScoreForAutoPublish??88),minimumResearchConfidenceForAutoPublish:Number(publishing.minimumResearchConfidenceForAutoPublish??78),blockOnUnresolvedRights:publishing.blockOnUnresolvedRights!==false,blockOnPolicyWarning:publishing.blockOnPolicyWarning!==false,autoPublishDelayMinutes:Number(publishing.autoPublishDelayMinutes??30)},{qaScore:Number(row.qa_score??0),researchConfidence:Number(row.research_confidence??0),qaBlockers:row.blockers??[],unresolvedRights,policyWarnings,youtubeVideoId:row.youtube_video_id});
-
   const attention=row.report?.attention??row.production_metadata?.attention??null;
   const finalInspection=row.report?.finalInspection??row.production_metadata?.finalInspection??null;
   const minimumAttentionScore=finite(publishing.minimumAttentionScoreForAutoPublish,Math.max(86,finite(process.env.MIN_ATTENTION_SCORE,86)));
   const minimumFinalMediaScore=finite(publishing.minimumFinalMediaScoreForAutoPublish,90);
   const maximumAutoPublishCostUsd=finite(publishing.maximumAutoPublishCostUsd,finite(channel.maxProductionCostUsd,finite(process.env.MAX_PRODUCTION_COST_USD,25)));
-  const extraReasons=[];
-  if(!attention||attention.ready!==true||finite(attention.score,0)<minimumAttentionScore)extraReasons.push(`Attention readiness ${finite(attention?.score,0).toFixed(0)}/${minimumAttentionScore} or not READY`);
-  if(!finalInspection||finalInspection.passed!==true||finite(finalInspection.score,0)<minimumFinalMediaScore)extraReasons.push(`Final media inspection ${finite(finalInspection?.score,0).toFixed(0)}/${minimumFinalMediaScore} or not passed`);
-  if(finite(row.total_cost_usd,0)>maximumAutoPublishCostUsd)extraReasons.push(`Production cost $${finite(row.total_cost_usd,0).toFixed(2)} exceeds autonomous publish cap $${maximumAutoPublishCostUsd.toFixed(2)}`);
-  if(String(row.production_state??'').toUpperCase()==='BLOCKED')extraReasons.push('Production run is BLOCKED');
-  const decision=extraReasons.length?{action:'KEEP_PRIVATE',publishAt:null,reasons:[...(baseDecision.reasons??[]),...extraReasons]}:baseDecision;
-  const gateSnapshot={qaScore:finite(row.qa_score,0),researchConfidence:finite(row.research_confidence,0),attentionScore:finite(attention?.score,0),attentionReady:attention?.ready===true,finalMediaScore:finite(finalInspection?.score,0),finalMediaPassed:finalInspection?.passed===true,unresolvedRights,policyWarnings,totalCostUsd:finite(row.total_cost_usd,0),maximumAutoPublishCostUsd,minimumAttentionScore,minimumFinalMediaScore};
+
+  const policy={
+    autonomyMode:publishing.autonomyMode==='FULL_AUTONOMOUS'?'FULL_AUTONOMOUS':'REVIEW_REQUIRED',
+    allowAutomaticPublicScheduling:Boolean(publishing.allowAutomaticPublicScheduling),
+    minimumQaScoreForAutoPublish:Number(publishing.minimumQaScoreForAutoPublish??88),
+    minimumResearchConfidenceForAutoPublish:Number(publishing.minimumResearchConfidenceForAutoPublish??78),
+    minimumAttentionScoreForAutoPublish:minimumAttentionScore,
+    minimumFinalMediaScoreForAutoPublish:minimumFinalMediaScore,
+    maximumAutoPublishCostUsd,
+    blockOnUnresolvedRights:publishing.blockOnUnresolvedRights!==false,
+    blockOnPolicyWarning:publishing.blockOnPolicyWarning!==false,
+    autoPublishDelayMinutes:Number(publishing.autoPublishDelayMinutes??30),
+  };
+  const context={
+    qaScore:Number(row.qa_score??0),researchConfidence:Number(row.research_confidence??0),qaBlockers:row.blockers??[],
+    attentionScore:finite(attention?.score,0),attentionReady:attention?.ready===true,
+    finalMediaScore:finite(finalInspection?.score,0),finalMediaPassed:finalInspection?.passed===true,
+    totalCostUsd:finite(row.total_cost_usd,0),productionState:row.production_state,
+    unresolvedRights,policyWarnings,youtubeVideoId:row.youtube_video_id,
+  };
+  const decision=decideAutonomousPublication(policy,context);
+  const gateSnapshot={...context,maximumAutoPublishCostUsd,minimumAttentionScore,minimumFinalMediaScore,minimumQaScore:policy.minimumQaScoreForAutoPublish,minimumResearchConfidence:policy.minimumResearchConfidenceForAutoPublish};
 
   if(decision.action==='SCHEDULE'&&row.publication_id&&decision.publishAt){
     const jobKey=`schedule-publication:${row.publication_id}:${decision.publishAt}`;
