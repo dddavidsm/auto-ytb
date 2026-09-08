@@ -65,15 +65,26 @@ export function bindVoiceProviderToSeries(provider,contextValue){
 
 export function auditSeriesVoiceContinuity(voiceAsset,contextValue){
   const context=contextValue&&typeof contextValue==='object'?contextValue:{};
-  const primary=selectPrimarySeriesVoice(context);
+  const cast=normalizeSeriesVoiceCast(context.voiceCast),primary=selectPrimarySeriesVoice(context);
   if(!context.required||!primary)return{required:false,passed:true,score:100,issues:[]};
   const proof=voiceAsset?.metadata?.voiceContinuity;
   const issues=[];
   if(!proof)issues.push('missing-voice-continuity-proof');
-  else{
+  else if(proof.multiSpeaker===true){
+    const speakerProofs=Array.isArray(proof.speakerProofs)?proof.speakerProofs:[];
+    if(!speakerProofs.length)issues.push('missing-multi-speaker-proof');
+    for(const item of speakerProofs){
+      const key=text(item.characterKey),name=text(item.characterName),canonical=cast.find((voice)=>voice.key===key||(name&&voice.name===name));
+      if(item.unknownSpeaker===true)issues.push(`unknown-dialogue-speaker:${text(item.speakerLabel)||name||key||'unknown'}`);
+      if(!canonical){issues.push(`noncanonical-dialogue-speaker:${name||key||'unknown'}`);continue;}
+      if(canonical.continuityKey&&text(item.continuityKey)!==canonical.continuityKey)issues.push(`voice-continuity-key-mismatch:${canonical.key}`);
+      if(canonical.voiceId&&text(item.resolvedVoiceId)!==canonical.voiceId)issues.push(`canonical-voice-id-mismatch:${canonical.key}`);
+    }
+  }else{
     if(primary.continuityKey&&text(proof.continuityKey)!==primary.continuityKey)issues.push('voice-continuity-key-mismatch');
     if(primary.voiceId&&text(proof.resolvedVoiceId)!==primary.voiceId)issues.push('canonical-voice-id-mismatch');
     if(primary.name&&text(proof.characterName)!==primary.name)issues.push('voice-character-mismatch');
   }
-  return{required:true,passed:issues.length===0,score:issues.length?0:100,issues,characterKey:primary.key,characterName:primary.name,canonicalVoiceId:primary.voiceId??null,resolvedVoiceId:text(voiceAsset?.voiceId)||null};
+  const score=Math.max(0,100-issues.length*30);
+  return{required:true,passed:issues.length===0,score,issues,characterKey:primary.key,characterName:primary.name,canonicalVoiceId:primary.voiceId??null,resolvedVoiceId:text(voiceAsset?.voiceId)||null,multiSpeaker:proof?.multiSpeaker===true,speakerCount:Array.isArray(proof?.speakerProofs)?new Set(proof.speakerProofs.map((item)=>item.characterKey)).size:1};
 }
