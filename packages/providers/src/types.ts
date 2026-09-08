@@ -44,6 +44,7 @@ export type BinaryAsset = {
   license?: string;
   sourceUrl?: string;
   costUsd?: number;
+  metadata?: Record<string, unknown>;
 };
 
 export type VoiceAlignment = {
@@ -78,9 +79,32 @@ export interface ObjectStore {
   put(input: { key: string; contentType: string; data: string | Uint8Array }): Promise<{ uri: string; bytes?: number }>;
 }
 
+export type FinalMediaInspection = {
+  passed: boolean;
+  score: number;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+  hasVideo: boolean;
+  hasAudio: boolean;
+  blackSeconds?: number;
+  longestBlackSeconds?: number;
+  silenceSeconds?: number;
+  longestSilenceSeconds?: number;
+  issues: string[];
+  metrics?: Record<string, number | string | boolean | null>;
+};
+
 export interface VideoRenderer {
   readonly name: string;
   render(input: { manifestUri: string; outputKey: string }): Promise<BinaryAsset & { durationSeconds?: number }>;
+  inspect?(input: {
+    fileUri: string;
+    expectedWidth: number;
+    expectedHeight: number;
+    expectedDurationSeconds: number;
+    requireAudio: boolean;
+  }): Promise<FinalMediaInspection>;
 }
 
 export interface ContentLibraryProvider {
