@@ -1,5 +1,5 @@
 export async function loadDashboardData(db){
-  const [jobs,budget,channels,candidates,economics,library,rights,recentRuns,brandAssets,routing]=await Promise.all([
+  const [jobs,budget,channels,candidates,economics,library,rights,recentRuns,brandAssets,routing,providerCosts]=await Promise.all([
     db.query(`select state,count(*)::int as count from jobs group by state`),
     db.query(`select channel_key,spend_date,reserved_usd::float,actual_usd::float,jobs_scheduled from daily_budget_ledger order by spend_date desc,channel_key limit 30`),
     db.query(`select id,channel_key,youtube_channel_id,title,language,country,niche,identity,voice_profile,autonomy_policy,library_policy,brand_assets,lifecycle_state,credentials_ref,config_path,automation_enabled,last_routed_at from channels where is_owned=true order by created_at asc`),
@@ -22,6 +22,7 @@ export async function loadDashboardData(db){
     db.query(`select pr.id,pr.state,pr.total_cost_usd::float,pr.metadata,pr.created_at,pr.updated_at,ci.working_title,o.score::float as opportunity_score from production_runs pr left join content_ideas ci on ci.id=pr.content_idea_id left join opportunities o on o.id=ci.opportunity_id order by pr.created_at desc limit 30`),
     db.query(`select channel_id,asset_type,count(*)::int as count,max(version)::int as latest_version from channel_brand_assets where active=true group by channel_id,asset_type order by channel_id,asset_type`),
     db.query(`select crd.opportunity_id,crd.channel_id,crd.channel_key,crd.route_score::float,crd.route_mode,crd.style_fingerprint,crd.rationale,crd.created_at,o.angle,o.score::float as opportunity_score from content_routing_decisions crd left join opportunities o on o.id=crd.opportunity_id order by crd.created_at desc limit 20`),
+    db.query(`select provider,coalesce(model,'unknown') as model,stage,count(*)::int as events,count(*) filter (where cost_usd is null)::int as unpriced_events,coalesce(sum(cost_usd),0)::float as cost_usd,bool_and(estimated) as all_estimated,max(created_at) as latest_at from provider_cost_events group by provider,coalesce(model,'unknown'),stage order by coalesce(sum(cost_usd),0) desc,events desc limit 60`),
   ]);
   return {
     jobs:Object.fromEntries(jobs.rows.map((row)=>[row.state,Number(row.count)])),
@@ -34,11 +35,23 @@ export async function loadDashboardData(db){
     recentRuns:recentRuns.rows,
     brandAssets:brandAssets.rows,
     routingDecisions:routing.rows,
+    providerCosts:providerCosts.rows,
   };
 }
 
 function round(value,digits=2){const p=10**digits;return Math.round(Number(value||0)*p)/p;}
 function latestEconomicsRows(rows=[]){const latestByRun=new Map();for(const row of rows)if(!latestByRun.has(row.production_run_id))latestByRun.set(row.production_run_id,row);return [...latestByRun.values()];}
+
+export function summarizeProviderCosts(data){
+  const grouped=new Map();
+  let unpricedEvents=0;
+  for(const row of data.providerCosts??[]){
+    const key=`${row.provider}:${row.model}`;
+    const current=grouped.get(key)??{provider:row.provider,model:row.model,costUsd:0,events:0,unpricedEvents:0,stages:{},estimated:true};
+    current.costUsd+=Number(row.cost_usd??0);current.events+=Number(row.events??0);current.unpricedEvents+=Number(row.unpriced_events??0);current.stages[row.stage]=(current.stages[row.stage]??0)+Number(row.cost_usd??0);current.estimated=current.estimated&&row.all_estimated!==false;grouped.set(key,current);unpricedEvents+=Number(row.unpriced_events??0);
+  }
+  return {unpricedEvents,providers:[...grouped.values()].map((row)=>({...row,costUsd:round(row.costUsd),stages:Object.fromEntries(Object.entries(row.stages).map(([stage,cost])=>[stage,round(cost)]))})).sort((a,b)=>b.costUsd-a.costUsd)};
+}
 
 export function summarizePortfolio(data){
   const videos=latestEconomicsRows(data.economics);
@@ -46,7 +59,8 @@ export function summarizePortfolio(data){
   const totalRevenue=videos.reduce((sum,row)=>sum+Number(row.total_revenue_usd??row.youtube_revenue_usd??0),0);
   const profit=totalRevenue-totalCost;
   const watchMinutes=videos.reduce((sum,row)=>sum+(Number(row.watch_minutes_per_dollar??0)*Number(row.total_cost_usd??0)),0);
-  const states=Object.fromEntries((data.channels??[]).map((channel)=>[channel.lifecycle_state,(Number(Object.values(Object.fromEntries((data.channels??[]).filter((c)=>c.lifecycle_state===channel.lifecycle_state).map((_,i)=>[i,1]))).reduce((a,b)=>a+b,0)))]));
+  const states={};for(const channel of data.channels??[])states[channel.lifecycle_state]=(states[channel.lifecycle_state]??0)+1;
+  const providerSummary=summarizeProviderCosts(data);
   return {
     channels:(data.channels??[]).length,
     activeChannels:(data.channels??[]).filter((c)=>c.automation_enabled&&c.lifecycle_state==='ready').length,
@@ -58,6 +72,7 @@ export function summarizePortfolio(data){
     roi:totalCost>0?round(profit/totalCost,3):null,
     watchMinutesPerDollar:totalCost>0?round(watchMinutes/totalCost,1):null,
     unresolvedRights:(data.rightsReview??[]).length,
+    unpricedProviderEvents:providerSummary.unpricedEvents,
     queuedJobs:Number(data.jobs?.queued??0)+Number(data.jobs?.retry??0),
     runningJobs:Number(data.jobs?.running??0),
     deadJobs:Number(data.jobs?.dead??0),
@@ -97,6 +112,7 @@ export function recentVideoEconomics(data,limit=12){
     productionRunId:row.production_run_id,title:row.working_title??row.youtube_video_id??'Untitled',channelKey:row.channel_key??'unassigned',contentFormat:row.content_format??'LONG_HORIZONTAL',state:row.state??'unpublished',
     costUsd:round(row.total_cost_usd),revenueUsd:round(row.total_revenue_usd??row.youtube_revenue_usd),profitUsd:round(Number(row.total_revenue_usd??row.youtube_revenue_usd??0)-Number(row.total_cost_usd??0)),roi:row.roi==null?(Number(row.total_cost_usd)>0?round((Number(row.total_revenue_usd??row.youtube_revenue_usd??0)-Number(row.total_cost_usd))/Number(row.total_cost_usd),3):null):Number(row.roi),
     rpm:row.revenue_per_1000_views_usd==null?null:Number(row.revenue_per_1000_views_usd),watchMinutesPerDollar:row.watch_minutes_per_dollar==null?null:Number(row.watch_minutes_per_dollar),youtubeVideoId:row.youtube_video_id,
+    costBreakdown:{research:round(row.research_cost_usd),llm:round(row.llm_cost_usd),voice:round(row.voice_cost_usd),image:round(row.image_cost_usd),video:round(row.video_cost_usd),thumbnail:round(row.thumbnail_cost_usd),render:round(row.render_cost_usd),storage:round(row.storage_cost_usd),other:round(row.other_cost_usd)},
   }));
 }
 
