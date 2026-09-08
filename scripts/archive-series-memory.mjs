@@ -34,14 +34,20 @@ try{
     where se.production_run_id=$1 limit 1`,[productionRunId])).rows[0];
   if(!row){console.log(JSON.stringify({productionRunId,archived:false,reason:'not-a-compiled-series-episode'},null,2));process.exit(0);}
   if(row.continuity_status!=='passed'||!row.memory_compiled_at)throw new Error(`Series memory is not release-ready: ${row.continuity_status}`);
-  const canon=(await db.query(`select memory_type,memory_key,payload,importance::float,canonical,active,episode_id,created_at from series_episode_memory where series_id=$1 and active=true and canonical=true order by importance desc,created_at desc limit 100`,[row.series_id])).rows;
-  const arcs=(await db.query(`select arc_key,title,status,summary,state,updated_at from series_story_arcs where series_id=$1 order by case status when 'active' then 0 when 'planned' then 1 else 2 end,updated_at desc`,[row.series_id])).rows;
+  const [canonResult,arcsResult,qualityResult]=await Promise.all([
+    db.query(`select memory_type,memory_key,payload,importance::float,canonical,active,episode_id,created_at from series_episode_memory where series_id=$1 and active=true and canonical=true order by importance desc,created_at desc limit 100`,[row.series_id]),
+    db.query(`select arc_key,title,status,summary,state,updated_at from series_story_arcs where series_id=$1 order by case status when 'active' then 0 when 'planned' then 1 else 2 end,updated_at desc`,[row.series_id]),
+    db.query(`select report_type,status,score::float,report,model,updated_at from series_episode_quality_reports where episode_id=$1 order by report_type`,[row.episode_id]),
+  ]);
+  const canon=canonResult.rows,arcs=arcsResult.rows,qualityReports=qualityResult.rows;
   const base=[channelFolder,'SERIES',safe(row.series_key),'05_EPISODES',safe(row.episode_key),'11_MEMORY'];
   const prefix=base.join('/');
   const meta={channelId:row.channel_id,channelKey,seriesId:row.series_id,seriesKey:row.series_key,episodeId:row.episode_id,episodeKey:row.episode_key,bibleVersion:row.current_bible_version,bibleContinuityKey:row.bible_continuity_key};
   const memoryDoc={series:{id:row.series_id,key:row.series_key,title:row.series_title,audienceMode:row.audience_mode},episode:{id:row.episode_id,key:row.episode_key,season:row.season_number,number:row.episode_number,continuityStatus:row.continuity_status,memoryCompiledAt:row.memory_compiled_at},summary:row.summary,canonicalFacts:row.canonical_facts??[],arcUpdates:row.arc_updates??[],nextEpisodeSeeds:row.next_episode_seeds??[],conflicts:row.conflicts??[],model:row.model,compiledAt:row.compiled_at,continuitySnapshot:row.continuity_snapshot??{}};
   const canonDoc={seriesKey:row.series_key,afterEpisodeKey:row.episode_key,bibleVersion:row.current_bible_version,bibleContinuityKey:row.bible_continuity_key,canonicalMemory:canon,storyArcs:arcs,capturedAt:new Date().toISOString()};
+  const qualityDoc={seriesKey:row.series_key,episodeKey:row.episode_key,audienceMode:row.audience_mode,reports:qualityReports,capturedAt:new Date().toISOString()};
   const memoryResult=await put(`${prefix}/memory.json`,base,'memory.json',memoryDoc,{...meta,kind:'episode-memory'});
-  const canonResult=await put(`${prefix}/canon-after-episode.json`,base,'canon-after-episode.json',canonDoc,{...meta,kind:'canonical-series-snapshot'});
-  console.log(JSON.stringify({productionRunId,archived:true,seriesKey:row.series_key,episodeKey:row.episode_key,memoryUri:memoryResult.uri??null,canonUri:canonResult.uri??null},null,2));
+  const canonArchive=await put(`${prefix}/canon-after-episode.json`,base,'canon-after-episode.json',canonDoc,{...meta,kind:'canonical-series-snapshot'});
+  const qualityArchive=await put(`${prefix}/quality-gates.json`,base,'quality-gates.json',qualityDoc,{...meta,kind:'episode-quality-gates'});
+  console.log(JSON.stringify({productionRunId,archived:true,seriesKey:row.series_key,episodeKey:row.episode_key,memoryUri:memoryResult.uri??null,canonUri:canonArchive.uri??null,qualityUri:qualityArchive.uri??null},null,2));
 } finally {await db.close();}
