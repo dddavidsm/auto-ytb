@@ -7,6 +7,7 @@ import { bindTextModelToSeries, parseSeriesContinuityContext } from './series-co
 import { bindDialogueVoiceProviderToSeries } from './series-dialogue-voice.mjs';
 import { withElevenLabsVoiceControls } from './elevenlabs-voice-controls.mjs';
 import { bindImageProviderToContentArchetype, bindTextModelToContentArchetype, bindVideoProviderToContentArchetype, normalizeContentArchetypeProfile } from './content-archetype.mjs';
+import { withCaptureAesthetic } from './capture-aesthetic.mjs';
 import { withContinuityBridgeVideo } from './continuity-video.mjs';
 import { withLicensedSoundtrack } from './soundtrack.mjs';
 import { inferContentArchetype } from '@auto-ytb/os';
@@ -96,10 +97,11 @@ export function createLiveRuntime(env = process.env) {
     const meteredVideo=meterVideoProvider(runway,meter,{model:videoModel});
     const archetypeImage=bindImageProviderToContentArchetype(meteredImage,archetypeProfile);
     const archetypeVideo=bindVideoProviderToContentArchetype(meteredVideo,archetypeProfile);
+    const captureVideo=withCaptureAesthetic(archetypeVideo,archetypeProfile,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
     image = bindMediaProviderToBrand(archetypeImage,brandContext);
     video = (brandContext?.referenceUris?.length??0)>=2
-      ? withContinuityBridgeVideo(archetypeVideo,image,brandContext)
-      : bindMediaProviderToBrand(archetypeVideo,brandContext);
+      ? withContinuityBridgeVideo(captureVideo,image,brandContext)
+      : bindMediaProviderToBrand(captureVideo,brandContext);
   }
 
   const rawRenderer=new FfmpegRenderer({
