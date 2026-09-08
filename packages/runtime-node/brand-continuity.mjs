@@ -44,10 +44,30 @@ export function bindMediaProviderToBrand(provider, contextValue){
   const brandPrompt=continuityPrompt(context);
   return {
     name:provider.name,
+    brandContinuityContext:context,
     async generate(input){
       const references=[...new Set([...(context.referenceUris??[]),...(input.referenceUris??[])])].slice(0,3);
       const result=await provider.generate({...input,prompt:[brandPrompt,input.prompt].filter(Boolean).join(' '),referenceUris:references.length?references:undefined});
-      return {...result,brandContinuity:{channelKey:context.channelKey,continuityKey:context.continuityKey,characterName:context.characterName,referenceCount:references.length}};
+      return {...result,brandContinuity:{required:context.required,channelKey:context.channelKey,continuityKey:context.continuityKey,characterName:context.characterName,referenceCount:references.length}};
     },
   };
+}
+
+export function auditBrandContinuityAssets(assets,contextValue){
+  const context=normalizeContext(contextValue);
+  const generated=(assets??[]).filter((asset)=>asset?.generated!==false);
+  if(!context||!context.required)return{passed:true,score:100,totalGenerated:generated.length,compliant:generated.length,issues:[]};
+  const issues=[];let compliant=0;
+  for(const asset of generated){
+    const proof=asset?.brandContinuity;
+    if(!proof){issues.push(`${asset?.id??'unknown'}: missing continuity proof`);continue;}
+    if(context.continuityKey&&proof.continuityKey!==context.continuityKey){issues.push(`${asset?.id??'unknown'}: continuity key mismatch`);continue;}
+    if(Number(proof.referenceCount??0)<1){issues.push(`${asset?.id??'unknown'}: canonical reference not applied`);continue;}
+    if(context.characterName&&proof.characterName!==context.characterName){issues.push(`${asset?.id??'unknown'}: character identity mismatch`);continue;}
+    compliant+=1;
+  }
+  const total=generated.length;
+  const score=total?Math.round(compliant/total*100):0;
+  if(!total)issues.push('No generated assets available for required continuity audit');
+  return{passed:total>0&&issues.length===0&&score===100,score,totalGenerated:total,compliant,issues};
 }
