@@ -35,11 +35,15 @@ async function execute(job){
     await runNode('scripts/live-pipeline.mjs',[`--topic=${topic}`,`--opportunity-id=${job.opportunity_id}`,`--format=${contentFormat}`,`--channel-config=${channelConfig}`]);
     const runResult=await db.query(`select pr.id,coalesce(pr.total_cost_usd,0)::float as cost from production_runs pr join content_ideas ci on ci.id=pr.content_idea_id where ci.opportunity_id=$1 order by pr.created_at desc limit 1`,[job.opportunity_id]);
     const productionRunId=runResult.rows[0]?.id;
-    if(productionRunId && process.env.AUTO_UPLOAD_PRIVATE==='true') await runNode('scripts/auto-publish.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`]);
+    if(productionRunId){
+      await runNode('scripts/economics-sync.mjs');
+      if(process.env.AUTO_UPLOAD_PRIVATE==='true') await runNode('scripts/auto-publish.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`]);
+    }
     return {actualCostUsd:Number(runResult.rows[0]?.cost ?? 0),contentFormat,productionRunId};
   }
   if(job.kind==='analytics_sync'){
     await runNode('scripts/analytics-sync.mjs',[`--days=${Number(payload.days ?? 28)}`]);
+    await runNode('scripts/economics-sync.mjs');
     return {};
   }
   if(job.kind==='market_cycle'){
