@@ -44,3 +44,4 @@ console.log('✓ recurring series narration uses the canonical narrator/lead voi
 console.log('✓ voice continuity seed remains stable for the same series character');
 console.log('✓ canonical voice-id drift is detected before release');
 console.log('✓ unresolved pilot voice profiles fall back safely and remain explicitly auditable');
+await import('./test-elevenlabs-voice-controls.mjs');
