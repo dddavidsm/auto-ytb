@@ -22,8 +22,15 @@ const early=decideSeriesContinuation({sampleSize:2,views:220,averageViewPercenta
 assert.equal(early.decision,'LEARN');
 const strong=decideSeriesContinuation({sampleSize:8,views:18000,averageViewPercentage:72,shareRate:2.3,subscribersPerThousand:13,roi:1.8,watchMinutesPerDollar:920});
 assert.equal(strong.decision,'SCALE');
+const strongQuality=decideSeriesContinuation({sampleSize:8,views:18000,averageViewPercentage:72,shareRate:2.3,subscribersPerThousand:13,roi:1.8,watchMinutesPerDollar:920,qualityReportCoverage:1,averageVisualContinuityScore:91,averageKidsQualityScore:92,qualityWarningRate:0.1,qualityBlockedCount:0});
+assert.equal(strongQuality.decision,'SCALE');
+const incompleteQuality=decideSeriesContinuation({sampleSize:8,views:18000,averageViewPercentage:72,shareRate:2.3,subscribersPerThousand:13,roi:1.8,watchMinutesPerDollar:920,qualityReportCoverage:0.5,averageVisualContinuityScore:90,averageKidsQualityScore:91,qualityWarningRate:0.1,qualityBlockedCount:0});
+assert.equal(incompleteQuality.decision,'CONTINUE');
+const visualDrift=decideSeriesContinuation({sampleSize:8,views:18000,averageViewPercentage:72,shareRate:2.3,subscribersPerThousand:13,roi:1.8,watchMinutesPerDollar:920,qualityReportCoverage:1,averageVisualContinuityScore:62,averageKidsQualityScore:92,qualityWarningRate:0.2,qualityBlockedCount:0});
+assert.equal(visualDrift.decision,'REVIEW');
 const weak=decideSeriesContinuation({sampleSize:10,views:9000,averageViewPercentage:25,shareRate:0.1,subscribersPerThousand:0.2,roi:-1.3,watchMinutesPerDollar:20});
 assert.equal(weak.decision,'PAUSE');
 console.log('✓ series memory deduplicates canonical facts by semantic key');
 console.log('✓ episode memory cannot overwrite immutable canon or unsafe kids rules');
 console.log('✓ series strategy waits for evidence before scaling or pausing');
+console.log('✓ strong business metrics cannot SCALE a series with incomplete or drifting quality evidence');
