@@ -14,19 +14,22 @@ async function loadCatalog(path){
   return assets.filter((asset)=>asset&&asset.id&&asset.kind&&asset.uri);
 }
 
-export async function mixTimedSfx({ffmpeg='ffmpeg',renderUri,sfx=[]}){
+export async function mixTimedSfx({ffmpeg='ffmpeg',renderUri,sfx=[],baseAudio=true,durationSeconds=0}){
   if(!sfx.length)return renderUri;
   const renderPath=pathFromUri(renderUri);if(!renderPath)throw new Error('Timed SFX mixing currently requires a local rendered MP4');
   const usable=sfx.map((cue)=>({...cue,path:pathFromUri(cue.uri)})).filter((cue)=>cue.path);
   if(!usable.length)return renderUri;
+  const duration=Math.max(0.2,number(durationSeconds,0)||Math.max(...usable.map((cue)=>number(cue.endSec,0)),1));
   const tmp=`${renderPath}.sfx-${Date.now()}.mp4`;
   const args=['-y','-i',renderPath];
-  for(const cue of usable)args.push('-i',cue.path);
+  for(const cue of usable){if(cue.loop)args.push('-stream_loop','-1');args.push('-i',cue.path);}
   const filters=[];
-  usable.forEach((cue,index)=>{const inputIndex=index+1,delay=Math.max(0,Math.round(number(cue.startSec,0)*1000)),gain=Math.max(0.02,Math.min(0.7,number(cue.gain,0.2)));filters.push(`[${inputIndex}:a]volume=${gain},adelay=${delay}|${delay}[sfx${index}]`);});
-  const inputs=['[0:a]',...usable.map((_,index)=>`[sfx${index}]`)].join('');
-  filters.push(`${inputs}amix=inputs=${usable.length+1}:duration=first:normalize=0,alimiter=limit=0.95[aout]`);
-  args.push('-filter_complex',filters.join(';'),'-map','0:v:0','-map','[aout]','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart',tmp);
+  let baseLabel='[0:a]';
+  if(!baseAudio){filters.push(`anullsrc=r=48000:cl=stereo:d=${duration}[base]`);baseLabel='[base]';}
+  usable.forEach((cue,index)=>{const inputIndex=index+1,delay=Math.max(0,Math.round(number(cue.startSec,0)*1000)),gain=Math.max(0.02,Math.min(0.7,number(cue.gain,0.2))),remaining=Math.max(0.1,Math.min(duration-number(cue.startSec,0),number(cue.endSec,duration)-number(cue.startSec,0)));filters.push(`[${inputIndex}:a]volume=${gain}${cue.loop?`,atrim=duration=${remaining}`:''},adelay=${delay}|${delay}[sfx${index}]`);});
+  const inputs=[baseLabel,...usable.map((_,index)=>`[sfx${index}]`)].join('');
+  filters.push(`${inputs}amix=inputs=${usable.length+1}:duration=longest:normalize=0,atrim=duration=${duration},alimiter=limit=0.95[aout]`);
+  args.push('-filter_complex',filters.join(';'),'-map','0:v:0','-map','[aout]','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart','-shortest',tmp);
   await run(ffmpeg,args);await rename(tmp,renderPath);return renderUri;
 }
 
@@ -43,15 +46,14 @@ export function withLicensedSoundtrack(renderer,options={}){
       const catalog=await loadCatalog(catalogPath);
       const requireZeroMarginalCost=options.requireZeroMarginalCost!==false;
       const safeCatalog=requireZeroMarginalCost?catalog.filter((asset)=>number(asset.costUsd,0)<=0):catalog;
-      const naturalSoundMode=manifest.executionPlan?.audioMode==='NATURAL_SOUND';
-      const plan=selectLicensedSoundtrack({script:manifest.script,contentFormat:manifest.contentFormat,catalog:safeCatalog,maxAudioCostUsd:number(options.maxAudioCostUsd,1.5),enableMusic:options.enableMusic!==false&&!naturalSoundMode,enableSfx:options.enableSfx!==false&&!naturalSoundMode});
-      if(naturalSoundMode)plan.selectionNotes.push('NATURAL_SOUND archetype: generic music/SFX bed suppressed; dedicated ambience/location-sound planning is handled separately.');
+      const audioMode=manifest.executionPlan?.audioMode??'NARRATION_LED';
+      const plan=selectLicensedSoundtrack({script:manifest.script,contentFormat:manifest.contentFormat,catalog:safeCatalog,maxAudioCostUsd:number(options.maxAudioCostUsd,1.5),enableMusic:options.enableMusic!==false,enableSfx:options.enableSfx!==false,audioMode,archetypeId:manifest.executionPlan?.archetypeId??manifest.contentArchetype?.id});
       if(!plan.rightsReady)throw new Error('Soundtrack plan contains audio without CLEARED rights');
       manifest.soundtrack=plan;manifest.music=plan.music;manifest.sfx=plan.sfx;
       await writeFile(manifestPath,JSON.stringify(manifest,null,2),'utf8');
       const rendered=await renderer.render(input);
-      const finalUri=await mixTimedSfx({ffmpeg,renderUri:rendered.uri,sfx:plan.sfx});
-      return {...rendered,uri:finalUri,costUsd:number(rendered.costUsd,0)+plan.estimatedCostUsd,metadata:{...(rendered.metadata??{}),soundtrack:{rightsReady:plan.rightsReady,music:plan.music?.assetId??null,sfx:plan.sfx.map((cue)=>({assetId:cue.assetId,startSec:cue.startSec})),estimatedCostUsd:plan.estimatedCostUsd,selectionNotes:plan.selectionNotes,audioMode:manifest.executionPlan?.audioMode??null},sfxMixed:plan.sfx.length>0}};
+      const finalUri=await mixTimedSfx({ffmpeg,renderUri:rendered.uri,sfx:plan.sfx,baseAudio:Boolean(manifest.voice?.uri),durationSeconds:number(manifest.script?.targetDurationSec,rendered.durationSeconds??0)});
+      return {...rendered,uri:finalUri,costUsd:number(rendered.costUsd,0)+plan.estimatedCostUsd,metadata:{...(rendered.metadata??{}),soundtrack:{rightsReady:plan.rightsReady,music:plan.music?.assetId??null,sfx:plan.sfx.map((cue)=>({assetId:cue.assetId,startSec:cue.startSec,loop:Boolean(cue.loop)})),estimatedCostUsd:plan.estimatedCostUsd,selectionNotes:plan.selectionNotes,audioMode},sfxMixed:plan.sfx.length>0}};
     },
   };
 }

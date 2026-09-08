@@ -121,6 +121,7 @@ export type SoundtrackCue = {
   startSec: number;
   endSec?: number;
   gain: number;
+  loop?: boolean;
   license: string;
   rightsStatus: AudioRightsStatus;
   sourceUrl?: string;

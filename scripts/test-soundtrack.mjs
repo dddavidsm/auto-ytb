@@ -13,6 +13,8 @@ const catalog=[
   {id:'music-risky',kind:'music',uri:'file:///unknown.wav',license:'unknown',rightsStatus:'VERIFY',moods:['documentary','tension'],tags:['background'],costUsd:0},
   {id:'sfx-impact',kind:'sfx',uri:'file:///licensed/impact.wav',license:'subscription-cleared',rightsStatus:'CLEARED',tags:['reveal','impact'],costUsd:0.05,defaultGain:0.2},
   {id:'sfx-transition',kind:'sfx',uri:'file:///licensed/transition.wav',license:'subscription-cleared',rightsStatus:'CLEARED',tags:['hook','transition'],costUsd:0.05,defaultGain:0.18},
+  {id:'sfx-ambience',kind:'sfx',uri:'file:///licensed/room.wav',license:'subscription-cleared',rightsStatus:'CLEARED',tags:['ambience','natural','indoor'],costUsd:0,defaultGain:0.11},
+  {id:'sfx-dog-contact',kind:'sfx',uri:'file:///licensed/dog-contact.wav',license:'subscription-cleared',rightsStatus:'CLEARED',tags:['animal','natural','reaction','contact'],costUsd:0,defaultGain:0.16},
   {id:'sfx-blocked',kind:'sfx',uri:'file:///blocked.wav',license:'none',rightsStatus:'BLOCKED',tags:['payoff','impact'],costUsd:0},
 ];
 const plan=selectLicensedSoundtrack({script,contentFormat:'LONG_HORIZONTAL',catalog,maxAudioCostUsd:0.35});
@@ -22,14 +24,21 @@ assert.ok(plan.estimatedCostUsd<=0.35,'audio plan must stay within budget');
 assert.ok(plan.sfx.length<=5,'SFX must stay sparse');
 assert.ok(plan.sfx.every((cue)=>cue.rightsStatus==='CLEARED'));
 assert.ok(!plan.sfx.some((cue)=>cue.assetId==='sfx-blocked'));
-const noBudget=selectLicensedSoundtrack({script,contentFormat:'LONG_HORIZONTAL',catalog,maxAudioCostUsd:0});
+const noBudget=selectLicensedSoundtrack({script,contentFormat:'LONG_HORIZONTAL',catalog:catalog.filter((asset)=>Number(asset.costUsd)>0),maxAudioCostUsd:0});
 assert.equal(noBudget.music,undefined);
 assert.equal(noBudget.sfx.length,0);
 assert.equal(noBudget.rightsReady,true,'silence/voice-only is rights-safe');
 const shortPlan=selectLicensedSoundtrack({script:{...script,targetDurationSec:45},contentFormat:'SHORT_VERTICAL',catalog,maxAudioCostUsd:1});
 assert.equal(shortPlan.music,undefined,'format-incompatible music must not be selected for Shorts');
 assert.ok(shortPlan.sfx.length<=3,'Shorts must use even sparser SFX');
+const naturalPlan=selectLicensedSoundtrack({script:{...script,targetDurationSec:45},contentFormat:'SHORT_VERTICAL',catalog,maxAudioCostUsd:0,audioMode:'NATURAL_SOUND',archetypeId:'ANIMAL_REALISM'});
+assert.equal(naturalPlan.music,undefined,'animal realism must not receive generic background music');
+assert.equal(naturalPlan.sfx[0]?.assetId,'sfx-ambience');
+assert.equal(naturalPlan.sfx[0]?.loop,true,'natural ambience should cover the visual event');
+assert.ok(naturalPlan.sfx.length<=3,'natural audio must remain sparse');
+assert.ok(naturalPlan.selectionNotes.some((note)=>/generic transition packs/i.test(note)));
 console.log('✓ soundtrack planner uses only CLEARED audio assets');
 console.log('✓ soundtrack cost stays inside the configured per-video budget');
-console.log('✓ no licensed match safely falls back to voice-only');
+console.log('✓ no licensed match safely falls back to clean spoken/no-audio output');
 console.log('✓ SFX remain sparse and format-aware');
+console.log('✓ ANIMAL_REALISM gets natural ambience/reaction audio instead of documentary music');
