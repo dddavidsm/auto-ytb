@@ -28,6 +28,7 @@ export async function runContentPipeline(input: {
   packagingGuidance?: string;
   scriptGuidance?: string;
   packagingLearning?: PackagingLearningProfile;
+  additionalCostUsd?: () => number;
 }): Promise<{ state: PipelineState; events: PipelineEvent[]; dossier?: ResearchDossier; manifest?: ProductionManifest; qa?: QaReport; renderUri?: string; externalId?: string }> {
   const events: PipelineEvent[] = [];
   const event = (state: PipelineState, message: string) => events.push({ at: new Date().toISOString(), state, message });
@@ -133,6 +134,8 @@ export async function runContentPipeline(input: {
     }
   }
 
+  const editorialCostUsd=Math.max(0,Number(input.additionalCostUsd?.()??0));
+  const mediaCostUsd=(voice.costUsd ?? 0) + assets.reduce((sum, asset) => sum + (asset.costUsd ?? 0), 0) + thumbnails.reduce((sum, asset) => sum + (asset.costUsd ?? 0), 0);
   const manifest: ProductionManifest = {
     projectId: input.projectId,
     createdAt: new Date().toISOString(),
@@ -152,9 +155,10 @@ export async function runContentPipeline(input: {
     assets,
     voice,
     estimatedCostUsd,
-    actualCostUsd: (voice.costUsd ?? 0) + assets.reduce((sum, asset) => sum + (asset.costUsd ?? 0), 0) + thumbnails.reduce((sum, asset) => sum + (asset.costUsd ?? 0), 0),
+    actualCostUsd: editorialCostUsd + mediaCostUsd,
     containsSyntheticMedia: scenes.some((scene) => scene.generated),
   };
+  event('PLAN', `Metered pre-render spend $${manifest.actualCostUsd.toFixed(4)} · editorial $${editorialCostUsd.toFixed(4)} · media $${mediaCostUsd.toFixed(4)}`);
 
   event('QA', 'Running factual, provenance, originality, language, audio-sync, visual coverage, source-rights, hybrid-media, format, packaging and cost gates');
   const qa = runQa({ dossier, script, manifest, maxCostUsd: input.maxCostUsd });
