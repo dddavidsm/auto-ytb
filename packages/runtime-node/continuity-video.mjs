@@ -35,12 +35,14 @@ export function withContinuityBridgeVideo(videoProvider,imageProvider,contextVal
       const selection=selectSceneReferences(context,input.prompt,input.referenceUris,3);
       const refs=selection.uris;
       const prompt=continuityPrompt(context,selection);
+      const proof={required:context.required,channelKey:context.channelKey,continuityKey:context.continuityKey,characterName:context.characterName,referenceCount:refs.length,referenceKeys:selection.keys,characterNames:selection.characterNames,styleKeys:selection.styleKeys};
       if(refs.length<2){
         const result=await videoProvider.generate({...input,prompt:[prompt,input.prompt].filter(Boolean).join(' '),referenceUris:refs.length?refs:undefined});
+        const brandContinuity={...proof,bridgeUsed:false};
         return{
           ...result,
-          metadata:{...(result.metadata??{}),continuityBridge:{used:false,canonicalReferenceCount:refs.length,referenceKeys:selection.keys,characterNames:selection.characterNames}},
-          brandContinuity:{required:context.required,channelKey:context.channelKey,continuityKey:context.continuityKey,characterName:context.characterName,referenceCount:refs.length,referenceKeys:selection.keys,characterNames:selection.characterNames,styleKeys:selection.styleKeys,bridgeUsed:false},
+          metadata:{...(result.metadata??{}),brandContinuity,continuityBridge:{used:false,canonicalReferenceCount:refs.length,referenceKeys:selection.keys,characterNames:selection.characterNames}},
+          brandContinuity,
         };
       }
       const bridge=await imageProvider.generate({
@@ -50,11 +52,12 @@ export function withContinuityBridgeVideo(videoProvider,imageProvider,contextVal
       });
       const result=await videoProvider.generate({...input,prompt:[prompt,input.prompt,'Animate from the supplied canonical keyframe without redesigning characters or art style. Preserve facial identity, wardrobe, proportions, palette and rendering language across motion.'].filter(Boolean).join(' '),referenceUris:[bridge.uri]});
       const bridgeCost=Math.max(0,Number(bridge.costUsd??0)),videoCost=Math.max(0,Number(result.costUsd??0));
+      const brandContinuity={...proof,bridgeUsed:true};
       return{
         ...result,
         costUsd:bridgeCost+videoCost,
-        metadata:{...(result.metadata??{}),continuityBridge:{used:true,bridgeAssetId:bridge.id,bridgeUri:bridge.uri,bridgeModel:bridge.model??null,canonicalReferenceCount:refs.length,referenceKeys:selection.keys,characterNames:selection.characterNames,styleKeys:selection.styleKeys,bridgeCostUsd:bridgeCost,videoCostUsd:videoCost,totalCostUsd:bridgeCost+videoCost}},
-        brandContinuity:{required:context.required,channelKey:context.channelKey,continuityKey:context.continuityKey,characterName:context.characterName,referenceCount:refs.length,referenceKeys:selection.keys,characterNames:selection.characterNames,styleKeys:selection.styleKeys,bridgeUsed:true},
+        metadata:{...(result.metadata??{}),brandContinuity,continuityBridge:{used:true,bridgeAssetId:bridge.id,bridgeUri:bridge.uri,bridgeModel:bridge.model??null,canonicalReferenceCount:refs.length,referenceKeys:selection.keys,characterNames:selection.characterNames,styleKeys:selection.styleKeys,bridgeCostUsd:bridgeCost,videoCostUsd:videoCost,totalCostUsd:bridgeCost+videoCost}},
+        brandContinuity,
       };
     },
   };
