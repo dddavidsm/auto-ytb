@@ -39,7 +39,7 @@ export class InstagramReelsPublisher{
   constructor(options){this.options=options;this.fetchFn=options.fetchFn??fetch;}
   async publish(input){
     const videoUrl=text(input.publicMediaUrl);if(!/^https:\/\//i.test(videoUrl))throw new Error('Instagram Reels publishing requires a public HTTPS video_url reachable by Meta');
-    const createUrl=graphUrl(this.options.apiVersion,this.options.userId,{access_token:this.options.accessToken,media_type:'REELS',video_url:videoUrl,caption:text(input.caption).slice(0,2200),share_to_feed:input.shareToFeed===false?'false':'true'});
+    const createUrl=graphUrl(this.options.apiVersion,`${this.options.userId}/media`,{access_token:this.options.accessToken,media_type:'REELS',video_url:videoUrl,caption:text(input.caption).slice(0,2200),share_to_feed:input.shareToFeed===false?'false':'true'});
     const created=await responseJson(await this.fetchFn(createUrl,{method:'POST'}),'Instagram Reel container create');const creationId=text(created.id);if(!creationId)throw new Error('Instagram did not return a creation container id');
     const timeoutMs=Number(this.options.timeoutMs??300000),pollMs=Number(this.options.pollMs??3000),started=Date.now();let lastStatus='';
     while(Date.now()-started<timeoutMs){const status=await responseJson(await this.fetchFn(graphUrl(this.options.apiVersion,creationId,{fields:'status_code,status',access_token:this.options.accessToken})),'Instagram Reel container status');lastStatus=text(status.status_code||status.status);if(['FINISHED','PUBLISHED'].includes(lastStatus))break;if(['ERROR','EXPIRED'].includes(lastStatus))throw new Error(`Instagram Reel container failed with ${lastStatus}`);await sleep(pollMs);}
