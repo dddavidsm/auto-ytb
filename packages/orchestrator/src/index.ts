@@ -111,6 +111,7 @@ export async function runContentPipeline(input: {
 
   event('ASSETS', `Generating ${aspectRatio} scene visuals${isShort ? '' : ' plus thumbnail variants'}`);
   const assets: AssetRecord[] = [];
+  const beatForScene=(scene:Scene)=>script.beats.find((beat)=>scene.id===beat.id||scene.id.startsWith(`${beat.id}-s`));
 
   for (const scene of scenes.filter((candidate) => !candidate.generated && ['chart','motion_graphic','text','source_card'].includes(candidate.kind))) {
     const direct = scene.kind === 'source_card' ? scene.sourceRefs?.find((ref) => ref.policy === 'DIRECT_ASSET_ALLOWED' && ref.url) : undefined;
@@ -122,10 +123,29 @@ export async function runContentPipeline(input: {
   }
 
   for (const scene of scenes.filter((candidate) => candidate.generated)) {
+    const beat=beatForScene(scene);
+    const narrationContext=beat?.narration?.replace(/\s+/g,' ').trim().slice(0,520);
+    const visualPrompt=[
+      scene.instruction,
+      narrationContext?`Narration context for subject/cast grounding: ${narrationContext}`:'',
+      `Compose natively for ${aspectRatio}; keep the focal subject readable on a phone screen. The visual must explain, prove, escalate or refresh the narration rather than act as generic decoration.`,
+    ].filter(Boolean).join(' ');
     const generated = scene.kind === 'ai_video'
-      ? await input.videoProvider.generate({ prompt: `${scene.instruction} Compose natively for ${aspectRatio}; keep the focal subject readable on a phone screen. The visual must explain, prove, escalate or refresh the narration rather than act as generic decoration.`, durationSeconds: Math.min(scene.durationSec, 8), aspectRatio })
-      : await input.imageProvider.generate({ prompt: `${scene.instruction} Compose natively for ${aspectRatio}; keep the focal subject readable on a phone screen. The visual must explain, prove, escalate or refresh the narration rather than act as generic decoration.`, aspectRatio });
-    assets.push({ ...generated, sceneId: scene.id, generated: true, sourceIds: scene.sourceIds, metadata:{ sourceRefs:scene.sourceRefs ?? [], visualValue:scene.visualValue ?? null, selectionReason:scene.selectionReason ?? null } });
+      ? await input.videoProvider.generate({ prompt:visualPrompt, durationSeconds: Math.min(scene.durationSec, 8), aspectRatio })
+      : await input.imageProvider.generate({ prompt:visualPrompt, aspectRatio });
+    assets.push({
+      ...generated,
+      sceneId:scene.id,
+      generated:true,
+      sourceIds:scene.sourceIds,
+      metadata:{
+        ...(generated.metadata??{}),
+        sourceRefs:scene.sourceRefs??[],
+        visualValue:scene.visualValue??null,
+        selectionReason:scene.selectionReason??null,
+        narrationContext:narrationContext??null,
+      },
+    });
   }
 
   const thumbnails: ThumbnailAsset[] = [];
