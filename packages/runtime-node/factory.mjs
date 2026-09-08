@@ -33,6 +33,16 @@ function mergeBrandAndSeries(brand,series){
     seriesEpisodeKey:series.episodeKey,
   };
 }
+function bindPublisherToSeries(publisher,series){
+  if(!series?.required)return publisher;
+  const madeForKids=series.audienceMode==='MADE_FOR_KIDS';
+  return {
+    name:publisher.name,
+    uploadPrivate(input){return publisher.uploadPrivate({...input,selfDeclaredMadeForKids:madeForKids});},
+    setThumbnail:publisher.setThumbnail.bind(publisher),
+    schedule:publisher.schedule.bind(publisher),
+  };
+}
 
 export function createLiveRuntime(env = process.env) {
   const store = new NodeLocalObjectStore(env.LOCAL_STORAGE_ROOT || '.data/storage');
@@ -84,7 +94,8 @@ export function createLiveRuntime(env = process.env) {
   const thumbnailComposer = new FfmpegThumbnailComposer({ outputRoot: env.LOCAL_THUMBNAIL_ROOT || '.data/thumbnails' });
   const oauth = new GoogleOAuthTokenProvider({ clientId:reqFrom(env,'YOUTUBE_CLIENT_ID'), clientSecret:reqFrom(env,'YOUTUBE_CLIENT_SECRET'), refreshToken:reqFrom(env,'YOUTUBE_REFRESH_TOKEN') });
   const loader = new NodeUploadAssetLoader();
-  const publisher = new YouTubePublisher(oauth, loader);
+  const rawPublisher = new YouTubePublisher(oauth, loader);
+  const publisher = bindPublisherToSeries(rawPublisher,seriesContext);
   const analytics = new YouTubeAnalyticsClient(oauth);
   const library=(env.CONTENT_LIBRARY_PROVIDER||'google-drive').toLowerCase()==='google-drive'
     ? new GoogleDriveLibraryProvider({getAccessToken:()=>oauth.getAccessToken(),rootFolderName:env.DRIVE_ROOT_FOLDER||'AUTO-YTB'})
