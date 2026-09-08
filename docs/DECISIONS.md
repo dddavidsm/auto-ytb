@@ -19,6 +19,24 @@ Production may be autonomous, but first releases pass a final review gate and ar
 ## ADR-006: Profitability is a first-class metric
 Every video eventually stores API/LLM/TTS/image/video/render/storage costs alongside revenue. The objective is profitable expected watch value, not raw views.
 
+## ADR-007: Recurring formats become versioned Series IP
+A repeatable format with persistent identity is represented as a Series with an active versioned Bible rather than as prompt fragments. Character invariants, world rules, style rules, audience rules, episode grammar, prompt packs, story arcs and canonical memory are durable data. An episode may advance narrative state but may not rewrite immutable character/style identity.
+
+## ADR-008: Series release fails closed
+A Series episode cannot autonomously reach public scheduling until its episode memory is compiled and continuity is `passed`. It must also have an accepted visual-continuity report. `MADE_FOR_KIDS` series additionally require an accepted Kids & Family quality report. Missing reports are blockers, including when a quality worker fails before creating a report.
+
+## ADR-009: Child-directed content has a stricter quality layer
+`MADE_FOR_KIDS` is not treated as a metadata flag alone. The pipeline carries an explicit age band, vocabulary/safety/emotional rules, deterministic Kids & Family checks and YouTube `selfDeclaredMadeForKids` propagation. Unsafe imitation, manipulative child-directed promotion, graphic content, misleading educational certainty and missing narrative payoff are hard blockers; softer language/structure concerns produce warnings.
+
+## ADR-010: Pixel-level continuity is sampled before release
+Prompt/reference provenance is necessary but insufficient proof of visual consistency. For recurring IP, representative generated images/video keyframes are compared semantically with canonical character/style references. Severe identity/style drift blocks release. Source/procedural-only series without persistent characters can mark this gate not-applicable rather than paying for unnecessary vision inspection.
+
+## ADR-011: Multiple visual references use a canonical keyframe bridge for video
+The image generator can combine multiple canonical references while the current Gen-4.5 image-to-video path is anchored by one prompt image. When at least two canonical references are active, the runtime first creates a reference-conditioned keyframe and animates that keyframe. The bridge image cost is included in the pre-render production budget and in the provider cost ledger.
+
+## ADR-012: Quality constrains scaling, not only publication
+Series strategy combines private Analytics/economics with production-quality evidence. Strong audience/ROI metrics cannot promote a series to `SCALE` when visual/Kids quality coverage is incomplete or drifting. Severe recurring quality weakness forces `REVIEW`; isolated warnings may permit `CONTINUE` while the system gathers more evidence.
+
 ## GitHub as canonical source of truth
 
 - Canonical repository: `dddavidsm/auto-ytb`.
