@@ -121,20 +121,33 @@ export class OpenAIResponsesTextModel implements TextModel {
 
 export class ElevenLabsVoiceProvider implements VoiceProvider {
   readonly name = 'elevenlabs';
-  constructor(private readonly options: { apiKey: string; store: ObjectStore; modelId?: string; outputFormat?: string; endpoint?: string; fetchFn?: typeof fetch }) {}
-  async synthesize(input: { text: string; voice: string; language: string }): Promise<BinaryAsset & { durationSeconds?: number }> {
+  constructor(private readonly options: { apiKey: string; store: ObjectStore; modelId?: string; outputFormat?: string; endpoint?: string; fetchFn?: typeof fetch; useTimestamps?: boolean }) {}
+  async synthesize(input: { text: string; voice: string; language: string }) {
     const fetchFn = this.options.fetchFn ?? fetch;
     const outputFormat = this.options.outputFormat ?? 'mp3_44100_128';
     const base = this.options.endpoint ?? 'https://api.elevenlabs.io/v1/text-to-speech';
-    const response = await fetchWithRetry(fetchFn, `${base}/${encodeURIComponent(input.voice)}?output_format=${encodeURIComponent(outputFormat)}`, {
+    const withTimestamps=this.options.useTimestamps!==false;
+    const suffix=withTimestamps?'/with-timestamps':'';
+    const response = await fetchWithRetry(fetchFn, `${base}/${encodeURIComponent(input.voice)}${suffix}?output_format=${encodeURIComponent(outputFormat)}`, {
       method:'POST', headers:{ 'xi-api-key':this.options.apiKey, 'content-type':'application/json' },
       body:JSON.stringify({ text:input.text, model_id:this.options.modelId ?? 'eleven_multilingual_v2', language_code:input.language.slice(0,2) }),
     }, 4);
     if (!response.ok) throw new Error(`ElevenLabs TTS failed ${response.status}: ${(await response.text()).slice(0,500)}`);
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    let bytes:Uint8Array;
+    let alignment: { characters:string[]; characterStartTimesSeconds:number[]; characterEndTimesSeconds:number[] } | undefined;
+    let durationSeconds:number|undefined;
+    if(withTimestamps){
+      const json=await response.json() as {audio_base64:string;alignment?:{characters?:string[];character_start_times_seconds?:number[];character_end_times_seconds?:number[]};normalized_alignment?:{characters?:string[];character_start_times_seconds?:number[];character_end_times_seconds?:number[]}};
+      bytes=new Uint8Array(Buffer.from(json.audio_base64,'base64'));
+      const raw=json.normalized_alignment ?? json.alignment;
+      if(raw?.characters?.length && raw.character_start_times_seconds?.length && raw.character_end_times_seconds?.length){
+        alignment={characters:raw.characters,characterStartTimesSeconds:raw.character_start_times_seconds,characterEndTimesSeconds:raw.character_end_times_seconds};
+        durationSeconds=alignment.characterEndTimesSeconds.at(-1);
+      }
+    } else bytes=new Uint8Array(await response.arrayBuffer());
     const key = `voice/${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`;
     const stored = await this.options.store.put({ key, contentType:'audio/mpeg', data:bytes });
-    return { id:key.replace(/[^a-z0-9]/gi,'-'), uri:stored.uri, mimeType:'audio/mpeg', bytes:stored.bytes, provider:this.name, model:this.options.modelId ?? 'eleven_multilingual_v2', durationSeconds:Math.max(1,Math.round(input.text.split(/\s+/).length/2.5)) };
+    return { id:key.replace(/[^a-z0-9]/gi,'-'), uri:stored.uri, mimeType:'audio/mpeg', bytes:stored.bytes, provider:this.name, model:this.options.modelId ?? 'eleven_multilingual_v2', durationSeconds:durationSeconds ?? Math.max(1,Math.round(input.text.split(/\s+/).length/2.5)), alignment, language:input.language, voiceId:input.voice };
   }
 }
 
