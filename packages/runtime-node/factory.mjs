@@ -4,6 +4,7 @@ import { ProviderUsageMeter, meterSearchProvider, meterTextModel, meterVoiceProv
 import { withFinalMediaInspection } from './media-inspector.mjs';
 import { bindMediaProviderToBrand, parseBrandContinuityContext } from './brand-continuity.mjs';
 import { bindTextModelToSeries, parseSeriesContinuityContext } from './series-continuity.mjs';
+import { withContinuityBridgeVideo } from './continuity-video.mjs';
 import { withLicensedSoundtrack } from './soundtrack.mjs';
 import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
@@ -72,8 +73,12 @@ export function createLiveRuntime(env = process.env) {
     const imageModel=env.IMAGE_MODEL || 'gen4_image';
     const videoModel=env.VIDEO_MODEL || 'gen4.5';
     const runway = new RunwayMediaProvider({ apiKey: env.IMAGE_API_KEY || env.VIDEO_API_KEY || reqFrom(env,'VIDEO_API_KEY'), store, imageModel, videoModel });
-    image = bindMediaProviderToBrand(meterImageProvider(runway,meter,{model:imageModel}),brandContext);
-    video = bindMediaProviderToBrand(meterVideoProvider(runway,meter,{model:videoModel}),brandContext);
+    const meteredImage=meterImageProvider(runway,meter,{model:imageModel});
+    const meteredVideo=meterVideoProvider(runway,meter,{model:videoModel});
+    image = bindMediaProviderToBrand(meteredImage,brandContext);
+    video = (brandContext?.referenceUris?.length??0)>=2
+      ? withContinuityBridgeVideo(meteredVideo,image,brandContext)
+      : bindMediaProviderToBrand(meteredVideo,brandContext);
   }
 
   const rawRenderer=new FfmpegRenderer({
