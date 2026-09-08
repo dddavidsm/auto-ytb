@@ -56,6 +56,9 @@
     "autoPublishDelayMinutes": 30,
     "minimumQaScoreForAutoPublish": 88,
     "minimumResearchConfidenceForAutoPublish": 78,
+    "minimumAttentionScoreForAutoPublish": 86,
+    "minimumFinalMediaScoreForAutoPublish": 90,
+    "maximumAutoPublishCostUsd": 18,
     "blockOnUnresolvedRights": true,
     "blockOnPolicyWarning": true
   },
