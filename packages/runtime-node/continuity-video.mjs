@@ -35,9 +35,11 @@ export function withContinuityBridgeVideo(videoProvider,imageProvider,contextVal
         referenceUris:refs,
       });
       const result=await videoProvider.generate({...input,prompt:[continuityPrompt(context),input.prompt,'Animate from the supplied canonical keyframe without redesigning characters or art style. Preserve facial identity, wardrobe, proportions, palette and rendering language across motion.'].filter(Boolean).join(' '),referenceUris:[bridge.uri]});
+      const bridgeCost=Math.max(0,Number(bridge.costUsd??0)),videoCost=Math.max(0,Number(result.costUsd??0));
       return{
         ...result,
-        metadata:{...(result.metadata??{}),continuityBridge:{used:true,bridgeAssetId:bridge.id,bridgeUri:bridge.uri,bridgeModel:bridge.model??null,canonicalReferenceCount:refs.length}},
+        costUsd:bridgeCost+videoCost,
+        metadata:{...(result.metadata??{}),continuityBridge:{used:true,bridgeAssetId:bridge.id,bridgeUri:bridge.uri,bridgeModel:bridge.model??null,canonicalReferenceCount:refs.length,bridgeCostUsd:bridgeCost,videoCostUsd:videoCost,totalCostUsd:bridgeCost+videoCost}},
         brandContinuity:{required:context.required,channelKey:context.channelKey,continuityKey:context.continuityKey,characterName:context.characterName,referenceCount:refs.length,bridgeUsed:true},
       };
     },
