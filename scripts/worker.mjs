@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import os from 'node:os';
 import { NodePostgresSqlClient } from '../packages/runtime-node/index.mjs';
 import { computeRetryDelayMs, shouldRetry } from '@auto-ytb/os';
+import { projectChannelCredentials } from './lib/channel-env.mjs';
 
 const req=(name)=>{const value=process.env[name]?.trim();if(!value)throw new Error(`${name} is required`);return value;};
 const num=(name,fallback)=>{const value=Number(process.env[name]??fallback);if(!Number.isFinite(value))throw new Error(`${name} must be numeric`);return value;};
@@ -19,8 +20,9 @@ const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
 
 async function emit(jobId,eventType,detail={}){await db.query(`insert into job_events (job_id,event_type,detail) values ($1,$2,$3::jsonb)`,[jobId,eventType,JSON.stringify(detail)]);}
 async function recoverStale(){const result=await db.query(`update jobs set state='retry',locked_at=null,locked_by=null,not_before=now(),last_error=coalesce(last_error,'') || case when last_error is null or last_error='' then '' else E'\n' end || 'Recovered stale running job',updated_at=now() where state='running' and locked_at < now()-($1::text || ' minutes')::interval returning id`,[String(staleMinutes)]);for(const row of result.rows)await emit(row.id,'stale_recovered',{workerId,staleMinutes});return result.rows.length;}
-async function claim(){const result=await db.query(`with candidate as (select id from jobs where state in ('queued','retry') and not_before<=now() order by priority desc,created_at asc for update skip locked limit 1) update jobs j set state='running',attempts=j.attempts+1,locked_at=now(),locked_by=$1,updated_at=now() from candidate where j.id=candidate.id returning j.*`,[workerId]);const job=result.rows[0];if(job)await emit(job.id,'started',{workerId,attempt:job.attempts,kind:job.kind,channelId:job.channel_id,contentFormat:job.payload?.contentFormat});return job;}
-function runNode(script,args=[]){return new Promise((resolve,reject)=>{const child=spawn(process.execPath,[script,...args],{cwd:process.cwd(),env:process.env,stdio:['ignore','pipe','pipe']});let stdout='',stderr='';const append=(current,chunk)=>`${current}${chunk.toString()}`.slice(-30000);child.stdout.on('data',(chunk)=>{stdout=append(stdout,chunk);process.stdout.write(chunk);});child.stderr.on('data',(chunk)=>{stderr=append(stderr,chunk);process.stderr.write(chunk);});const timer=setTimeout(()=>{child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),10000).unref();},timeoutMinutes*60_000);child.on('error',(error)=>{clearTimeout(timer);reject(error);});child.on('exit',(code,signal)=>{clearTimeout(timer);if(code===0)resolve({stdout,stderr});else reject(new Error(`child process failed code=${code} signal=${signal??'none'} stderr=${stderr.slice(-4000)}`));});});}
+async function claim(){const result=await db.query(`with candidate as (select id from jobs where state in ('queued','retry') and not_before<=now() order by priority desc,created_at asc for update skip locked limit 1) update jobs j set state='running',attempts=j.attempts+1,locked_at=now(),locked_by=$1,updated_at=now() from candidate where j.id=candidate.id returning j.*`,[workerId]);const job=result.rows[0];if(job)await emit(job.id,'started',{workerId,attempt:job.attempts,kind:job.kind,channelId:job.channel_id,credentialsRef:job.payload?.credentialsRef,contentFormat:job.payload?.contentFormat});return job;}
+function runNode(script,args=[],envOverrides={}){return new Promise((resolve,reject)=>{const child=spawn(process.execPath,[script,...args],{cwd:process.cwd(),env:{...process.env,...envOverrides},stdio:['ignore','pipe','pipe']});let stdout='',stderr='';const append=(current,chunk)=>`${current}${chunk.toString()}`.slice(-30000);child.stdout.on('data',(chunk)=>{stdout=append(stdout,chunk);process.stdout.write(chunk);});child.stderr.on('data',(chunk)=>{stderr=append(stderr,chunk);process.stderr.write(chunk);});const timer=setTimeout(()=>{child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),10000).unref();},timeoutMinutes*60_000);child.on('error',(error)=>{clearTimeout(timer);reject(error);});child.on('exit',(code,signal)=>{clearTimeout(timer);if(code===0)resolve({stdout,stderr});else reject(new Error(`child process failed code=${code} signal=${signal??'none'} stderr=${stderr.slice(-4000)}`));});});}
+function channelEnv(payload){return projectChannelCredentials(process.env,String(payload?.credentialsRef??'PRIMARY'));}
 
 async function execute(job){
   const payload=job.payload??{};
@@ -28,13 +30,14 @@ async function execute(job){
     const topic=String(payload.topic??'').trim();if(!topic)throw new Error('produce_opportunity job missing payload.topic');
     const contentFormat=String(payload.contentFormat??'LONG_HORIZONTAL');
     const channelConfig=String(payload.channelConfigPath??payload.channelConfig??process.env.CHANNEL_CONFIG??'config/channels/future-tech-business.example.json');
-    await runNode('scripts/live-pipeline.mjs',[`--topic=${topic}`,`--opportunity-id=${job.opportunity_id}`,`--format=${contentFormat}`,`--channel-config=${channelConfig}`]);
+    const scoped=channelEnv(payload);
+    await runNode('scripts/live-pipeline.mjs',[`--topic=${topic}`,`--opportunity-id=${job.opportunity_id}`,`--format=${contentFormat}`,`--channel-config=${channelConfig}`],scoped);
     const runResult=await db.query(`select pr.id,coalesce(pr.total_cost_usd,0)::float as cost from production_runs pr join content_ideas ci on ci.id=pr.content_idea_id where ci.opportunity_id=$1 order by pr.created_at desc limit 1`,[job.opportunity_id]);
     const productionRunId=runResult.rows[0]?.id;
     if(productionRunId){
-      await runNode('scripts/economics-sync.mjs');
-      if(process.env.AUTO_UPLOAD_PRIVATE==='true')await runNode('scripts/auto-publish.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`]);
-      if(process.env.CONTENT_LIBRARY_ENABLED!=='false')await runNode('scripts/finalize-production.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`]);
+      await runNode('scripts/economics-sync.mjs',[],scoped);
+      if(process.env.AUTO_UPLOAD_PRIVATE==='true')await runNode('scripts/auto-publish.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`],scoped);
+      if(process.env.CONTENT_LIBRARY_ENABLED!=='false')await runNode('scripts/finalize-production.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`],scoped);
     }
     return {actualCostUsd:Number(runResult.rows[0]?.cost??0),contentFormat,productionRunId};
   }
@@ -46,8 +49,11 @@ async function execute(job){
     return {};
   }
   if(job.kind==='analytics_sync'){
-    await runNode('scripts/analytics-sync.mjs',[`--days=${Number(payload.days??28)}`]);
-    await runNode('scripts/economics-sync.mjs');
+    const scoped=channelEnv(payload);
+    const args=[`--days=${Number(payload.days??28)}`];
+    if(payload.channelId)args.push(`--channel-id=${String(payload.channelId)}`);
+    await runNode('scripts/analytics-sync.mjs',args,scoped);
+    await runNode('scripts/economics-sync.mjs',[],scoped);
     return {};
   }
   if(job.kind==='market_cycle'){
@@ -56,8 +62,11 @@ async function execute(job){
   }
   if(job.kind==='schedule_publication'){
     const publicationId=String(payload.publicationId??'').trim(),publishAt=String(payload.publishAt??'').trim();if(!publicationId||!publishAt)throw new Error('schedule_publication job missing publicationId or publishAt');
-    const args=[`--publication-id=${publicationId}`,`--publish-at=${publishAt}`];if(payload.credentialsRef)args.push(`--credentials-ref=${String(payload.credentialsRef)}`);
-    await runNode('scripts/schedule-publication.mjs',args);return {};
+    await runNode('scripts/schedule-publication.mjs',[`--publication-id=${publicationId}`,`--publish-at=${publishAt}`],channelEnv(payload));return {};
+  }
+  if(job.kind==='apply_channel_brand'){
+    const channelId=String(payload.channelId??job.channel_id??'').trim();if(!channelId)throw new Error('apply_channel_brand requires channelId');
+    await runNode('scripts/apply-channel-brand.mjs',[`--channel-id=${channelId}`],channelEnv(payload));return {};
   }
   throw new Error(`Unsupported job kind ${job.kind}`);
 }
