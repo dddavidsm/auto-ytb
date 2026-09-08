@@ -20,7 +20,8 @@ const dossier={topic:'x',generatedAt:'x',executiveSummary:'x',sources:[official,
 const packaging=[{id:'p',title:'Title',thumbnailConcept:'Concept',thumbnailText:'SHIFT',promise:'P',curiosity:90,clarity:90,credibility:90,differentiation:90,score:90}];
 const thumbnails=[{id:'t',uri:'mock://thumb',mimeType:'image/jpeg',provider:'mock',packagingId:'p',bytes:100000}];
 const assets=scenes.map((scene)=>({id:`a-${scene.id}`,uri:scene.kind==='source_card'?'procedural://source_card/x':'mock://visual',mimeType:scene.kind==='source_card'?'application/x-auto-ytb-visual':'image/png',provider:scene.kind==='source_card'?'procedural-ffmpeg':'mock',sceneId:scene.id,generated:scene.generated,sourceIds:scene.sourceIds,sourceUrl:scene.sourceRefs?.[0]?.url,license:scene.kind==='source_card'?'original-transformed-card':undefined,metadata:{sourceRefs:scene.sourceRefs??[]}}));
-const manifest={projectId:'x',createdAt:'x',contentFormat:'LONG_HORIZONTAL',aspectRatio:'16:9',frame:{width:1920,height:1080},script,packaging,thumbnails,selectedPackagingId:'p',scenes,assets,estimatedCostUsd:1,actualCostUsd:1,containsSyntheticMedia:scenes.some((scene)=>scene.generated)};
+const voice={id:'voice',uri:'mock://voice.mp3',mimeType:'audio/mpeg',provider:'mock-voice',durationSeconds:30,language:'en',voiceId:'narrator',alignment:{characters:['A','.'],characterStartTimesSeconds:[0,29.5],characterEndTimesSeconds:[0.2,30]}};
+const manifest={projectId:'x',createdAt:'x',contentFormat:'LONG_HORIZONTAL',aspectRatio:'16:9',frame:{width:1920,height:1080},script,packaging,thumbnails,selectedPackagingId:'p',scenes,assets,voice,estimatedCostUsd:1,actualCostUsd:1,containsSyntheticMedia:scenes.some((scene)=>scene.generated)};
 const qa=runQa({dossier,script,manifest,maxCostUsd:20});
 assert.equal(qa.passed,true);
 assert.ok(qa.checks.some((check)=>check.id==='source-rights'&&check.status==='PASS'));
