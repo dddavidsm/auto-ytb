@@ -19,16 +19,24 @@ export async function mixTimedSfx({ffmpeg='ffmpeg',renderUri,sfx=[],baseAudio=tr
   const renderPath=pathFromUri(renderUri);if(!renderPath)throw new Error('Timed SFX mixing currently requires a local rendered MP4');
   const usable=sfx.map((cue)=>({...cue,path:pathFromUri(cue.uri)})).filter((cue)=>cue.path);
   if(!usable.length)return renderUri;
-  const duration=Math.max(0.2,number(durationSeconds,0)||Math.max(...usable.map((cue)=>number(cue.endSec,0)),1));
+  const requestedDuration=Math.max(0,number(durationSeconds,0));
+  const syntheticBaseDuration=Math.max(0.2,requestedDuration||Math.max(...usable.map((cue)=>number(cue.endSec,0)),1));
+  const hasExplicitDuration=requestedDuration>0;
   const tmp=`${renderPath}.sfx-${Date.now()}.mp4`;
   const args=['-y','-i',renderPath];
   for(const cue of usable){if(cue.loop)args.push('-stream_loop','-1');args.push('-i',cue.path);}
   const filters=[];
   let baseLabel='[0:a]';
-  if(!baseAudio){filters.push(`anullsrc=r=48000:cl=stereo:d=${duration}[base]`);baseLabel='[base]';}
-  usable.forEach((cue,index)=>{const inputIndex=index+1,delay=Math.max(0,Math.round(number(cue.startSec,0)*1000)),gain=Math.max(0.02,Math.min(0.7,number(cue.gain,0.2))),remaining=Math.max(0.1,Math.min(duration-number(cue.startSec,0),number(cue.endSec,duration)-number(cue.startSec,0)));filters.push(`[${inputIndex}:a]volume=${gain}${cue.loop?`,atrim=duration=${remaining}`:''},adelay=${delay}|${delay}[sfx${index}]`);});
+  if(!baseAudio){filters.push(`anullsrc=r=48000:cl=stereo:d=${syntheticBaseDuration}[base]`);baseLabel='[base]';}
+  usable.forEach((cue,index)=>{
+    const inputIndex=index+1,delay=Math.max(0,Math.round(number(cue.startSec,0)*1000)),gain=Math.max(0.02,Math.min(0.7,number(cue.gain,0.2)));
+    const cueLimit=hasExplicitDuration||!baseAudio?Math.max(0.1,Math.min(syntheticBaseDuration-number(cue.startSec,0),number(cue.endSec,syntheticBaseDuration)-number(cue.startSec,0))):Math.max(0.1,number(cue.endSec,0)-number(cue.startSec,0));
+    filters.push(`[${inputIndex}:a]volume=${gain}${cue.loop?`,atrim=duration=${cueLimit}`:''},adelay=${delay}|${delay}[sfx${index}]`);
+  });
   const inputs=[baseLabel,...usable.map((_,index)=>`[sfx${index}]`)].join('');
-  filters.push(`${inputs}amix=inputs=${usable.length+1}:duration=longest:normalize=0,atrim=duration=${duration},alimiter=limit=0.95[aout]`);
+  const amixDuration=baseAudio&&!hasExplicitDuration?'first':'longest';
+  const trim=hasExplicitDuration||!baseAudio?`,atrim=duration=${syntheticBaseDuration}`:'';
+  filters.push(`${inputs}amix=inputs=${usable.length+1}:duration=${amixDuration}:normalize=0${trim},alimiter=limit=0.95[aout]`);
   args.push('-filter_complex',filters.join(';'),'-map','0:v:0','-map','[aout]','-c:v','copy','-c:a','aac','-b:a','192k','-movflags','+faststart','-shortest',tmp);
   await run(ffmpeg,args);await rename(tmp,renderPath);return renderUri;
 }
