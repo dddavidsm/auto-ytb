@@ -21,6 +21,12 @@ function styleFromRow(row){
   };
 }
 function memoryFromRow(row){return{type:text(row.memory_type),key:text(row.memory_key),importance:num(row.importance,50),canonical:row.canonical!==false,active:row.active!==false,payload:obj(row.payload)};}
+function visualReferenceCatalog(characters,styles){
+  return [
+    ...characters.filter((item)=>item.canonicalReferenceUri).map((item)=>({kind:'character',key:item.key,name:item.name,role:item.role??null,continuityKey:item.continuityKey,uri:item.canonicalReferenceUri})),
+    ...styles.filter((item)=>item.canonicalReferenceUri).map((item)=>({kind:'style',key:item.key,name:item.name,role:null,continuityKey:item.continuityKey,uri:item.canonicalReferenceUri})),
+  ];
+}
 
 export async function loadSeriesRegistry(db,channelId){
   const rows=(await db.query(`select s.*,b.id as bible_id,b.version as bible_version,b.continuity_key as bible_continuity_key,b.bible,b.validation
@@ -62,7 +68,8 @@ async function reserveEpisode(db,entry,contextSeed){
     const next=(await tx.query(`select coalesce(max(episode_number),0)+1 as next_episode from series_episodes where series_id=$1 and season_number=1`,[entry.row.id])).rows[0];
     const episodeNumber=Math.max(1,Math.floor(num(next?.next_episode,1)));
     const episodeKey=`s01e${String(episodeNumber).padStart(3,'0')}`;
-    const continuityContext=buildSeriesContinuityContext({profile:entry.profile,bible:entry.bible,bibleVersion:num(entry.row.bible_version,1),continuityKey:text(entry.row.bible_continuity_key||entry.row.continuity_key),characters:entry.characters,styles:entry.styles,memories:entry.memories,seasonNumber:1,episodeNumber});
+    const baseContext=buildSeriesContinuityContext({profile:entry.profile,bible:entry.bible,bibleVersion:num(entry.row.bible_version,1),continuityKey:text(entry.row.bible_continuity_key||entry.row.continuity_key),characters:entry.characters,styles:entry.styles,memories:entry.memories,seasonNumber:1,episodeNumber});
+    const continuityContext={...baseContext,visualReferences:visualReferenceCatalog(entry.characters,entry.styles)};
     const inserted=(await tx.query(`insert into series_episodes (series_id,bible_version_id,season_number,episode_number,episode_key,premise,status,continuity_snapshot)
       values ($1,$2,1,$3,$4,$5,'planned',$6::jsonb) returning id`,[entry.row.id,entry.row.bible_id,episodeNumber,episodeKey,contextSeed.topic,JSON.stringify(continuityContext)])).rows[0];
     return{seriesEpisodeId:inserted.id,continuityContext};
@@ -104,6 +111,7 @@ export function mergeSeriesIntoBrandContext(brandContext,seriesContext){
     ...(brandContext??{}),
     required:Boolean(brandContext?.required||seriesContext.required),
     referenceUris:references,
+    referenceCatalog:[...(brandContext?.referenceCatalog??[]),...(seriesContext.visualReferences??[])],
     styleGuidance:[brandContext?.styleGuidance,seriesContext.visualGuidance].filter(Boolean).join(' '),
     seriesKey:seriesContext.seriesKey,
     seriesContinuityKey:seriesContext.continuityKey,
