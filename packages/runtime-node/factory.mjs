@@ -22,6 +22,7 @@ const reqFrom = (env,name) => {
 const numFrom=(env,name,fallback)=>{const value=Number(env[name]??fallback);return Number.isFinite(value)?value:fallback;};
 const first=(...values)=>values.find((value)=>String(value??'').trim()!=='');
 const cliArg=(name)=>process.argv.find((value)=>value.startsWith(`--${name}=`))?.slice(name.length+3)??'';
+const parseJson=(value)=>{if(!String(value??'').trim())return null;try{const parsed=JSON.parse(String(value));return parsed&&typeof parsed==='object'?parsed:null;}catch{return null;}};
 function mergeBrandAndSeries(brand,series){
   if(!series?.required)return brand;
   const base=brand??{};
@@ -57,15 +58,20 @@ export function createLiveRuntime(env = process.env) {
   const store = new NodeLocalObjectStore(env.LOCAL_STORAGE_ROOT || '.data/storage');
   const meter = new ProviderUsageMeter(env);
   const seriesContext=parseSeriesContinuityContext(env.AUTO_YTB_SERIES_CONTEXT);
-  const explicitArchetype=normalizeContentArchetypeProfile(env.AUTO_YTB_CONTENT_ARCHETYPE_PROFILE);
-  const inferredArchetype=explicitArchetype?null:inferContentArchetype({
+  const scheduledDecision=parseJson(env.AUTO_YTB_CONTENT_ARCHETYPE_DECISION);
+  const explicitArchetype=normalizeContentArchetypeProfile(env.AUTO_YTB_CONTENT_ARCHETYPE_PROFILE??scheduledDecision?.profile);
+  const inferredArchetype=explicitArchetype||scheduledDecision?.profile?null:inferContentArchetype({
     topic:String(env.AUTO_YTB_CONTENT_TOPIC||cliArg('topic')||''),
     contentFormat:String(env.AUTO_YTB_CONTENT_FORMAT||cliArg('format')||''),
     channelNiche:String(env.AUTO_YTB_CHANNEL_NICHE||''),
     seriesContext:seriesContext??undefined,
   });
-  const archetypeProfile=explicitArchetype??inferredArchetype?.profile??null;
-  const archetypeDecision=explicitArchetype?{archetype:explicitArchetype.id,confidence:100,reasons:['Explicit runtime archetype profile'],profile:explicitArchetype}:inferredArchetype;
+  const archetypeProfile=explicitArchetype??normalizeContentArchetypeProfile(scheduledDecision?.profile)??inferredArchetype?.profile??null;
+  const archetypeDecision=scheduledDecision?.archetype&&archetypeProfile
+    ?{...scheduledDecision,archetype:String(scheduledDecision.archetype),confidence:Number(scheduledDecision.confidence??0),reasons:Array.isArray(scheduledDecision.reasons)?scheduledDecision.reasons.map(String):['Scheduled Content Archetype decision'],profile:archetypeProfile}
+    :explicitArchetype
+      ?{archetype:explicitArchetype.id,confidence:100,reasons:['Explicit runtime archetype profile'],profile:explicitArchetype}
+      :inferredArchetype;
   const brandContext=mergeBrandAndSeries(parseBrandContinuityContext(env.AUTO_YTB_BRAND_CONTEXT),seriesContext);
 
   let search;
@@ -102,7 +108,9 @@ export function createLiveRuntime(env = process.env) {
   if ((env.IMAGE_PROVIDER || '').toLowerCase() === 'runway' || (env.VIDEO_PROVIDER || '').toLowerCase() === 'runway') {
     const imageModel=env.IMAGE_MODEL || 'gen4_image';
     const videoModel=env.VIDEO_MODEL || 'gen4.5';
-    const runway = new RunwayMediaProvider({ apiKey: env.IMAGE_API_KEY || env.VIDEO_API_KEY || reqFrom(env,'VIDEO_API_KEY'), store, imageModel, videoModel });
+    const runwayKey=String(env.IMAGE_API_KEY||env.VIDEO_API_KEY||'').trim();
+    if(!runwayKey)throw new Error('Runway media is configured but IMAGE_API_KEY/VIDEO_API_KEY is missing');
+    const runway = new RunwayMediaProvider({ apiKey: runwayKey, store, imageModel, videoModel });
     const meteredImage=meterImageProvider(runway,meter,{model:imageModel});
     const meteredVideo=meterVideoProvider(runway,meter,{model:videoModel});
     const archetypeImage=bindImageProviderToContentArchetype(meteredImage,archetypeProfile);
