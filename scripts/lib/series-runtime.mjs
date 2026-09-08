@@ -43,21 +43,23 @@ export async function loadSeriesRegistry(db,channelId){
       db.query(`select * from series_episode_memory where series_id=$1 and active=true and canonical=true order by importance desc,created_at desc limit 30`,[row.id]),
       db.query(`select coalesce(max(episode_number),0)+1 as next_episode from series_episodes where series_id=$1 and season_number=1`,[row.id]),
     ]);
-    const bible=obj(row.bible),identity=obj(row.identity),formatStrategy=obj(row.format_strategy);
+    const bible=obj(row.bible),identity=obj(row.identity),formatStrategy=obj(row.format_strategy),automationProfile=obj(row.automation_profile),automationContent=obj(automationProfile.content);
     const characterRows=characters.rows.map(characterFromRow),styleRows=styles.rows.map(styleFromRow);
+    const automationFormats=arr(automationContent.formats).map(String);
     registry.push({
       row,
       bible,
       characters:characterRows,
       styles:styleRows,
       memories:memories.rows.map(memoryFromRow),
+      automationProfile,
       nextEpisodeNumber:Math.max(1,Math.floor(num(nextEpisode.rows[0]?.next_episode,1))),
       profile:{
         seriesId:row.id,seriesKey:text(row.series_key),channelId:row.channel_id,title:text(row.title),language:text(row.language,'en'),audienceMode:row.audience_mode==='MADE_FOR_KIDS'?'MADE_FOR_KIDS':'GENERAL',
         targetAgeMin:row.target_age_min==null?null:num(row.target_age_min),targetAgeMax:row.target_age_max==null?null:num(row.target_age_max),
         themes:arr(identity.themes).length?arr(identity.themes).map(String):arr(bible.themes).map(String),
         styleTags:arr(identity.styleTags).length?arr(identity.styleTags).map(String):styleRows.flatMap((style)=>[style.name,...style.invariantFeatures]).slice(0,18),
-        formats:arr(formatStrategy.formats).length?arr(formatStrategy.formats).map(String):['LONG_HORIZONTAL','SHORT_VERTICAL'],
+        formats:automationFormats.length?automationFormats:(arr(formatStrategy.formats).length?arr(formatStrategy.formats).map(String):['LONG_HORIZONTAL','SHORT_VERTICAL']),
         characterMode:characterRows.length?'persistent-character':'none',characterNames:characterRows.map((character)=>character.name),enabled:true,
       },
     });
@@ -72,7 +74,7 @@ async function reserveEpisode(db,entry,contextSeed){
     const episodeNumber=Math.max(1,Math.floor(num(next?.next_episode,1)));
     const episodeKey=`s01e${String(episodeNumber).padStart(3,'0')}`;
     const baseContext=buildSeriesContinuityContext({profile:entry.profile,bible:entry.bible,bibleVersion:num(entry.row.bible_version,1),continuityKey:text(entry.row.bible_continuity_key||entry.row.continuity_key),characters:entry.characters,styles:entry.styles,memories:entry.memories,seasonNumber:1,episodeNumber});
-    const continuityContext={...baseContext,visualReferences:visualReferenceCatalog(entry.characters,entry.styles),voiceCast:voiceCastCatalog(entry.characters),primaryVoiceKey:primaryVoiceKey(entry.characters)};
+    const continuityContext={...baseContext,visualReferences:visualReferenceCatalog(entry.characters,entry.styles),voiceCast:voiceCastCatalog(entry.characters),primaryVoiceKey:primaryVoiceKey(entry.characters),automationProfile:entry.automationProfile,automationProfileVersion:num(entry.row.current_automation_profile_version,0)};
     const inserted=(await tx.query(`insert into series_episodes (series_id,bible_version_id,season_number,episode_number,episode_key,premise,status,continuity_snapshot)
       values ($1,$2,1,$3,$4,$5,'planned',$6::jsonb) returning id`,[entry.row.id,entry.row.bible_id,episodeNumber,episodeKey,contextSeed.topic,JSON.stringify(continuityContext)])).rows[0];
     return{seriesEpisodeId:inserted.id,continuityContext};
@@ -88,7 +90,7 @@ export async function routeOpportunityToSeries({db,channelId,channelConfig,row,c
     const entry=registry.find((candidate)=>candidate.row.id===decision.seriesId);
     if(!entry)throw new Error(`Series ${decision.seriesId} routed but not loaded`);
     const reserved=await reserveEpisode(db,entry,{topic});
-    return{mode:'EXISTING_SERIES',decision,fingerprint,seriesId:entry.row.id,seriesKey:entry.row.series_key,seriesEpisodeId:reserved.seriesEpisodeId,seriesContext:reserved.continuityContext};
+    return{mode:'EXISTING_SERIES',decision,fingerprint,seriesId:entry.row.id,seriesKey:entry.row.series_key,seriesEpisodeId:reserved.seriesEpisodeId,seriesContext:reserved.continuityContext,automationProfile:entry.automationProfile};
   }
   if(decision.mode==='NEW_SERIES_CANDIDATE'){
     const candidateKey=seriesCandidateKey(fingerprint);
@@ -104,7 +106,7 @@ export async function routeOpportunityToSeries({db,channelId,channelConfig,row,c
     if(queued.rows[0])await db.query(`update series_candidates set status='bootstrap_queued',updated_at=now() where id=$1`,[candidate.id]);
     return{mode:'NEW_SERIES_CANDIDATE',decision,fingerprint,candidateId:candidate.id,candidateKey,jobId:queued.rows[0]?.id??null};
   }
-  return{mode:'STANDALONE',decision,fingerprint,seriesId:null,seriesContext:null};
+  return{mode:'STANDALONE',decision,fingerprint,seriesId:null,seriesContext:null,automationProfile:null};
 }
 
 export function mergeSeriesIntoBrandContext(brandContext,seriesContext){

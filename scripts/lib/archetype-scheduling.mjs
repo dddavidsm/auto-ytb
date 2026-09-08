@@ -1,11 +1,18 @@
-import { inferContentArchetype } from '@auto-ytb/os';
+import { getContentArchetypeProfile, inferContentArchetype } from '@auto-ytb/os';
 import { buildArchetypeExecutionPlan } from '@auto-ytb/orchestrator';
 
 const clamp=(value,min,max)=>Math.max(min,Math.min(max,Number(value)));
 
+function seriesAutomationArchetype(seriesContext){
+  const id=String(seriesContext?.automationProfile?.content?.archetype??'').trim();
+  if(!id)return undefined;
+  try{return getContentArchetypeProfile(id);}catch(error){throw new Error(`Series Automation Profile contains unsupported Content Archetype ${id}: ${error instanceof Error?error.message:String(error)}`);}
+}
+
 export function decideScheduledArchetype({topic,contentFormat,channelNiche,seriesContext,explicitProfile}){
-  const decision=explicitProfile
-    ?{archetype:String(explicitProfile.id??'GENERAL_STORY'),confidence:100,reasons:['Explicit scheduled Content Archetype profile'],profile:explicitProfile}
+  const effectiveProfile=explicitProfile??seriesAutomationArchetype(seriesContext);
+  const decision=effectiveProfile
+    ?{archetype:String(effectiveProfile.id??'GENERAL_STORY'),confidence:100,reasons:[explicitProfile?'Explicit scheduled Content Archetype profile':'Series Automation Profile Content Archetype'],profile:effectiveProfile}
     :inferContentArchetype({topic:String(topic??''),contentFormat:String(contentFormat??''),channelNiche:String(channelNiche??''),seriesContext:seriesContext??undefined});
   const executionPlan=buildArchetypeExecutionPlan(decision,contentFormat==='SHORT_VERTICAL'?'SHORT_VERTICAL':'LONG_HORIZONTAL');
   return{decision,executionPlan};
