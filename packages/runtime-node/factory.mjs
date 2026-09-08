@@ -10,6 +10,7 @@ import { bindImageProviderToContentArchetype, bindTextModelToContentArchetype, b
 import { withCaptureAesthetic } from './capture-aesthetic.mjs';
 import { withContinuityBridgeVideo } from './continuity-video.mjs';
 import { withLicensedSoundtrack } from './soundtrack.mjs';
+import { withArchetypeEditorialFinish } from './editorial-finish.mjs';
 import { inferContentArchetype } from '@auto-ytb/os';
 import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
@@ -129,8 +130,9 @@ export function createLiveRuntime(env = process.env) {
     truePeakDb:numFrom(env,'AUDIO_TRUE_PEAK_DB',-1.5),
     loudnessRange:numFrom(env,'AUDIO_LOUDNESS_RANGE',7),
   });
+  const editorialRenderer=withArchetypeEditorialFinish(rawRenderer,{ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
   const soundtrackCatalog=String(first(env.AUDIO_LIBRARY_MANIFEST,env.SOUNDTRACK_CATALOG_PATH,'')??'');
-  const soundtrackRenderer=withLicensedSoundtrack(rawRenderer,{
+  const soundtrackRenderer=withLicensedSoundtrack(editorialRenderer,{
     catalogPath:soundtrackCatalog,
     ffmpeg:env.FFMPEG_BIN||'ffmpeg',
     maxAudioCostUsd:Number(first(env.AUDIO_MAX_COST_USD_PER_VIDEO,env.SOUNDTRACK_MAX_COST_USD,1.5)),
