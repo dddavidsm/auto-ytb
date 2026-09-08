@@ -20,6 +20,59 @@ async function run(command, args) {
   });
 }
 
+function srtTime(seconds) {
+  const ms = Math.max(0, Math.round(Number(seconds || 0) * 1000));
+  const hours = Math.floor(ms / 3_600_000);
+  const minutes = Math.floor((ms % 3_600_000) / 60_000);
+  const secs = Math.floor((ms % 60_000) / 1000);
+  const millis = ms % 1000;
+  return `${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(secs).padStart(2,'0')},${String(millis).padStart(3,'0')}`;
+}
+
+export function alignmentToSubtitleCues(alignment, options = {}) {
+  const chars = alignment?.characters ?? [];
+  const starts = alignment?.characterStartTimesSeconds ?? [];
+  const ends = alignment?.characterEndTimesSeconds ?? [];
+  if (!chars.length || chars.length !== starts.length || chars.length !== ends.length) return [];
+  const words = [];
+  let text = '', start = null, end = null;
+  const flush = () => {
+    const clean = text.trim();
+    if (clean && start != null && end != null) words.push({ text:clean, start:Number(start), end:Number(end) });
+    text = ''; start = null; end = null;
+  };
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = String(chars[index] ?? '');
+    if (/\s/.test(char)) { flush(); continue; }
+    if (start == null) start = Number(starts[index] ?? 0);
+    end = Number(ends[index] ?? starts[index] ?? 0);
+    text += char;
+  }
+  flush();
+  const maxChars = Math.max(18, Number(options.maxChars ?? 44));
+  const maxDuration = Math.max(1.2, Number(options.maxDurationSeconds ?? 3.6));
+  const cues = [];
+  let current = null;
+  for (const word of words) {
+    if (!current) { current = { text:word.text, start:word.start, end:word.end }; continue; }
+    const candidate = `${current.text} ${word.text}`;
+    const duration = word.end - current.start;
+    if (candidate.length > maxChars || duration > maxDuration) {
+      cues.push(current);
+      current = { text:word.text, start:word.start, end:word.end };
+    } else {
+      current.text = candidate;
+      current.end = word.end;
+    }
+  }
+  if (current) cues.push(current);
+  return cues.filter((cue) => cue.end > cue.start && cue.text.trim());
+}
+
+export function subtitlesToSrt(cues) {
+  return cues.map((cue,index)=>`${index+1}\n${srtTime(cue.start)} --> ${srtTime(cue.end)}\n${cue.text.trim()}\n`).join('\n');
+}
+
 export class NodeLocalObjectStore {
   name = 'node-local-store';
   constructor(root = '.data/storage') { this.root = resolve(root); }
@@ -57,6 +110,7 @@ function mimeFor(path) {
   if (ext === '.mp3') return 'audio/mpeg';
   if (ext === '.png') return 'image/png';
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.srt') return 'application/x-subrip';
   return 'application/octet-stream';
 }
 
@@ -70,6 +124,9 @@ export class FfmpegRenderer {
     this.height = options.height ?? 1080;
     this.fps = options.fps ?? 30;
     this.outputRoot = resolve(options.outputRoot ?? '.data/renders');
+    this.targetLufs = Number.isFinite(Number(options.targetLufs)) ? Number(options.targetLufs) : -16;
+    this.truePeakDb = Number.isFinite(Number(options.truePeakDb)) ? Number(options.truePeakDb) : -1.5;
+    this.loudnessRange = Number.isFinite(Number(options.loudnessRange)) ? Number(options.loudnessRange) : 7;
   }
 
   async materialize(uri, destBase) {
@@ -142,12 +199,25 @@ export class FfmpegRenderer {
     const out = resolve(this.outputRoot, input.outputKey);
     await mkdir(dirname(out), { recursive: true });
     const voicePath = manifest.voice?.uri ? await this.materialize(manifest.voice.uri, join(work, 'voice')) : null;
+    let subtitlesUri = null;
+    const subtitleCues = alignmentToSubtitleCues(manifest.voice?.alignment, { maxChars:manifest.contentFormat==='SHORT_VERTICAL'?32:48, maxDurationSeconds:manifest.contentFormat==='SHORT_VERTICAL'?2.4:4.2 });
+    if (subtitleCues.length) {
+      const subtitlePath = out.replace(/\.[^.]+$/,'.srt');
+      await writeFile(subtitlePath, subtitlesToSrt(subtitleCues), 'utf8');
+      subtitlesUri = fileUri(subtitlePath);
+    }
     if (voicePath && mimeFor(voicePath).startsWith('audio/')) {
-      await run(this.ffmpeg, ['-y','-i',joined,'-i',voicePath,'-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','192k','-shortest',out]);
+      const musicPath = manifest.music?.uri ? await this.materialize(manifest.music.uri, join(work,'music')) : null;
+      const loudnorm = `loudnorm=I=${this.targetLufs}:TP=${this.truePeakDb}:LRA=${this.loudnessRange}`;
+      if (musicPath && mimeFor(musicPath).startsWith('audio/')) {
+        await run(this.ffmpeg, ['-y','-i',joined,'-i',voicePath,'-stream_loop','-1','-i',musicPath,'-filter_complex',`[1:a]${loudnorm}[voice];[2:a]volume=${Number(manifest.music?.gain??0.18)}[music];[music][voice]sidechaincompress=threshold=0.025:ratio=10:attack=18:release=420[ducked];[voice][ducked]amix=inputs=2:duration=first:normalize=0[aout]`,'-map','0:v:0','-map','[aout]','-c:v','copy','-c:a','aac','-b:a','192k','-shortest',out]);
+      } else {
+        await run(this.ffmpeg, ['-y','-i',joined,'-i',voicePath,'-map','0:v:0','-map','1:a:0','-c:v','copy','-filter:a',loudnorm,'-c:a','aac','-b:a','192k','-shortest',out]);
+      }
     } else {
       await copyFile(joined, out);
     }
-    return { id:`render-${manifest.projectId}`, uri:fileUri(out), mimeType:'video/mp4', provider:this.name, durationSeconds:manifest.script?.targetDurationSec, costUsd:0, metadata:{width,height,contentFormat:manifest.contentFormat,aspectRatio:manifest.aspectRatio} };
+    return { id:`render-${manifest.projectId}`, uri:fileUri(out), mimeType:'video/mp4', provider:this.name, durationSeconds:manifest.script?.targetDurationSec, costUsd:0, metadata:{width,height,contentFormat:manifest.contentFormat,aspectRatio:manifest.aspectRatio,subtitlesUri,subtitleCueCount:subtitleCues.length,audioMaster:{targetLufs:this.targetLufs,truePeakDb:this.truePeakDb,loudnessRange:this.loudnessRange,musicDucking:Boolean(manifest.music?.uri)}} };
   }
 }
 
