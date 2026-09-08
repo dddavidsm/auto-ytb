@@ -36,25 +36,31 @@ export type PackagingVariant = {
 
 export type ThumbnailAsset = BinaryAsset & { packagingId: string; text?: string };
 
+export type VisualSourcePolicy = 'SOURCE_CARD' | 'DIRECT_ASSET_ALLOWED' | 'PROCEDURAL_ONLY' | 'BLOCKED';
+export type VisualSourceRef = {
+  sourceId: string;
+  url?: string;
+  title?: string;
+  sourceType?: string;
+  policy: VisualSourcePolicy;
+  reason: string;
+};
+
 export type Scene = {
   id: string;
   startSec: number;
   durationSec: number;
-  kind: 'archive' | 'screenshot' | 'chart' | 'map' | 'motion_graphic' | 'ai_image' | 'ai_video' | 'text' | 'broll';
+  kind: 'archive' | 'screenshot' | 'source_card' | 'chart' | 'map' | 'motion_graphic' | 'ai_image' | 'ai_video' | 'text' | 'broll';
   instruction: string;
   sourceIds: string[];
   generated: boolean;
   visualValue?: number;
   costTier?: 'free' | 'low' | 'premium';
   selectionReason?: string;
+  sourceRefs?: VisualSourceRef[];
 };
 
-export type AssetRecord = BinaryAsset & {
-  sceneId: string;
-  generated: boolean;
-  sourceIds: string[];
-  metadata?: Record<string, unknown>;
-};
+export type AssetRecord = BinaryAsset & { sceneId: string; generated: boolean; sourceIds: string[]; metadata?: Record<string, unknown> };
 export type ProductionContentFormat = 'LONG_HORIZONTAL' | 'SHORT_VERTICAL';
 
 export type ProductionManifest = {
