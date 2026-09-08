@@ -9,6 +9,7 @@ import { withElevenLabsVoiceControls } from './elevenlabs-voice-controls.mjs';
 import { bindImageProviderToContentArchetype, bindTextModelToContentArchetype, bindVideoProviderToContentArchetype, normalizeContentArchetypeProfile } from './content-archetype.mjs';
 import { withContinuityBridgeVideo } from './continuity-video.mjs';
 import { withLicensedSoundtrack } from './soundtrack.mjs';
+import { inferContentArchetype } from '@auto-ytb/os';
 import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
 
@@ -19,6 +20,7 @@ const reqFrom = (env,name) => {
 };
 const numFrom=(env,name,fallback)=>{const value=Number(env[name]??fallback);return Number.isFinite(value)?value:fallback;};
 const first=(...values)=>values.find((value)=>String(value??'').trim()!=='');
+const cliArg=(name)=>process.argv.find((value)=>value.startsWith(`--${name}=`))?.slice(name.length+3)??'';
 function mergeBrandAndSeries(brand,series){
   if(!series?.required)return brand;
   const base=brand??{};
@@ -54,7 +56,15 @@ export function createLiveRuntime(env = process.env) {
   const store = new NodeLocalObjectStore(env.LOCAL_STORAGE_ROOT || '.data/storage');
   const meter = new ProviderUsageMeter(env);
   const seriesContext=parseSeriesContinuityContext(env.AUTO_YTB_SERIES_CONTEXT);
-  const archetypeProfile=normalizeContentArchetypeProfile(env.AUTO_YTB_CONTENT_ARCHETYPE_PROFILE);
+  const explicitArchetype=normalizeContentArchetypeProfile(env.AUTO_YTB_CONTENT_ARCHETYPE_PROFILE);
+  const inferredArchetype=explicitArchetype?null:inferContentArchetype({
+    topic:String(env.AUTO_YTB_CONTENT_TOPIC||cliArg('topic')||''),
+    contentFormat:String(env.AUTO_YTB_CONTENT_FORMAT||cliArg('format')||''),
+    channelNiche:String(env.AUTO_YTB_CHANNEL_NICHE||''),
+    seriesContext:seriesContext??undefined,
+  });
+  const archetypeProfile=explicitArchetype??inferredArchetype?.profile??null;
+  const archetypeDecision=explicitArchetype?{archetype:explicitArchetype.id,confidence:100,reasons:['Explicit runtime archetype profile'],profile:explicitArchetype}:inferredArchetype;
   const brandContext=mergeBrandAndSeries(parseBrandContinuityContext(env.AUTO_YTB_BRAND_CONTEXT),seriesContext);
   const searchProvider = (env.SEARCH_PROVIDER || 'tavily').toLowerCase();
   if (searchProvider !== 'tavily') throw new Error(`Unsupported SEARCH_PROVIDER: ${searchProvider}`);
@@ -120,5 +130,5 @@ export function createLiveRuntime(env = process.env) {
     : undefined;
   const db = env.DATABASE_URL ? new NodePostgresSqlClient(env.DATABASE_URL, { ssl: env.DATABASE_SSL === 'true' ? { rejectUnauthorized:false } : undefined }) : undefined;
 
-  return { store, meter, search, model, voice, image, video, renderer, thumbnailComposer, oauth, publisher, analytics, library, loader, db, brandContext, seriesContext, archetypeProfile };
+  return { store, meter, search, model, voice, image, video, renderer, thumbnailComposer, oauth, publisher, analytics, library, loader, db, brandContext, seriesContext, archetypeProfile, archetypeDecision };
 }
