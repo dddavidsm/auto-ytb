@@ -13,22 +13,35 @@ export type OAuthCredentials = {
   refreshToken?: string;
 };
 
-export function buildYouTubeAuthorizationUrl(input: {
-  clientId: string;
-  redirectUri: string;
-  scopes?: string[];
-  state?: string;
-}): string {
+function buildGoogleAuthorizationUrl(input:{clientId:string;redirectUri:string;scopes:string[];state?:string}):string{
   const params = new URLSearchParams({
     client_id: input.clientId,
     redirect_uri: input.redirectUri,
     response_type: 'code',
     access_type: 'offline',
     prompt: 'consent',
-    scope: (input.scopes ?? [YOUTUBE_SCOPES.upload, YOUTUBE_SCOPES.manage, YOUTUBE_SCOPES.analytics, YOUTUBE_SCOPES.analyticsMonetary, YOUTUBE_SCOPES.driveFile]).join(' '),
+    scope: input.scopes.join(' '),
   });
   if (input.state) params.set('state', input.state);
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+}
+
+export function buildYouTubeAuthorizationUrl(input: {
+  clientId: string;
+  redirectUri: string;
+  scopes?: string[];
+  state?: string;
+}): string {
+  return buildGoogleAuthorizationUrl({
+    clientId:input.clientId,
+    redirectUri:input.redirectUri,
+    scopes:input.scopes ?? [YOUTUBE_SCOPES.upload, YOUTUBE_SCOPES.manage, YOUTUBE_SCOPES.analytics, YOUTUBE_SCOPES.analyticsMonetary],
+    state:input.state,
+  });
+}
+
+export function buildGoogleDriveAuthorizationUrl(input:{clientId:string;redirectUri:string;state?:string}):string{
+  return buildGoogleAuthorizationUrl({clientId:input.clientId,redirectUri:input.redirectUri,scopes:[YOUTUBE_SCOPES.driveFile],state:input.state});
 }
 
 export class GoogleOAuthTokenProvider {
@@ -52,7 +65,7 @@ export class GoogleOAuthTokenProvider {
 
   async getAccessToken(): Promise<string> {
     if (this.accessToken && this.accessToken.expiresAt > Date.now() + 60_000) return this.accessToken.value;
-    if (!this.credentials.refreshToken) throw new Error('YOUTUBE_REFRESH_TOKEN is required for unattended OAuth access');
+    if (!this.credentials.refreshToken) throw new Error('OAuth refreshToken is required for unattended Google access');
     const body = new URLSearchParams({
       client_id: this.credentials.clientId,
       client_secret: this.credentials.clientSecret,
