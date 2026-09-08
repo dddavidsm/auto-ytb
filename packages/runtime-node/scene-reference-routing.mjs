@@ -41,6 +41,7 @@ export function selectSceneReferences(contextValue,prompt,inputReferenceUris=[],
   const catalog=normalizeReferenceCatalog(context.referenceCatalog??context.visualReferences);
   const characters=catalog.filter((item)=>item.kind==='character');
   const styles=catalog.filter((item)=>item.kind==='style');
+  const generics=catalog.filter((item)=>item.kind==='generic');
   const matched=characters.filter((item)=>promptMatches(prompt,item));
   const fallbackCharacter=[...characters].sort((a,b)=>protagonistScore(b)-protagonistScore(a))[0]??null;
   const selected=[];
@@ -55,10 +56,14 @@ export function selectSceneReferences(contextValue,prompt,inputReferenceUris=[],
   }
 
   if(styles.length)push(styles[0]);
-  for(const item of catalog)push(item);
+  for(const item of generics)push(item);
 
-  const fallbackUris=uniq((Array.isArray(context.referenceUris)?context.referenceUris:[]).map(clean));
-  for(const uri of fallbackUris)push(catalog.find((item)=>item.uri===uri)??{kind:'generic',key:'fallback',name:'',role:'',continuityKey:'',uri});
+  // Global URI fallback exists for legacy/non-catalog brand contexts only. Once a
+  // typed Series catalog exists, never fill spare slots with unrelated characters.
+  if(!catalog.length){
+    const fallbackUris=uniq((Array.isArray(context.referenceUris)?context.referenceUris:[]).map(clean));
+    for(const uri of fallbackUris)push({kind:'generic',key:'fallback',name:'',role:'',continuityKey:'',uri});
+  }
 
   return{
     uris:selected.map((item)=>item.uri),
