@@ -9,7 +9,7 @@ const money=(v:unknown)=>new Intl.NumberFormat('en-US',{style:'currency',currenc
 const compact=(v:unknown)=>new Intl.NumberFormat('en-US',{notation:'compact',maximumFractionDigits:1}).format(Number(v||0));
 const pretty=(v:unknown)=>JSON.stringify(v??{},null,2);
 const percent=(v:unknown,digits=1)=>`${Number(v||0).toFixed(digits)}%`;
-const pill=(state:unknown)=>{const s=String(state||'').toLowerCase();return s.includes('pass')||s.includes('ready')||s.includes('public')?'good':s.includes('fail')||s.includes('block')?'bad':'warn';};
+const pill=(state:unknown)=>{const s=String(state||'').toLowerCase();return s.includes('pass')||s.includes('ready')||s.includes('public')||s.includes('schedule')?'good':s.includes('fail')||s.includes('block')||s.includes('keep_private')?'bad':'warn';};
 
 export default async function VideoPage({params}:{params:Promise<{id:string}>}){
   await requireSession();
@@ -18,6 +18,9 @@ export default async function VideoPage({params}:{params:Promise<{id:string}>}){
   if(!run)notFound();
   const attention=run.qa_report?.attention??run.metadata?.attention;
   const finalInspection=run.qa_report?.finalInspection??run.metadata?.finalInspection;
+  const autonomousPublication=run.metadata?.autonomousPublication??null;
+  const gate=autonomousPublication?.gateSnapshot??null;
+  const releaseSafety=gate?.releaseSafety??null;
   const renderUri=String(run.metadata?.renderUri??'');
   const canPreview=renderUri.startsWith('file://')||renderUri.startsWith('/')||renderUri.startsWith('.');
   const fingerprint=run.fingerprint?.fingerprint??run.fingerprint??{};
@@ -48,6 +51,20 @@ export default async function VideoPage({params}:{params:Promise<{id:string}>}){
           <section className="card"><p className="eyebrow">Economics</p><h2>Economía</h2><div className="list"><div className="list-item"><span>Coste</span><strong>{money(run.economic_cost??run.total_cost_usd)}</strong></div><div className="list-item"><span>Revenue</span><strong>{money(run.total_revenue_usd)}</strong></div><div className="list-item"><span>Profit</span><strong>{money(run.profit_usd)}</strong></div><div className="list-item"><span>ROI</span><strong>{run.roi==null?'—':`${Number(run.roi).toFixed(2)}x`}</strong></div><div className="list-item"><span>Watch min / $</span><strong>{run.watch_minutes_per_dollar==null?'—':Number(run.watch_minutes_per_dollar).toFixed(1)}</strong></div></div></section>
           <section className="section card"><p className="eyebrow">Provider ledger</p><h2>Coste desglosado</h2><div className="list">{run.costs?.map((c:any)=><div className="list-item" key={`${c.stage}:${c.provider}:${c.model}`}><div><strong>{c.stage}</strong><div className="fine">{c.provider} · {c.model}</div></div><strong>{money(c.cost)}</strong></div>)}{!run.costs?.length?<div className="empty">Sin costes registrados.</div>:null}</div></section>
           {run.youtube_video_id?<section className="section card"><p className="eyebrow">YouTube</p><h2>Private upload</h2><a className="run-link" target="_blank" rel="noreferrer" href={`https://www.youtube.com/watch?v=${run.youtube_video_id}`}>Abrir vídeo privado ↗</a><div className="fine" style={{marginTop:8}}>Estado: {run.publication_state}</div></section>:null}
+          <section className="section card">
+            <div className="row"><div><p className="eyebrow">Autonomous release</p><h2>Publication gate</h2></div><span className={`pill ${pill(autonomousPublication?.action)}`}>{autonomousPublication?.action??'NOT_EVALUATED'}</span></div>
+            {gate?<div className="list">
+              <div className="list-item"><span>QA</span><strong>{gate.qaScore} / {gate.minimumQaScore}</strong></div>
+              <div className="list-item"><span>Research</span><strong>{gate.researchConfidence} / {gate.minimumResearchConfidence}</strong></div>
+              <div className="list-item"><span>Attention</span><strong>{gate.attentionScore} / {gate.minimumAttentionScore}</strong></div>
+              <div className="list-item"><span>Media QA</span><strong>{gate.finalMediaScore} / {gate.minimumFinalMediaScore}</strong></div>
+              <div className="list-item"><span>Cost cap</span><strong>{money(gate.totalCostUsd)} / {money(gate.maximumAutoPublishCostUsd)}</strong></div>
+              <div className="list-item"><span>Audio rights</span><span className={`pill ${releaseSafety?.audioReady===false?'bad':'good'}`}>{releaseSafety?.audioReady===false?'BLOCK':'READY'}</span></div>
+              <div className="list-item"><span>Brand continuity</span><span className={`pill ${releaseSafety?.brandReady===false?'bad':'good'}`}>{releaseSafety?.brandReady===false?'BLOCK':'READY'}</span></div>
+            </div>:<div className="empty">El gate se evaluará tras el upload privado.</div>}
+            {autonomousPublication?.reasons?.length?<div style={{marginTop:12}}>{autonomousPublication.reasons.map((reason:string,index:number)=><div className="fine" key={`${index}:${reason}`}>• {reason}</div>)}</div>:null}
+            {releaseSafety?.issues?.length?<div className="error" style={{marginTop:12}}>{releaseSafety.issues.map((issue:string,index:number)=><div key={`${index}:${issue}`}>• {issue}</div>)}</div>:null}
+          </section>
         </aside>
       </div>
 
