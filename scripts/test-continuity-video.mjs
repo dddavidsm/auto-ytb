@@ -15,11 +15,16 @@ assert.deepEqual(calls[1].input.referenceUris,['file:///bridge.png']);
 assert.equal(result.brandContinuity.bridgeUsed,true);
 assert.equal(result.brandContinuity.referenceCount,2);
 assert.equal(result.metadata.continuityBridge.bridgeUri,'file:///bridge.png');
+assert.equal(result.costUsd,0.68);
+assert.equal(result.metadata.continuityBridge.bridgeCostUsd,0.08);
+assert.equal(result.metadata.continuityBridge.videoCostUsd,0.60);
 
 calls.length=0;
 const direct=withContinuityBridgeVideo(video,image,{...context,referenceUris:['file:///owl.png']});
-await direct.generate({prompt:'Old Owl waves.',durationSeconds:4,aspectRatio:'16:9',referenceUris:['file:///owl.png']});
+const directResult=await direct.generate({prompt:'Old Owl waves.',durationSeconds:4,aspectRatio:'16:9',referenceUris:['file:///owl.png']});
 assert.equal(calls.length,1);
 assert.equal(calls[0].kind,'video');
+assert.equal(directResult.costUsd,0.60);
 console.log('✓ multiple canonical references are fused into a continuity keyframe before video animation');
+console.log('✓ continuity bridge image cost is included in the pre-render production budget');
 console.log('✓ single-reference video generation stays direct and avoids unnecessary image cost');
