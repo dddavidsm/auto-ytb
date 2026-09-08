@@ -23,6 +23,8 @@ export interface SearchProvider {
 
 export interface TextModel {
   readonly name: string;
+  /** Optional cumulative non-asset provider spend (search + language-model work) for pre-render budget gates. */
+  getNonAssetCostUsd?(): number;
   generateJson<T>(input: {
     system: string;
     prompt: string;
