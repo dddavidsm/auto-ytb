@@ -1,5 +1,5 @@
 import { readFile, writeFile, rename } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { selectLicensedSoundtrack } from '@auto-ytb/production';
 
@@ -14,7 +14,7 @@ async function loadCatalog(path){
   return assets.filter((asset)=>asset&&asset.id&&asset.kind&&asset.uri);
 }
 
-async function mixSfx({ffmpeg,renderUri,sfx}){
+export async function mixTimedSfx({ffmpeg='ffmpeg',renderUri,sfx=[]}){
   if(!sfx.length)return renderUri;
   const renderPath=pathFromUri(renderUri);if(!renderPath)throw new Error('Timed SFX mixing currently requires a local rendered MP4');
   const usable=sfx.map((cue)=>({...cue,path:pathFromUri(cue.uri)})).filter((cue)=>cue.path);
@@ -48,7 +48,7 @@ export function withLicensedSoundtrack(renderer,options={}){
       manifest.soundtrack=plan;manifest.music=plan.music;manifest.sfx=plan.sfx;
       await writeFile(manifestPath,JSON.stringify(manifest,null,2),'utf8');
       const rendered=await renderer.render(input);
-      const finalUri=await mixSfx({ffmpeg,renderUri:rendered.uri,sfx:plan.sfx});
+      const finalUri=await mixTimedSfx({ffmpeg,renderUri:rendered.uri,sfx:plan.sfx});
       return {...rendered,uri:finalUri,costUsd:number(rendered.costUsd,0)+plan.estimatedCostUsd,metadata:{...(rendered.metadata??{}),soundtrack:{rightsReady:plan.rightsReady,music:plan.music?.assetId??null,sfx:plan.sfx.map((cue)=>({assetId:cue.assetId,startSec:cue.startSec})),estimatedCostUsd:plan.estimatedCostUsd,selectionNotes:plan.selectionNotes},sfxMixed:plan.sfx.length>0}};
     },
   };
