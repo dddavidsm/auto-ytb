@@ -3,6 +3,7 @@ import os from 'node:os';
 import { NodePostgresSqlClient } from '../packages/runtime-node/index.mjs';
 import { computeRetryDelayMs, shouldRetry } from '@auto-ytb/os';
 import { projectChannelCredentials } from './lib/channel-env.mjs';
+import { createRuntimeHeartbeat } from './lib/runtime-heartbeat.mjs';
 
 const req=(name)=>{const value=process.env[name]?.trim();if(!value)throw new Error(`${name} is required`);return value;};
 const num=(name,fallback)=>{const value=Number(process.env[name]??fallback);if(!Number.isFinite(value))throw new Error(`${name} must be numeric`);return value;};
@@ -14,6 +15,7 @@ const staleMinutes=Math.max(5,num('JOB_STALE_MINUTES',120));
 const timeoutMinutes=Math.max(5,num('JOB_TIMEOUT_MINUTES',120));
 const workerId=`${os.hostname()}:${process.pid}`;
 const db=new NodePostgresSqlClient(req('DATABASE_URL'),{ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined});
+const heartbeat=createRuntimeHeartbeat(db,{role:'worker',instanceId:workerId,minIntervalMs:10_000});
 let processed=0,stopping=false;
 process.on('SIGTERM',()=>{stopping=true;});process.on('SIGINT',()=>{stopping=true;});
 const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
@@ -49,5 +51,24 @@ async function execute(job){
 async function settleBudget(job,actualCostUsd,releaseOnly=false){const payload=job.payload??{},channelKey=String(payload.channelKey??'future-tech-business-en'),reserved=Math.max(0,Number(payload.reservedCostUsd??0));if(!reserved)return;const budgetDate=String(payload.budgetDate??new Date().toISOString().slice(0,10));await db.query(`update daily_budget_ledger set reserved_usd=greatest(0,reserved_usd-$3),actual_usd=actual_usd+$4,updated_at=now() where channel_key=$1 and spend_date=$2::date`,[channelKey,budgetDate,reserved,releaseOnly?0:Math.max(0,actualCostUsd)]);}
 async function complete(job,result){await db.query(`update jobs set state='succeeded',locked_at=null,locked_by=null,completed_at=now(),updated_at=now(),last_error=null where id=$1`,[job.id]);await settleBudget(job,result.actualCostUsd??0,false);await emit(job.id,'succeeded',{workerId,attempt:job.attempts,actualCostUsd:result.actualCostUsd??0,contentFormat:result.contentFormat??job.payload?.contentFormat,productionRunId:result.productionRunId,costMeterSession:result.costMeterSession,brandContinuityRequired:result.brandContinuityRequired??false,brandVersion:result.brandVersion??null});}
 async function fail(job,error){const message=(error instanceof Error?error.message:String(error)).slice(0,8000);if(shouldRetry(Number(job.attempts),Number(job.max_attempts))){const delayMs=computeRetryDelayMs(Number(job.attempts),{baseDelayMs:num('JOB_RETRY_BASE_MS',60000),maxDelayMs:num('JOB_RETRY_MAX_MS',6*60*60_000),jitterRatio:0.15});await db.query(`update jobs set state='retry',locked_at=null,locked_by=null,not_before=now()+($2::text || ' milliseconds')::interval,last_error=$3,updated_at=now() where id=$1`,[job.id,String(delayMs),message]);await emit(job.id,'retry_scheduled',{workerId,attempt:job.attempts,delayMs,error:message,kind:job.kind,contentFormat:job.payload?.contentFormat});}else{await db.query(`update jobs set state='dead',locked_at=null,locked_by=null,completed_at=now(),last_error=$2,updated_at=now() where id=$1`,[job.id,message]);await settleBudget(job,0,true);await emit(job.id,'dead_letter',{workerId,attempt:job.attempts,error:message,kind:job.kind,contentFormat:job.payload?.contentFormat});}}
-try{const recovered=await recoverStale();if(recovered)console.log(`Recovered ${recovered} stale jobs`);while(!stopping&&processed<maxJobs){const job=await claim();if(!job){if(once)break;await sleep(pollMs);continue;}try{const result=await execute(job);await complete(job,result);}catch(error){await fail(job,error);}processed+=1;if(once)break;}}finally{await db.close();}
+async function executeWithHeartbeat(job){
+  const meta=()=>({processed,jobId:job.id,kind:job.kind,attempt:job.attempts,channelId:job.channel_id??null,contentFormat:job.payload?.contentFormat??null});
+  await heartbeat('running',meta(),true);
+  const timer=setInterval(()=>{heartbeat('running',meta()).catch((error)=>console.error('heartbeat failed',error));},10_000);
+  timer.unref?.();
+  try{return await execute(job);}finally{clearInterval(timer);}
+}
+try{
+  await heartbeat('starting',{pollMs,staleMinutes,timeoutMinutes,once},true);
+  const recovered=await recoverStale();if(recovered)console.log(`Recovered ${recovered} stale jobs`);
+  await heartbeat('idle',{processed,recovered,pollMs},true);
+  while(!stopping&&processed<maxJobs){
+    await heartbeat('idle',{processed,pollMs});
+    const job=await claim();
+    if(!job){if(once)break;await sleep(pollMs);continue;}
+    try{const result=await executeWithHeartbeat(job);await complete(job,result);processed+=1;await heartbeat('idle',{processed,lastJobId:job.id,lastJobKind:job.kind,lastResult:'succeeded'},true);}catch(error){await fail(job,error);processed+=1;await heartbeat('degraded',{processed,lastJobId:job.id,lastJobKind:job.kind,lastResult:'failed',error:error instanceof Error?error.message:String(error)},true);}
+    if(once)break;
+  }
+  await heartbeat('stopping',{processed,stopping},true);
+}finally{await db.close();}
 console.log(JSON.stringify({workerId,processed,stopping},null,2));
