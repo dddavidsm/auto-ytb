@@ -4,8 +4,12 @@ type BeatLike={id:string;startSec:number;targetDurationSec:number;purpose:string
 type SceneLike={id:string;startSec:number;durationSec:number;kind:string;generated:boolean;visualValue?:number;costTier?:string;selectionReason?:string;sourceIds?:string[]};
 type PackagingLike={id:string;title:string;thumbnailText?:string;promise?:string;curiosity?:number;clarity?:number;credibility?:number;differentiation?:number;score?:number};
 
+type ArchetypeLike={id?:string;version?:number;voiceMode?:string;realityMode?:string;cameraProfile?:string;syntheticDisclosurePolicy?:string};
+type ExecutionPlanLike={researchMode?:string;scriptMode?:string;voiceMode?:string;visualMode?:string;audioMode?:string;captionMode?:string;generativeSpendBias?:number};
+
 export type CreativeFingerprint={
   contentFormat:string;language?:string;durationSeconds:number;
+  contentArchetype:string;archetypeVersion?:number;researchMode:string;scriptMode:string;voiceMode:string;visualMode:string;audioMode:string;captionMode:string;generativeSpendBias:number;
   hookType:string;hookRetentionDevice:string;narrativeArchetype:string;
   beatCount:number;sceneCount:number;visualMix:Record<string,number>;
   averageSceneSeconds:number;longestSceneSeconds:number;visualChangesPerMinute:number;
@@ -29,12 +33,15 @@ function events(points:CreativeRetentionPoint[]){let dips=0,spikes=0;for(let i=1
 function durationBucket(seconds:number){if(seconds<=3)return'0-3s';if(seconds<=6)return'3-6s';if(seconds<=10)return'6-10s';if(seconds<=16)return'10-16s';if(seconds<=24)return'16-24s';return'24s+';}
 function visualValueBucket(value:number|undefined){const n=Number(value??0);if(n>=85)return'85+';if(n>=70)return'70-84';if(n>=50)return'50-69';return'<50';}
 
-export function extractCreativeFingerprint(input:{contentFormat:string;script:{language?:string;targetDurationSec:number;beats:BeatLike[]};scenes:SceneLike[];packaging:PackagingLike[];selectedPackagingId?:string;attentionScore?:number}):CreativeFingerprint{
+export function extractCreativeFingerprint(input:{contentFormat:string;script:{language?:string;targetDurationSec:number;beats:BeatLike[]};scenes:SceneLike[];packaging:PackagingLike[];selectedPackagingId?:string;attentionScore?:number;contentArchetype?:ArchetypeLike;executionPlan?:ExecutionPlanLike}):CreativeFingerprint{
   const duration=Math.max(1,Number(input.script.targetDurationSec||0));
   const sceneDurations=input.scenes.map((scene)=>Math.max(0,Number(scene.durationSec||0)));
   const selected=input.packaging.find((variant)=>variant.id===input.selectedPackagingId)??input.packaging[0]??null;
+  const archetype=String(input.contentArchetype?.id??'UNKNOWN');
+  const execution=input.executionPlan??{};
   return{
     contentFormat:input.contentFormat,language:input.script.language,durationSeconds:duration,
+    contentArchetype:archetype,archetypeVersion:input.contentArchetype?.version,researchMode:String(execution.researchMode??'UNKNOWN'),scriptMode:String(execution.scriptMode??'UNKNOWN'),voiceMode:String(execution.voiceMode??input.contentArchetype?.voiceMode??'UNKNOWN'),visualMode:String(execution.visualMode??'UNKNOWN'),audioMode:String(execution.audioMode??'UNKNOWN'),captionMode:String(execution.captionMode??'UNKNOWN'),generativeSpendBias:round(Number(execution.generativeSpendBias??0),3),
     hookType:input.script.beats[0]?.purpose??'none',hookRetentionDevice:input.script.beats[0]?.retentionDevice??'none',narrativeArchetype:narrativeArchetype(input.script.beats),
     beatCount:input.script.beats.length,sceneCount:input.scenes.length,visualMix:mix(input.scenes.map((scene)=>scene.kind)),
     averageSceneSeconds:round(sceneDurations.length?sceneDurations.reduce((a,b)=>a+b,0)/sceneDurations.length:0),longestSceneSeconds:round(Math.max(0,...sceneDurations)),visualChangesPerMinute:round(input.scenes.length/(duration/60)),
@@ -45,11 +52,12 @@ export function extractCreativeFingerprint(input:{contentFormat:string;script:{l
 
 export function alignRetentionToCreativeSegments(fingerprint:CreativeFingerprint,points:CreativeRetentionPoint[]):CreativeSegmentObservation[]{
   const duration=Math.max(1,fingerprint.durationSeconds);
+  const common={contentArchetype:fingerprint.contentArchetype,scriptMode:fingerprint.scriptMode,voiceMode:fingerprint.voiceMode,visualMode:fingerprint.visualMode,audioMode:fingerprint.audioMode,captionMode:fingerprint.captionMode};
   const observe=(segmentType:'beat'|'scene',segment:any,start:number,end:number,features:Record<string,unknown>)=>{
     const startRatio=Math.max(0,Math.min(1,start/duration)),endRatio=Math.max(startRatio,Math.min(1,end/duration));
     const startRetention=interpolate(points,startRatio),endRetention=interpolate(points,endRatio);const local=localPoints(points,startRatio,endRatio);const all=[...(startRetention==null?[]:[startRetention]),...local.map((p)=>p.audienceWatchRatio),...(endRetention==null?[]:[endRetention])];
     const avg=all.length?all.reduce((a,b)=>a+b,0)/all.length:null;const delta=startRetention==null||endRetention==null?null:endRetention-startRetention;const ev=events([{elapsedRatio:startRatio,audienceWatchRatio:startRetention??0},...local,{elapsedRatio:endRatio,audienceWatchRatio:endRetention??0}]);
-    return{segmentType,segmentKey:String(segment.id),startSeconds:round(start,3),endSeconds:round(end,3),startRatio:round(startRatio,6),endRatio:round(endRatio,6),startRetention:startRetention==null?null:round(startRetention,6),endRetention:endRetention==null?null:round(endRetention,6),averageRetention:avg==null?null:round(avg,6),retentionDelta:delta==null?null:round(delta,6),localDips:ev.dips,localSpikes:ev.spikes,features};
+    return{segmentType,segmentKey:String(segment.id),startSeconds:round(start,3),endSeconds:round(end,3),startRatio:round(startRatio,6),endRatio:round(endRatio,6),startRetention:startRetention==null?null:round(startRetention,6),endRetention:endRetention==null?null:round(endRetention,6),averageRetention:avg==null?null:round(avg,6),retentionDelta:delta==null?null:round(delta,6),localDips:ev.dips,localSpikes:ev.spikes,features:{...common,...features}};
   };
   const beats=fingerprint.beats.map((beat)=>observe('beat',beat,Number(beat.startSec||0),Number(beat.startSec||0)+Number(beat.targetDurationSec||0),{purpose:beat.purpose,retentionDevice:beat.retentionDevice??'none',durationBucket:durationBucket(Number(beat.targetDurationSec||0)),sourceBacked:Boolean(beat.sourceIds?.length),opening:Number(beat.startSec||0)<30}));
   const scenes=fingerprint.scenes.map((scene)=>observe('scene',scene,Number(scene.startSec||0),Number(scene.startSec||0)+Number(scene.durationSec||0),{kind:scene.kind,generated:Boolean(scene.generated),visualValueBucket:visualValueBucket(scene.visualValue),costTier:scene.costTier??'unknown',durationBucket:durationBucket(Number(scene.durationSec||0)),sourceBacked:Boolean(scene.sourceIds?.length),selectionReason:scene.selectionReason??null,opening:Number(scene.startSec||0)<30}));

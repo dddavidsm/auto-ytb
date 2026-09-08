@@ -18,6 +18,14 @@ function videoFeatures(fingerprint){
   const selected=fingerprint.selectedPackaging??{};
   const dominant=Object.entries(fingerprint.visualMix??{}).sort((a,b)=>Number(b[1])-Number(a[1]))[0]?.[0]??'none';
   return{
+    contentArchetype:String(fingerprint.contentArchetype??'UNKNOWN'),
+    researchMode:String(fingerprint.researchMode??'UNKNOWN'),
+    scriptMode:String(fingerprint.scriptMode??'UNKNOWN'),
+    voiceMode:String(fingerprint.voiceMode??'UNKNOWN'),
+    visualMode:String(fingerprint.visualMode??'UNKNOWN'),
+    audioMode:String(fingerprint.audioMode??'UNKNOWN'),
+    captionMode:String(fingerprint.captionMode??'UNKNOWN'),
+    generativeSpendBias:bucket(fingerprint.generativeSpendBias??0,[0.35,0.65,0.85],['low','balanced','high','max']),
     hookRetentionDevice:String(fingerprint.hookRetentionDevice??'none'),
     narrativeArchetype:String(fingerprint.narrativeArchetype??'unknown'),
     dominantVisualKind:dominant,
@@ -35,6 +43,14 @@ function rowMetrics(row){
   return{views,avp:Number(row.average_view_percentage||0),shareRate:views?shares/views*100:0,subsPerThousand:views?subs/views*1000:0,roi:cost?(revenue-cost)/cost:0};
 }
 function addGroup(map,key,sample){const current=map.get(key)??{featureName:sample.featureName,featureValue:sample.featureValue,contentFormat:sample.contentFormat,publications:new Set(),weightedViews:0,retentionDelta:[],segmentRetention:[],avp:[],shareRate:[],subs:[],roi:[]};current.publications.add(sample.publicationId);current.weightedViews+=sample.metrics.views;if(sample.retentionDelta!=null)current.retentionDelta.push(sample.retentionDelta);if(sample.averageRetention!=null)current.segmentRetention.push(sample.averageRetention);current.avp.push(sample.metrics.avp);current.shareRate.push(sample.metrics.shareRate);current.subs.push(sample.metrics.subsPerThousand);current.roi.push(sample.metrics.roi);map.set(key,current);}
+function addLearningFeature(map,sample){
+  addGroup(map,`${sample.contentFormat}|${sample.featureName}|${sample.featureValue}`,sample);
+  const archetype=String(sample.contentArchetype??'').trim();
+  if(archetype&&archetype!=='UNKNOWN'){
+    const scopedName=`archetype:${archetype}:${sample.featureName}`;
+    addGroup(map,`${sample.contentFormat}|${scopedName}|${sample.featureValue}`,{...sample,featureName:scopedName});
+  }
+}
 const avg=(values)=>values.length?values.reduce((a,b)=>a+Number(b||0),0)/values.length:null;
 
 async function contextRows(pub){
@@ -61,13 +77,13 @@ try{
     const retention=(await db.query(`select elapsed_ratio::float,audience_watch_ratio::float from retention_points where analytics_snapshot_id=$1 order by elapsed_ratio`,[pub.analytics_snapshot_id])).rows.map((row)=>({elapsedRatio:Number(row.elapsed_ratio),audienceWatchRatio:Number(row.audience_watch_ratio)}));
     const fingerprint=pub.fingerprint;if(!fingerprint||!retention.length)continue;
     await db.query(`delete from creative_segment_observations where analytics_snapshot_id=$1`,[pub.analytics_snapshot_id]);
-    const observations=alignRetentionToCreativeSegments(fingerprint,retention);const metrics=rowMetrics(pub);
+    const observations=alignRetentionToCreativeSegments(fingerprint,retention);const metrics=rowMetrics(pub),contentArchetype=String(fingerprint.contentArchetype??'UNKNOWN');
     for(const observation of observations){
       await db.query(`insert into creative_segment_observations (analytics_snapshot_id,production_run_id,publication_id,channel_id,segment_type,segment_key,start_seconds,end_seconds,start_ratio,end_ratio,start_retention,end_retention,average_retention,retention_delta,local_dips,local_spikes,features) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)`,[pub.analytics_snapshot_id,pub.production_run_id,pub.id,channelId,observation.segmentType,observation.segmentKey,observation.startSeconds,observation.endSeconds,observation.startRatio,observation.endRatio,observation.startRetention,observation.endRetention,observation.averageRetention,observation.retentionDelta,observation.localDips,observation.localSpikes,JSON.stringify(observation.features)]);
       segmentRows+=1;
     }
-    for(const signal of featureSignalsFromObservations(observations))addGroup(groups,`${pub.content_format}|segment:${signal.segmentType}:${signal.featureName}|${signal.featureValue}`,{featureName:`segment:${signal.segmentType}:${signal.featureName}`,featureValue:signal.featureValue,contentFormat:pub.content_format,publicationId:pub.id,metrics,retentionDelta:signal.retentionDelta,averageRetention:signal.averageRetention});
-    for(const [featureName,featureValue] of Object.entries(videoFeatures(fingerprint)))addGroup(groups,`${pub.content_format}|video:${featureName}|${featureValue}`,{featureName:`video:${featureName}`,featureValue:String(featureValue),contentFormat:pub.content_format,publicationId:pub.id,metrics,retentionDelta:null,averageRetention:null});
+    for(const signal of featureSignalsFromObservations(observations))addLearningFeature(groups,{featureName:`segment:${signal.segmentType}:${signal.featureName}`,featureValue:signal.featureValue,contentFormat:pub.content_format,contentArchetype,publicationId:pub.id,metrics,retentionDelta:signal.retentionDelta,averageRetention:signal.averageRetention});
+    for(const [featureName,featureValue] of Object.entries(videoFeatures(fingerprint)))addLearningFeature(groups,{featureName:`video:${featureName}`,featureValue:String(featureValue),contentFormat:pub.content_format,contentArchetype,publicationId:pub.id,metrics,retentionDelta:null,averageRetention:null});
     await db.query(`delete from audience_context_snapshots where analytics_snapshot_id=$1`,[pub.analytics_snapshot_id]);
     for(const ctx of await contextRows(pub)){await db.query(`insert into audience_context_snapshots (publication_id,analytics_snapshot_id,context_type,context_value,views,watch_time_minutes,payload) values ($1,$2,$3,$4,$5,$6,$7::jsonb)`,[pub.id,pub.analytics_snapshot_id,ctx.type,ctx.value,ctx.views,ctx.watchTimeMinutes,JSON.stringify(ctx.payload)]);contextCount+=1;}
   }
