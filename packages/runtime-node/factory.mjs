@@ -4,6 +4,7 @@ import { ProviderUsageMeter, meterSearchProvider, meterTextModel, meterVoiceProv
 import { withFinalMediaInspection } from './media-inspector.mjs';
 import { bindMediaProviderToBrand, parseBrandContinuityContext } from './brand-continuity.mjs';
 import { bindTextModelToSeries, parseSeriesContinuityContext } from './series-continuity.mjs';
+import { bindVoiceProviderToSeries } from './series-voice.mjs';
 import { withContinuityBridgeVideo } from './continuity-video.mjs';
 import { withLicensedSoundtrack } from './soundtrack.mjs';
 import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
@@ -66,7 +67,8 @@ export function createLiveRuntime(env = process.env) {
   if (voiceProvider !== 'elevenlabs') throw new Error(`Unsupported VOICE_PROVIDER: ${voiceProvider}`);
   const voiceModel=env.VOICE_MODEL || 'eleven_multilingual_v2';
   const rawVoice = new ElevenLabsVoiceProvider({ apiKey: reqFrom(env,'VOICE_API_KEY'), store, modelId: voiceModel, useTimestamps:env.VOICE_TIMESTAMPS!=='false' });
-  const voice = meterVoiceProvider(rawVoice,meter,{model:voiceModel});
+  const meteredVoice=meterVoiceProvider(rawVoice,meter,{model:voiceModel});
+  const voice=bindVoiceProviderToSeries(meteredVoice,seriesContext);
 
   let image;
   let video;
