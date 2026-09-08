@@ -2,6 +2,7 @@ import { NodeLocalObjectStore, FfmpegRenderer, NodeUploadAssetLoader, NodePostgr
 import { FfmpegThumbnailComposer } from './thumbnail.mjs';
 import { ProviderUsageMeter, meterSearchProvider, meterTextModel, meterVoiceProvider, meterImageProvider, meterVideoProvider } from './metering.mjs';
 import { withFinalMediaInspection } from './media-inspector.mjs';
+import { bindMediaProviderToBrand, parseBrandContinuityContext } from './brand-continuity.mjs';
 import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
 
@@ -15,6 +16,7 @@ const numFrom=(env,name,fallback)=>{const value=Number(env[name]??fallback);retu
 export function createLiveRuntime(env = process.env) {
   const store = new NodeLocalObjectStore(env.LOCAL_STORAGE_ROOT || '.data/storage');
   const meter = new ProviderUsageMeter(env);
+  const brandContext=parseBrandContinuityContext(env.AUTO_YTB_BRAND_CONTEXT);
   const searchProvider = (env.SEARCH_PROVIDER || 'tavily').toLowerCase();
   if (searchProvider !== 'tavily') throw new Error(`Unsupported SEARCH_PROVIDER: ${searchProvider}`);
   const rawSearch = new TavilySearchProvider({ apiKey: reqFrom(env,'SEARCH_API_KEY') });
@@ -36,8 +38,8 @@ export function createLiveRuntime(env = process.env) {
     const imageModel=env.IMAGE_MODEL || 'gen4_image';
     const videoModel=env.VIDEO_MODEL || 'gen4.5';
     const runway = new RunwayMediaProvider({ apiKey: env.IMAGE_API_KEY || env.VIDEO_API_KEY || reqFrom(env,'VIDEO_API_KEY'), store, imageModel, videoModel });
-    image = meterImageProvider(runway,meter,{model:imageModel});
-    video = meterVideoProvider(runway,meter,{model:videoModel});
+    image = bindMediaProviderToBrand(meterImageProvider(runway,meter,{model:imageModel}),brandContext);
+    video = bindMediaProviderToBrand(meterVideoProvider(runway,meter,{model:videoModel}),brandContext);
   }
 
   const rawRenderer=new FfmpegRenderer({
@@ -58,5 +60,5 @@ export function createLiveRuntime(env = process.env) {
     : undefined;
   const db = env.DATABASE_URL ? new NodePostgresSqlClient(env.DATABASE_URL, { ssl: env.DATABASE_SSL === 'true' ? { rejectUnauthorized:false } : undefined }) : undefined;
 
-  return { store, meter, search, model, voice, image, video, renderer, thumbnailComposer, oauth, publisher, analytics, library, loader, db };
+  return { store, meter, search, model, voice, image, video, renderer, thumbnailComposer, oauth, publisher, analytics, library, loader, db, brandContext };
 }
