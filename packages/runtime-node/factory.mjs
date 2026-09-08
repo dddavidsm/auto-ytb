@@ -27,6 +27,7 @@ function mergeBrandAndSeries(brand,series){
     characterName:base.characterName??null,
     continuityKey:base.continuityKey??series.continuityKey,
     referenceUris:[...new Set([...(base.referenceUris??[]),...(series.referenceUris??[])])].slice(0,8),
+    referenceCatalog:[...(base.referenceCatalog??[]),...(series.visualReferences??[])],
     styleTags:base.styleTags??[],
     styleGuidance:[base.styleGuidance,series.visualGuidance].filter(Boolean).join(' '),
     seriesKey:series.seriesKey,
