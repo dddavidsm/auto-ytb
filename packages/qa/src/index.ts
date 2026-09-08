@@ -69,9 +69,15 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
   const proceduralShare = totalVisualSeconds ? proceduralSeconds / totalVisualSeconds : 0;
   const visualKinds = new Set(input.manifest.scenes.map((scene)=>scene.kind)).size;
   const isShort = input.manifest.contentFormat === 'SHORT_VERTICAL';
-  const hybridWarn = aiVideoShare > (isShort ? 0.65 : 0.45) || (!isShort && input.manifest.scenes.length >= 4 && proceduralShare < 0.15) || (!isShort && input.manifest.scenes.length >= 4 && visualKinds < 2);
-  const hybridScore = clamp(Math.round(100 - Math.max(0,aiVideoShare-(isShort?0.45:0.25))*80 - Math.max(0,(isShort?0:0.20)-proceduralShare)*55 - (visualKinds<2?12:0)));
-  checks.push({ id:'hybrid-visual-balance', status:hybridWarn?'WARN':'PASS', score:hybridScore, message:`AI video ${(aiVideoShare*100).toFixed(0)}% · procedural/source-backed ${(proceduralShare*100).toFixed(0)}% · ${visualKinds} visual types` });
+  const visualMode=input.manifest.executionPlan?.visualMode??'EVIDENCE_FIRST';
+  const generativeFirst=visualMode==='GENERATIVE_FIRST'||visualMode==='CHARACTER_CONTINUITY';
+  const hybridWarn = generativeFirst
+    ? false
+    : aiVideoShare > (isShort ? 0.65 : 0.45) || (!isShort && input.manifest.scenes.length >= 4 && proceduralShare < 0.15) || (!isShort && input.manifest.scenes.length >= 4 && visualKinds < 2);
+  const hybridScore = generativeFirst
+    ? 100
+    : clamp(Math.round(100 - Math.max(0,aiVideoShare-(isShort?0.45:0.25))*80 - Math.max(0,(isShort?0:0.20)-proceduralShare)*55 - (visualKinds<2?12:0)));
+  checks.push({ id:'hybrid-visual-balance', status:hybridWarn?'WARN':'PASS', score:hybridScore, message:generativeFirst?`${visualMode} intentionally prioritizes coherent generated visuals; generic documentary hybrid quotas do not apply.`:`AI video ${(aiVideoShare*100).toFixed(0)}% · procedural/source-backed ${(proceduralShare*100).toFixed(0)}% · ${visualKinds} visual types` });
 
   const packagingIds = new Set(input.manifest.packaging.map((variant) => variant.id));
   const thumbnailIds = new Set(input.manifest.thumbnails.map((thumbnail) => thumbnail.packagingId));
@@ -108,7 +114,7 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
   const maxCost = input.maxCostUsd ?? 25;
   checks.push({ id: 'cost', status: costForGate > maxCost ? 'FAIL' : costForGate > maxCost * 0.75 ? 'WARN' : 'PASS', score: Math.max(0, Math.round(100 - (costForGate / maxCost) * 70)), message: `Pre-render cost $${costForGate.toFixed(2)} / cap $${maxCost.toFixed(2)}` });
 
-  const attention=reviewAttentionBlueprint({script:input.script,packaging:input.manifest.packaging,scenes:input.manifest.scenes,contentFormat:input.manifest.contentFormat,selectedPackagingId:input.manifest.selectedPackagingId,minScore:input.minAttentionScore});
+  const attention=reviewAttentionBlueprint({script:input.script,packaging:input.manifest.packaging,scenes:input.manifest.scenes,contentFormat:input.manifest.contentFormat,executionPlan:input.manifest.executionPlan,selectedPackagingId:input.manifest.selectedPackagingId,minScore:input.minAttentionScore});
   checks.push({id:'attention-readiness',status:attention.ready?'PASS':'FAIL',score:attention.score,message:attention.ready?`Attention blueprint ${attention.score}/100 ready for production`:`Attention blueprint ${attention.score}/100 blocked · ${attention.issues.map((issue)=>issue.code).join(', ')}`});
 
   const blockers = checks.filter((check) => check.status === 'FAIL').map((check) => check.id);
