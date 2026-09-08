@@ -77,11 +77,15 @@ const economics=calculateEconomics({videoId:'v',views:10000,watchTimeMinutes:1,a
 assert.equal(economics.profitUsd,40);
 assert.equal(economics.rpmUsd,5);
 
-const { buildYouTubeAuthorizationUrl }=await import('../packages/youtube/dist/index.js');
+const { buildYouTubeAuthorizationUrl, buildGoogleDriveAuthorizationUrl }=await import('../packages/youtube/dist/index.js');
 const authUrl=buildYouTubeAuthorizationUrl({clientId:'client',redirectUri:'http://localhost/callback',state:'abc'});
 assert.ok(authUrl.includes('youtube.upload'));
-assert.ok(authUrl.includes('drive.file'));
+assert.ok(!authUrl.includes('drive.file'));
 assert.ok(authUrl.includes('access_type=offline'));
+const driveAuthUrl=buildGoogleDriveAuthorizationUrl({clientId:'client',redirectUri:'http://localhost/drive-callback',state:'drive'});
+assert.ok(driveAuthUrl.includes('drive.file'));
+assert.ok(!driveAuthUrl.includes('youtube.upload'));
+assert.ok(driveAuthUrl.includes('access_type=offline'));
 const { allocatePortfolioBudget,rankProviders,dedupeJobs }=await import('../packages/os/dist/index.js');
 const allocation=allocatePortfolioBudget(30,[{channelId:'a',enabled:true,expectedRoi:2,evidenceConfidence:90,opportunityBacklogScore:90,growthPriority:100},{channelId:'b',enabled:true,expectedRoi:.5,evidenceConfidence:60,opportunityBacklogScore:60,growthPriority:50}]);
 assert.equal(allocation.reduce((s,x)=>s+x.dailyBudgetUsd,0),30);
