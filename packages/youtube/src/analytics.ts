@@ -16,13 +16,17 @@ export class YouTubeAnalyticsClient {
     return { columns, rows };
   }
 
+  private async dimensionalVideoReport(input:{videoId:string;startDate:string;endDate:string;dimension:string;metrics?:string;sort?:string}):Promise<AnalyticsTable>{
+    return this.query({ids:'channel==MINE',startDate:input.startDate,endDate:input.endDate,filters:`video==${input.videoId}`,dimensions:input.dimension,metrics:input.metrics??'views,estimatedMinutesWatched',...(input.sort?{sort:input.sort}:{})});
+  }
+
   async getVideoPerformance(input: { videoId: string; startDate: string; endDate: string }): Promise<AnalyticsTable> {
     return this.query({
       ids: 'channel==MINE',
       startDate: input.startDate,
       endDate: input.endDate,
       filters: `video==${input.videoId}`,
-      metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,estimatedRevenue',
+      metrics: 'views,engagedViews,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost,estimatedRevenue,videosAddedToPlaylists,videosRemovedFromPlaylists',
     });
   }
 
@@ -39,14 +43,10 @@ export class YouTubeAnalyticsClient {
   }
 
   async getTrafficSources(input: { videoId: string; startDate: string; endDate: string }): Promise<AnalyticsTable> {
-    return this.query({
-      ids: 'channel==MINE',
-      startDate: input.startDate,
-      endDate: input.endDate,
-      filters: `video==${input.videoId}`,
-      dimensions: 'insightTrafficSourceType',
-      metrics: 'views,estimatedMinutesWatched',
-      sort: '-views',
-    });
+    return this.dimensionalVideoReport({...input,dimension:'insightTrafficSourceType',sort:'-views'});
   }
+  async getDeviceTypes(input:{videoId:string;startDate:string;endDate:string}):Promise<AnalyticsTable>{return this.dimensionalVideoReport({...input,dimension:'deviceType',sort:'-views'});}
+  async getSubscriberStatus(input:{videoId:string;startDate:string;endDate:string}):Promise<AnalyticsTable>{return this.dimensionalVideoReport({...input,dimension:'subscribedStatus',sort:'-views'});}
+  async getCountries(input:{videoId:string;startDate:string;endDate:string}):Promise<AnalyticsTable>{return this.dimensionalVideoReport({...input,dimension:'country',sort:'-views'});}
+  async getPlaybackLocations(input:{videoId:string;startDate:string;endDate:string}):Promise<AnalyticsTable>{return this.dimensionalVideoReport({...input,dimension:'insightPlaybackLocationType',sort:'-views'});}
 }
