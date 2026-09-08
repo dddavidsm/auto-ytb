@@ -20,7 +20,7 @@
     "niche:live": "npm run build && node apps/cli/dist/niche-live.js",
     "pipeline:mock": "npm run build && node apps/cli/dist/pipeline-mock.js",
     "pipeline:live": "npm run build && node scripts/live-pipeline.mjs",
-    "test:all": "npm run build && npm run test:syntax && node scripts/test-core.mjs && node scripts/test-pipeline.mjs && node scripts/test-format.mjs && node scripts/test-live-adapters.mjs && node scripts/test-ops.mjs && node scripts/test-learning-bandits.mjs && node scripts/test-hybrid-visual.mjs",
+    "test:all": "npm run build && npm run test:syntax && node scripts/test-core.mjs && node scripts/test-pipeline.mjs && node scripts/test-format.mjs && node scripts/test-live-adapters.mjs && node scripts/test-ops.mjs && node scripts/test-learning-bandits.mjs && node scripts/test-hybrid-visual.mjs && node scripts/test-source-visuals.mjs",
     "test:adapters": "npm run build && node scripts/test-live-adapters.mjs",
     "test:ops": "npm run build && node scripts/test-ops.mjs",
     "doctor": "npm run build && node apps/cli/dist/doctor.js",
