@@ -1,13 +1,42 @@
 import type { ContentLibraryProvider } from './types.js';
 
 function q(value:string){return value.replaceAll('\\','\\\\').replaceAll("'","\\'");}
+function runtimeEnv():Record<string,string|undefined>{
+  const processLike=(globalThis as unknown as {process?:{env?:Record<string,string|undefined>}}).process;
+  return processLike?.env??{};
+}
+
+type DriveOauthCredentials={clientId:string;clientSecret:string;refreshToken:string};
 
 export class GoogleDriveLibraryProvider implements ContentLibraryProvider {
   readonly name='google-drive';
-  constructor(private readonly options:{getAccessToken:()=>Promise<string>;rootFolderName?:string;fetchFn?:typeof fetch}){}
+  private driveToken?:{value:string;expiresAt:number};
+  constructor(private readonly options:{getAccessToken:()=>Promise<string>;rootFolderName?:string;rootFolderId?:string;oauth?:DriveOauthCredentials;fetchFn?:typeof fetch}){}
+  private dedicatedCredentials():DriveOauthCredentials|null{
+    if(this.options.oauth?.refreshToken)return this.options.oauth;
+    const env=runtimeEnv();
+    const refreshToken=String(env.DRIVE_REFRESH_TOKEN??'').trim();
+    if(!refreshToken)return null;
+    const clientId=String(env.DRIVE_CLIENT_ID??env.YOUTUBE_CLIENT_ID??'').trim();
+    const clientSecret=String(env.DRIVE_CLIENT_SECRET??env.YOUTUBE_CLIENT_SECRET??'').trim();
+    if(!clientId||!clientSecret)throw new Error('DRIVE_REFRESH_TOKEN is configured but DRIVE_CLIENT_ID/DRIVE_CLIENT_SECRET (or fallback YOUTUBE client credentials) are missing');
+    return{clientId,clientSecret,refreshToken};
+  }
+  private async accessToken(){
+    const credentials=this.dedicatedCredentials();
+    if(!credentials)return this.options.getAccessToken();
+    if(this.driveToken&&this.driveToken.expiresAt>Date.now()+60_000)return this.driveToken.value;
+    const fetchFn=this.options.fetchFn??fetch;
+    const body=new URLSearchParams({client_id:credentials.clientId,client_secret:credentials.clientSecret,refresh_token:credentials.refreshToken,grant_type:'refresh_token'});
+    const response=await fetchFn('https://oauth2.googleapis.com/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body});
+    if(!response.ok)throw new Error(`Google Drive OAuth refresh failed ${response.status}: ${(await response.text()).slice(0,500)}`);
+    const json=await response.json() as {access_token:string;expires_in:number};
+    this.driveToken={value:json.access_token,expiresAt:Date.now()+Number(json.expires_in??3600)*1000};
+    return this.driveToken.value;
+  }
   private async request(url:string,init:RequestInit={}){
     const fetchFn=this.options.fetchFn??fetch;
-    const token=await this.options.getAccessToken();
+    const token=await this.accessToken();
     const response=await fetchFn(url,{...init,headers:{authorization:`Bearer ${token}`,...(init.headers??{})}});
     if(!response.ok)throw new Error(`Google Drive ${init.method??'GET'} failed ${response.status}: ${(await response.text()).slice(0,700)}`);
     return response;
@@ -24,9 +53,12 @@ export class GoogleDriveLibraryProvider implements ContentLibraryProvider {
     return response.json() as Promise<{id:string;name:string}>;
   }
   async ensurePath(pathSegments:string[]){
-    const clean=[this.options.rootFolderName??'AUTO-YTB',...pathSegments].map((value)=>String(value).trim()).filter(Boolean);
-    let parentId: string|undefined;
-    const resolved:string[]=[];
+    const env=runtimeEnv();
+    const rootFolderId=String(this.options.rootFolderId??env.DRIVE_ROOT_FOLDER_ID??'').trim()||undefined;
+    const rootFolderName=String(this.options.rootFolderName??env.DRIVE_ROOT_FOLDER??'AUTO-YTB').trim()||'AUTO-YTB';
+    const clean=(rootFolderId?pathSegments:[rootFolderName,...pathSegments]).map((value)=>String(value).trim()).filter(Boolean);
+    let parentId: string|undefined=rootFolderId;
+    const resolved:string[]=rootFolderId?[rootFolderName]:[];
     for(const name of clean){
       const found=await this.findFolder(name,parentId);
       const folder=found??await this.createFolder(name,parentId);
@@ -43,7 +75,8 @@ export class GoogleDriveLibraryProvider implements ContentLibraryProvider {
     if(!location)throw new Error('Google Drive resumable upload did not return a session URL');
     const copy=new Uint8Array(input.data.byteLength);
     copy.set(input.data);
-    const response=await fetch(location,{method:'PUT',headers:{'content-type':input.mimeType,'content-length':String(copy.byteLength)},body:copy.buffer});
+    const fetchFn=this.options.fetchFn??fetch;
+    const response=await fetchFn(location,{method:'PUT',headers:{'content-type':input.mimeType,'content-length':String(copy.byteLength)},body:copy.buffer});
     if(!response.ok)throw new Error(`Google Drive upload failed ${response.status}: ${(await response.text()).slice(0,700)}`);
     return response.json() as Promise<{id:string;webViewLink?:string;size?:string}>;
   }
