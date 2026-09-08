@@ -69,6 +69,9 @@ export class MockRenderer implements VideoRenderer {
   async render(input: { manifestUri: string; outputKey: string }) {
     return { ...mockAsset('render', `${input.manifestUri}:${input.outputKey}`, 'video/mp4', this.name), uri: `mock://render/${input.outputKey}` };
   }
+  async inspect(input: { fileUri:string; expectedWidth:number; expectedHeight:number; expectedDurationSeconds:number; requireAudio:boolean }) {
+    return {passed:true,score:100,width:input.expectedWidth,height:input.expectedHeight,durationSeconds:input.expectedDurationSeconds,hasVideo:true,hasAudio:input.requireAudio,blackSeconds:0,longestBlackSeconds:0,silenceSeconds:0,longestSilenceSeconds:0,issues:[],metrics:{mock:true}};
+  }
 }
 
 export class MockPublisher implements Publisher {
