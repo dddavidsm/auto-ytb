@@ -3,6 +3,7 @@ export * from './script.js';
 export * from './packaging.js';
 export * from './scenes.js';
 export * from './source-visuals.js';
+export * from './alignment.js';
 export * from './cost.js';
 export * from './experiments.js';
 export * from './structural-experiments.js';
