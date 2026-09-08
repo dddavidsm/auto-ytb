@@ -1,4 +1,4 @@
-import type { BinaryAsset } from '@auto-ytb/providers';
+import type { BinaryAsset, VoiceAsset } from '@auto-ytb/providers';
 
 export type ScriptBeat = {
   id: string;
@@ -80,7 +80,7 @@ export type ProductionManifest = {
   };
   scenes: Scene[];
   assets: AssetRecord[];
-  voice?: BinaryAsset & { durationSeconds?: number };
+  voice?: VoiceAsset;
   estimatedCostUsd: number;
   actualCostUsd: number;
   containsSyntheticMedia: boolean;
