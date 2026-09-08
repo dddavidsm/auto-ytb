@@ -16,7 +16,8 @@ COPY db ./db
 COPY docs ./docs
 
 RUN npm install --no-audit --no-fund \
-  && npm run build
+  && npm run build \
+  && npm run web:build
 
 ENV NODE_ENV=production
 ENTRYPOINT ["/usr/bin/tini","--"]
