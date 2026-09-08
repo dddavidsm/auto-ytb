@@ -1,53 +1,42 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { runContentPipeline } from '@auto-ytb/orchestrator';
-import { MockImageProvider, MockObjectStore, MockPublisher, MockRenderer, MockSearchProvider, MockTextModel, MockThumbnailComposer, MockVideoProvider, MockVoiceProvider } from '@auto-ytb/providers';
+import { MockImageProvider, MockObjectStore, MockPublisher, MockRenderer, MockSearchProvider, MockTextModel, MockThumbnailComposer, MockVideoProvider } from '@auto-ytb/providers';
 
-const source = { id: 'official-1', title: 'Official technical report', url: 'https://example.com/report', snippet: 'The system increased adoption and changed browser workflows.', publishedAt: '2026-09-01T00:00:00Z', sourceType: 'official' as const };
-const search = new MockSearchProvider({
-  'AI browser agents': [source],
-  'AI browser agents analysis': [{ ...source, id: 'news-1', url: 'https://news.example.com/analysis', title: 'Independent analysis', sourceType: 'news' as const }],
-  'AI browser agents official': [{ ...source, id: 'primary-1', url: 'https://vendor.example.com/launch', title: 'Product launch documentation', sourceType: 'primary' as const }],
-  'AI browser agents criticism': [{ ...source, id: 'crit-1', url: 'https://research.example.com/risks', title: 'Researcher criticism', sourceType: 'reference' as const }],
+const source={id:'official-1',title:'Official technical report',url:'https://example.com/report',snippet:'Browser agents are moving into real workflows and changing the role of the browser.',publishedAt:'2026-09-01T00:00:00Z',sourceType:'official' as const};
+const search=new MockSearchProvider({
+  'AI browser agents':[source],
+  'AI browser agents analysis':[{...source,id:'news-1',url:'https://news.example.com/analysis',title:'Independent analysis',sourceType:'news' as const}],
+  'AI browser agents official':[{...source,id:'primary-1',url:'https://vendor.example.com/launch',title:'Product launch documentation',sourceType:'primary' as const}],
+  'AI browser agents criticism':[{...source,id:'crit-1',url:'https://research.example.com/risks',title:'Researcher criticism',sourceType:'reference' as const}],
 });
-
-const model = new MockTextModel((schema) => {
-  if (schema === 'research_dossier') return {
-    executiveSummary: 'AI browser agents are moving from demos into real workflows, creating a race around distribution, trust and control of the browser.',
-    claims: [
-      { id: 'c1', text: 'Browser agents are being integrated into real product workflows.', importance: 'critical', sourceIds: ['primary-1','official-1'], confidence: 92, disputed: false },
-      { id: 'c2', text: 'The competitive advantage may shift toward distribution and trust.', importance: 'supporting', sourceIds: ['news-1','crit-1'], confidence: 76, disputed: false }
-    ],
-    timeline: [{ date: '2026-09-01', event: 'New browser-agent capabilities documented', sourceIds: ['primary-1'] }],
-    angles: [
-      { id: 'a1', title: 'The Race to Replace the Browser', thesis: 'AI agents are turning the browser from a destination into an execution layer.', viewerPromise: 'Understand the business and technology shift before it becomes obvious.', hook: 'The browser may be disappearing without actually going away.', novelty: 90, emotionalPull: 82, retentionPotential: 94, monetizationFit: 88, evidenceFit: 91, productionFit: 86, risk: 12 },
-      { id: 'a2', title: 'Why Browser Agents Could Fail', thesis: 'Trust and reliability may stop agents before capability does.', viewerPromise: 'See the hidden constraint behind the hype.', hook: 'The biggest problem is not intelligence.', novelty: 85, emotionalPull: 80, retentionPotential: 90, monetizationFit: 84, evidenceFit: 78, productionFit: 90, risk: 16 }
-    ]
-  };
-  if (schema === 'video_script') return {
-    title: 'The Race to Replace the Browser', language: 'en', targetDurationSec: 600, thesis: 'AI agents are turning the browser into an execution layer.',
-    beats: [
-      { id:'b1', startSec:0, targetDurationSec:35, purpose:'hook', narration:'For thirty years, the browser has been where the internet happens. AI agents are trying to make it disappear without closing a single tab.', visualIntent:'Fast conceptual reconstruction of a browser turning into an autonomous agent interface', sourceIds:['primary-1'], retentionDevice:'open_loop' },
-      { id:'b2', startSec:35, targetDurationSec:100, purpose:'setup', narration:'The shift starts with a simple change: instead of navigating pages yourself, software can increasingly execute the workflow for you.', visualIntent:'Product UI screenshots and motion graphic explaining the workflow', sourceIds:['official-1','primary-1'], retentionDevice:'contrast' },
-      { id:'b3', startSec:135, targetDurationSec:150, purpose:'evidence', narration:'That changes where value sits. Distribution, permission and user trust become as important as the model itself.', visualIntent:'Charts and browser market diagram', sourceIds:['news-1','crit-1'], retentionDevice:'question' },
-      { id:'b4', startSec:285, targetDurationSec:150, purpose:'escalation', narration:'But autonomy creates a new failure mode: a browser that can act can also make the wrong action.', visualIntent:'Conceptual future reconstruction of an agent making a risky action', sourceIds:['crit-1'], retentionDevice:'open_loop' },
-      { id:'b5', startSec:435, targetDurationSec:130, purpose:'reveal', narration:'The winning company may not be the one with the smartest agent. It may be the one users trust to control the interface between intention and action.', visualIntent:'Competitive landscape motion graphic', sourceIds:['news-1','crit-1'], retentionDevice:'reveal' },
-      { id:'b6', startSec:565, targetDurationSec:35, purpose:'payoff', narration:'The browser is not dying. It is becoming infrastructure, and that may be an even bigger change.', visualIntent:'Clean visual callback to opening browser image', sourceIds:['primary-1'], retentionDevice:'reveal' }
-    ], outro:'Subscribe for documentary explainers on the technologies changing how the internet works.'
-  };
-  if (schema === 'packaging_variants') return [
-    { id:'p1', title:'The Race to Replace Your Browser', thumbnailConcept:'A browser window being swallowed by a single AI cursor', thumbnailText:'THE BROWSER IS CHANGING', promise:'Why AI agents could remake the browser', curiosity:92, clarity:90, credibility:88, differentiation:87 },
-    { id:'p2', title:'Why Every AI Company Wants Your Browser', thumbnailConcept:'Major AI logos reaching toward a browser frame', thumbnailText:'THE NEW BATTLEFIELD', promise:'The business battle around browser agents', curiosity:89, clarity:94, credibility:90, differentiation:82 },
-    { id:'p3', title:'The Browser Might Become Invisible', thumbnailConcept:'Empty desktop with an agent command box replacing browser chrome', promise:'How agents could turn browsers into invisible infrastructure', curiosity:95, clarity:82, credibility:84, differentiation:94 }
+const beats=[
+  ['b1',0,18,'hook','The browser may be disappearing without closing a single tab. AI agents are turning it from the place you visit into the system that acts for you, and that changes who controls the internet interface.','A browser transforms into an autonomous execution layer','primary-1','open_loop'],
+  ['b2',18,32,'setup','For three decades the browser won because people navigated pages themselves. The new model starts with a different assumption: software can increasingly execute the workflow on your behalf.','Before-and-after workflow diagram','official-1','contrast'],
+  ['b3',50,32,'evidence','Product documentation now shows agents moving beyond demos into real browser tasks. That shift matters because navigation, permission and execution begin to merge.','Source-backed product evidence with execution flow','primary-1','question'],
+  ['b4',82,32,'escalation','Once the browser can act, distribution becomes more valuable. The company that owns the entry point can decide which agent receives the user intent first.','Competitive distribution map escalating toward the browser','news-1','open_loop'],
+  ['b5',114,32,'evidence','That creates a second battle around permissions. An agent needs access to accounts, sessions and actions that a normal search box never needed.','Permission layers and trust boundaries chart','crit-1','contrast'],
+  ['b6',146,32,'escalation','More capability therefore creates more responsibility. A wrong answer is inconvenient; a wrong autonomous action can spend money, send a message or change an account.','Concrete consequence ladder from answer to action','crit-1','open_loop'],
+  ['b7',178,32,'reveal','This is the hidden constraint in the race: the winner may not be the company with the smartest model. It may be the company users trust with the most consequential permissions.','Reveal trust as the hidden competitive layer','crit-1','reveal'],
+  ['b8',210,32,'evidence','That also explains why browser distribution matters so much. Trust is easier to extend from an interface people already use than to rebuild from zero.','Distribution versus trust evidence diagram','news-1','question'],
+  ['b9',242,32,'escalation','If that logic holds, the browser stops being a destination and becomes infrastructure. The visible interface can shrink while its strategic value grows.','Browser chrome recedes while infrastructure expands','official-1','contrast'],
+  ['b10',274,32,'reveal','The apparent paradox now makes sense: AI agents can make the browser less visible and more important at the same time.','Resolve the paradox with interface versus infrastructure split','primary-1','reveal'],
+  ['b11',306,30,'payoff','The race is not really to replace the browser. It is to control the layer between human intention and digital action, with enough trust that users allow the software to act.','Final payoff showing intention flowing through trusted browser layer to action','primary-1','reveal'],
+  ['b12',336,24,'cta','That is the shift worth watching: not whether browsers vanish, but who earns the right to act through them.','Clean callback to the opening browser transformation','primary-1','contrast'],
+] as const;
+const model=new MockTextModel((schema)=>{
+  if(schema==='research_dossier')return{executiveSummary:'AI browser agents are moving from demos into real workflows, creating a race around distribution, trust and control of the browser.',claims:[{id:'c1',text:'Browser agents are being integrated into real product workflows.',importance:'critical',sourceIds:['primary-1','official-1'],confidence:92,disputed:false},{id:'c2',text:'The competitive advantage may shift toward distribution and trust.',importance:'supporting',sourceIds:['news-1','crit-1'],confidence:76,disputed:false}],timeline:[{date:'2026-09-01',event:'New browser-agent capabilities documented',sourceIds:['primary-1']}],angles:[{id:'a1',title:'The Race to Replace the Browser',thesis:'AI agents are turning the browser from a destination into an execution layer.',viewerPromise:'Understand why AI agents could make browsers less visible but more strategically important.',hook:'The browser may be disappearing without actually going away.',novelty:90,emotionalPull:82,retentionPotential:94,monetizationFit:88,evidenceFit:91,productionFit:86,risk:12}]};
+  if(schema==='video_script')return{title:'The Race to Replace Your Browser',language:'en',targetDurationSec:360,thesis:'AI agents can make the browser less visible while making its trusted execution layer more strategically important.',beats:beats.map(([id,startSec,targetDurationSec,purpose,narration,visualIntent,sourceId,retentionDevice])=>({id,startSec,targetDurationSec,purpose,narration,visualIntent,sourceIds:[sourceId],retentionDevice})),outro:'The browser is not simply disappearing. It is becoming the trusted execution layer.'};
+  if(schema==='packaging_variants')return[
+    {id:'p1',title:'The Race to Replace Your Browser',thumbnailConcept:'A familiar browser window collapsing into one autonomous AI action layer',thumbnailText:'THE BROWSER IS CHANGING',promise:'Why AI agents could make the browser less visible but more strategically important',curiosity:92,clarity:94,credibility:90,differentiation:90},
+    {id:'p2',title:'Why AI Agents Want to Control Your Browser',thumbnailConcept:'An AI agent taking control of the browser execution layer',thumbnailText:'WHO CONTROLS IT?',promise:'Why control, permissions and trust are becoming the real browser-agent battleground',curiosity:91,clarity:92,credibility:90,differentiation:88},
+    {id:'p3',title:'The Browser Is Becoming Invisible Infrastructure',thumbnailConcept:'Browser chrome fading while a powerful execution network appears underneath',thumbnailText:'MORE IMPORTANT, LESS VISIBLE',promise:'How agents can make browsers less visible while increasing their strategic value',curiosity:90,clarity:88,credibility:91,differentiation:94}
   ];
   throw new Error(`Unknown mock schema ${schema}`);
 });
+const voiceProvider={name:'mock-timestamped-voice',async synthesize(input:{text:string;voice:string;language:string}){return{id:'voice-mock',uri:'mock://voice/final.wav',mimeType:'audio/wav',provider:'mock-timestamped-voice',language:input.language,voiceId:input.voice,durationSeconds:360,costUsd:0,alignment:{characters:['A','.'],characterStartTimesSeconds:[0,359.5],characterEndTimesSeconds:[0.2,360]}};}};
 
-const result = await runContentPipeline({
-  projectId: `mock-${Date.now()}`,
-  topic: 'AI browser agents', language: 'en', targetDurationSec: 600, voice: 'narrator-01', maxCostUsd: 25,
-  search, model, voiceProvider: new MockVoiceProvider(), imageProvider: new MockImageProvider(), videoProvider: new MockVideoProvider(), thumbnailComposer: new MockThumbnailComposer(),
-  store: new MockObjectStore(), renderer: new MockRenderer(), publisher: new MockPublisher(), autoUploadPrivate: true,
-});
-await mkdir(`${process.cwd()}/.data`, { recursive: true });
-await writeFile(`${process.cwd()}/.data/pipeline-mock-latest.json`, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
-console.log(JSON.stringify({ state: result.state, qa: result.qa?.score, externalId: result.externalId, estimatedCost: result.manifest?.estimatedCostUsd, thumbnails: result.manifest?.thumbnails.length, events: result.events }, null, 2));
+const result=await runContentPipeline({projectId:`mock-${Date.now()}`,topic:'AI browser agents',language:'en',targetDurationSec:360,targetSceneDurationSec:14,voice:'narrator-01',maxCostUsd:25,search,model,voiceProvider,imageProvider:new MockImageProvider(),videoProvider:new MockVideoProvider(),thumbnailComposer:new MockThumbnailComposer(),store:new MockObjectStore(),renderer:new MockRenderer(),publisher:new MockPublisher(),autoUploadPrivate:true});
+if(result.state!=='READY_FOR_REVIEW'||!result.qa?.passed||!result.finalInspection?.passed)throw new Error(`Mock pipeline failed readiness: ${JSON.stringify({state:result.state,attention:result.attention,qa:result.qa,finalInspection:result.finalInspection},null,2)}`);
+await mkdir(`${process.cwd()}/.data`,{recursive:true});
+await writeFile(`${process.cwd()}/.data/pipeline-mock-latest.json`,`${JSON.stringify(result,null,2)}\n`,'utf8');
+console.log(JSON.stringify({state:result.state,qa:result.qa.score,attention:result.attention?.score,renderQa:result.finalInspection.score,externalId:result.externalId,estimatedCost:result.manifest?.estimatedCostUsd,thumbnails:result.manifest?.thumbnails.length,events:result.events},null,2));
