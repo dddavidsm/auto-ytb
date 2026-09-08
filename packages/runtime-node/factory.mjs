@@ -10,6 +10,7 @@ const reqFrom = (env,name) => {
   if (!value) throw new Error(`Missing required environment variable ${name}`);
   return value;
 };
+const numFrom=(env,name,fallback)=>{const value=Number(env[name]??fallback);return Number.isFinite(value)?value:fallback;};
 
 export function createLiveRuntime(env = process.env) {
   const store = new NodeLocalObjectStore(env.LOCAL_STORAGE_ROOT || '.data/storage');
@@ -39,7 +40,14 @@ export function createLiveRuntime(env = process.env) {
     video = meterVideoProvider(runway,meter,{model:videoModel});
   }
 
-  const renderer = withFinalMediaInspection(new FfmpegRenderer({ outputRoot: env.LOCAL_RENDER_ROOT || '.data/renders' }),{ffmpeg:env.FFMPEG_BIN||'ffmpeg',ffprobe:env.FFPROBE_BIN||'ffprobe'});
+  const rawRenderer=new FfmpegRenderer({
+    outputRoot: env.LOCAL_RENDER_ROOT || '.data/renders',
+    ffmpeg:env.FFMPEG_BIN||'ffmpeg',
+    targetLufs:numFrom(env,'AUDIO_TARGET_LUFS',-16),
+    truePeakDb:numFrom(env,'AUDIO_TRUE_PEAK_DB',-1.5),
+    loudnessRange:numFrom(env,'AUDIO_LOUDNESS_RANGE',7),
+  });
+  const renderer = withFinalMediaInspection(rawRenderer,{ffmpeg:env.FFMPEG_BIN||'ffmpeg',ffprobe:env.FFPROBE_BIN||'ffprobe'});
   const thumbnailComposer = new FfmpegThumbnailComposer({ outputRoot: env.LOCAL_THUMBNAIL_ROOT || '.data/thumbnails' });
   const oauth = new GoogleOAuthTokenProvider({ clientId:reqFrom(env,'YOUTUBE_CLIENT_ID'), clientSecret:reqFrom(env,'YOUTUBE_CLIENT_SECRET'), refreshToken:reqFrom(env,'YOUTUBE_REFRESH_TOKEN') });
   const loader = new NodeUploadAssetLoader();
