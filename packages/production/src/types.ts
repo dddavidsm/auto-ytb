@@ -85,6 +85,50 @@ export type ContentExecutionPlan = {
   requiredCapabilities: { search: boolean; voice: boolean; image: boolean; video: boolean };
 };
 
+export type CaptionPlan = {
+  version: 1;
+  mode: ContentExecutionPlan['captionMode'];
+  enabled: boolean;
+  burnIn: boolean;
+  preset: 'NONE' | 'SOCIAL_CONTEXT' | 'EDITORIAL_CLEAN' | 'DIALOGUE_SPEAKER' | 'BOLD_SHORTS';
+  source: 'VOICE_ALIGNMENT' | 'SCRIPT_DIALOGUE' | 'ON_SCREEN_CONTEXT' | 'NONE';
+  maxChars: number;
+  maxDurationSeconds: number;
+  maxLines: 1 | 2;
+  position: 'BOTTOM' | 'LOWER_MIDDLE' | 'MIDDLE';
+  safeBottomPercent: number;
+  fontScale: number;
+  speakerAware: boolean;
+  highlightKeywords: boolean;
+  uppercase: boolean;
+};
+
+export type EditPlan = {
+  version: 1;
+  preset: 'MOBILE_NATURAL' | 'KIDS_STORY' | 'DOCUMENTARY' | 'SOCIAL_FAST' | 'COMEDY_TIMING' | 'CINEMATIC_STORY';
+  transitionMode: 'HARD_CUT' | 'SOFT_FADE' | 'MOTIVATED';
+  transitionDurationSeconds: number;
+  filmLook: boolean;
+  filmGrain: number;
+  punchInAnchors: boolean;
+  punchInScale: number;
+  mobileImperfections: boolean;
+  reactionTiming: boolean;
+  maxCutsPerMinute: number;
+  minSceneSeconds: number;
+  preserveAudioTiming: boolean;
+};
+
+export type RenderExecutionEvidence = {
+  captionsBurned: boolean;
+  captionCueCount: number;
+  captionPreset?: string;
+  editPreset?: string;
+  transitionsApplied: number;
+  punchInsApplied: number;
+  filmLookApplied: boolean;
+};
+
 export type ContentArchetypeSnapshot = {
   version: number;
   id: string;
@@ -144,6 +188,9 @@ export type ProductionManifest = {
   frame: { width: number; height: number };
   contentArchetype?: ContentArchetypeSnapshot;
   executionPlan?: ContentExecutionPlan;
+  captionPlan?: CaptionPlan;
+  editPlan?: EditPlan;
+  renderExecution?: RenderExecutionEvidence;
   script: VideoScript;
   packaging: PackagingVariant[];
   thumbnails: ThumbnailAsset[];
