@@ -63,6 +63,41 @@ export type Scene = {
 export type AssetRecord = BinaryAsset & { sceneId: string; generated: boolean; sourceIds: string[]; metadata?: Record<string, unknown> };
 export type ProductionContentFormat = 'LONG_HORIZONTAL' | 'SHORT_VERTICAL';
 
+export type ContentExecutionPlan = {
+  archetypeId: string;
+  researchMode: 'FACTUAL_RESEARCH' | 'CREATIVE_ORIGINAL';
+  researchRequired: boolean;
+  factClaimMode: 'VERIFY_CLAIMS' | 'DISTINGUISH_FACT_FROM_LEGEND' | 'CREATIVE_ORIGINAL';
+  scriptMode: 'NARRATION' | 'DIALOGUE' | 'HYBRID' | 'VISUAL_ACTION';
+  voiceMode: string;
+  voiceRequired: boolean;
+  allowIntegratedNarrator: boolean;
+  requiresCanonicalCast: boolean;
+  audioMode: 'NARRATION_LED' | 'DIALOGUE_LED' | 'HYBRID' | 'NATURAL_SOUND';
+  captionMode: 'FULL_SPEECH' | 'SPEAKER_AWARE' | 'CONTEXT_ONLY';
+  visualMode: 'EVIDENCE_FIRST' | 'HYBRID' | 'GENERATIVE_FIRST' | 'CHARACTER_CONTINUITY';
+  realityMode: string;
+  cameraProfile: string;
+  syntheticDisclosurePolicy: string;
+  preferredFormats: ProductionContentFormat[];
+  targetSceneDurationSec?: number;
+  generativeSpendBias: number;
+  requiredCapabilities: { search: boolean; voice: boolean; image: boolean; video: boolean };
+};
+
+export type ContentArchetypeSnapshot = {
+  version: number;
+  id: string;
+  label: string;
+  confidence: number;
+  reasons: string[];
+  voiceMode: string;
+  realityMode: string;
+  cameraProfile: string;
+  syntheticDisclosurePolicy: string;
+  profile: Record<string, unknown>;
+};
+
 export type AudioRightsStatus = 'CLEARED' | 'VERIFY' | 'BLOCKED';
 export type AudioLibraryAsset = {
   id: string;
@@ -106,6 +141,8 @@ export type ProductionManifest = {
   contentFormat: ProductionContentFormat;
   aspectRatio: '16:9' | '9:16';
   frame: { width: number; height: number };
+  contentArchetype?: ContentArchetypeSnapshot;
+  executionPlan?: ContentExecutionPlan;
   script: VideoScript;
   packaging: PackagingVariant[];
   thumbnails: ThumbnailAsset[];

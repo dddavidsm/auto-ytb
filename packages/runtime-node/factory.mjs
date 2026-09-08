@@ -67,25 +67,35 @@ export function createLiveRuntime(env = process.env) {
   const archetypeProfile=explicitArchetype??inferredArchetype?.profile??null;
   const archetypeDecision=explicitArchetype?{archetype:explicitArchetype.id,confidence:100,reasons:['Explicit runtime archetype profile'],profile:explicitArchetype}:inferredArchetype;
   const brandContext=mergeBrandAndSeries(parseBrandContinuityContext(env.AUTO_YTB_BRAND_CONTEXT),seriesContext);
-  const searchProvider = (env.SEARCH_PROVIDER || 'tavily').toLowerCase();
-  if (searchProvider !== 'tavily') throw new Error(`Unsupported SEARCH_PROVIDER: ${searchProvider}`);
-  const rawSearch = new TavilySearchProvider({ apiKey: reqFrom(env,'SEARCH_API_KEY') });
-  const search = meterSearchProvider(rawSearch,meter);
+
+  let search;
+  const researchRequired=archetypeProfile?.researchRequired!==false;
+  if(researchRequired||String(env.SEARCH_API_KEY??'').trim()){
+    const searchProvider = (env.SEARCH_PROVIDER || 'tavily').toLowerCase();
+    if (searchProvider !== 'tavily') throw new Error(`Unsupported SEARCH_PROVIDER: ${searchProvider}`);
+    const searchKey=researchRequired?reqFrom(env,'SEARCH_API_KEY'):String(env.SEARCH_API_KEY??'').trim();
+    if(searchKey){const rawSearch = new TavilySearchProvider({ apiKey: searchKey });search = meterSearchProvider(rawSearch,meter);}
+  }
 
   const modelName = env.TEXT_MODEL_RESEARCH || 'gpt-5';
   const rawModel = new OpenAIResponsesTextModel({ apiKey: reqFrom(env,'TEXT_MODEL_API_KEY'), model: modelName, endpoint: env.TEXT_MODEL_BASE_URL || undefined });
   const measuredModel = meterTextModel(rawModel,meter);
   const seriesModel = bindTextModelToSeries(measuredModel,seriesContext);
   const model = bindTextModelToContentArchetype(seriesModel,archetypeProfile);
+  if(archetypeDecision&&model&&typeof model==='object')model.contentArchetypeDecision=archetypeDecision;
 
-  const voiceProvider = (env.VOICE_PROVIDER || 'elevenlabs').toLowerCase();
-  if (voiceProvider !== 'elevenlabs') throw new Error(`Unsupported VOICE_PROVIDER: ${voiceProvider}`);
-  const voiceModel=env.VOICE_MODEL || 'eleven_multilingual_v2';
-  const voiceApiKey=reqFrom(env,'VOICE_API_KEY');
-  const rawVoice = new ElevenLabsVoiceProvider({ apiKey:voiceApiKey, store, modelId:voiceModel, useTimestamps:env.VOICE_TIMESTAMPS!=='false' });
-  const controlledVoice=withElevenLabsVoiceControls(rawVoice,{apiKey:voiceApiKey,store,modelId:voiceModel});
-  const meteredVoice=meterVoiceProvider(controlledVoice,meter,{model:voiceModel});
-  const voice=bindDialogueVoiceProviderToSeries(meteredVoice,seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
+  let voice;
+  const voiceMode=String(archetypeProfile?.voiceMode??'SINGLE_NARRATOR');
+  if(voiceMode!=='NONE'){
+    const voiceProvider = (env.VOICE_PROVIDER || 'elevenlabs').toLowerCase();
+    if (voiceProvider !== 'elevenlabs') throw new Error(`Unsupported VOICE_PROVIDER: ${voiceProvider}`);
+    const voiceModel=env.VOICE_MODEL || 'eleven_multilingual_v2';
+    const voiceApiKey=reqFrom(env,'VOICE_API_KEY');
+    const rawVoice = new ElevenLabsVoiceProvider({ apiKey:voiceApiKey, store, modelId:voiceModel, useTimestamps:env.VOICE_TIMESTAMPS!=='false' });
+    const controlledVoice=withElevenLabsVoiceControls(rawVoice,{apiKey:voiceApiKey,store,modelId:voiceModel});
+    const meteredVoice=meterVoiceProvider(controlledVoice,meter,{model:voiceModel});
+    voice=bindDialogueVoiceProviderToSeries(meteredVoice,seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
+  }
 
   let image;
   let video;

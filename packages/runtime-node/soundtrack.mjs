@@ -43,13 +43,15 @@ export function withLicensedSoundtrack(renderer,options={}){
       const catalog=await loadCatalog(catalogPath);
       const requireZeroMarginalCost=options.requireZeroMarginalCost!==false;
       const safeCatalog=requireZeroMarginalCost?catalog.filter((asset)=>number(asset.costUsd,0)<=0):catalog;
-      const plan=selectLicensedSoundtrack({script:manifest.script,contentFormat:manifest.contentFormat,catalog:safeCatalog,maxAudioCostUsd:number(options.maxAudioCostUsd,1.5),enableMusic:options.enableMusic!==false,enableSfx:options.enableSfx!==false});
+      const naturalSoundMode=manifest.executionPlan?.audioMode==='NATURAL_SOUND';
+      const plan=selectLicensedSoundtrack({script:manifest.script,contentFormat:manifest.contentFormat,catalog:safeCatalog,maxAudioCostUsd:number(options.maxAudioCostUsd,1.5),enableMusic:options.enableMusic!==false&&!naturalSoundMode,enableSfx:options.enableSfx!==false&&!naturalSoundMode});
+      if(naturalSoundMode)plan.selectionNotes.push('NATURAL_SOUND archetype: generic music/SFX bed suppressed; dedicated ambience/location-sound planning is handled separately.');
       if(!plan.rightsReady)throw new Error('Soundtrack plan contains audio without CLEARED rights');
       manifest.soundtrack=plan;manifest.music=plan.music;manifest.sfx=plan.sfx;
       await writeFile(manifestPath,JSON.stringify(manifest,null,2),'utf8');
       const rendered=await renderer.render(input);
       const finalUri=await mixTimedSfx({ffmpeg,renderUri:rendered.uri,sfx:plan.sfx});
-      return {...rendered,uri:finalUri,costUsd:number(rendered.costUsd,0)+plan.estimatedCostUsd,metadata:{...(rendered.metadata??{}),soundtrack:{rightsReady:plan.rightsReady,music:plan.music?.assetId??null,sfx:plan.sfx.map((cue)=>({assetId:cue.assetId,startSec:cue.startSec})),estimatedCostUsd:plan.estimatedCostUsd,selectionNotes:plan.selectionNotes},sfxMixed:plan.sfx.length>0}};
+      return {...rendered,uri:finalUri,costUsd:number(rendered.costUsd,0)+plan.estimatedCostUsd,metadata:{...(rendered.metadata??{}),soundtrack:{rightsReady:plan.rightsReady,music:plan.music?.assetId??null,sfx:plan.sfx.map((cue)=>({assetId:cue.assetId,startSec:cue.startSec})),estimatedCostUsd:plan.estimatedCostUsd,selectionNotes:plan.selectionNotes,audioMode:manifest.executionPlan?.audioMode??null},sfxMixed:plan.sfx.length>0}};
     },
   };
 }
