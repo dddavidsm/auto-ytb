@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { withLicensedSoundtrack } from '../packages/runtime-node/soundtrack.mjs';
+
+const root=await mkdtemp(join(tmpdir(),'auto-ytb-soundtrack-'));
+const manifestPath=join(root,'manifest.json'),catalogPath=join(root,'catalog.json');
+const manifest={projectId:'soundtrack-test',contentFormat:'LONG_HORIZONTAL',script:{title:'T',language:'en',targetDurationSec:60,thesis:'x',beats:[{id:'b1',startSec:0,targetDurationSec:20,purpose:'hook',narration:'A surprising system change.',visualIntent:'x',sourceIds:[],retentionDevice:'open_loop'},{id:'b2',startSec:20,targetDurationSec:20,purpose:'evidence',narration:'Evidence explains the change.',visualIntent:'x',sourceIds:[]},{id:'b3',startSec:40,targetDurationSec:20,purpose:'payoff',narration:'The cause becomes clear.',visualIntent:'x',sourceIds:[],retentionDevice:'reveal'}],outro:'done'}};
+await writeFile(manifestPath,JSON.stringify(manifest));
+await writeFile(catalogPath,JSON.stringify({assets:[{id:'licensed-bed',kind:'music',uri:'file:///licensed/bed.wav',license:'subscription-cleared',rightsStatus:'CLEARED',moods:['documentary','tension'],tags:['background'],formats:['LONG_HORIZONTAL'],costUsd:0,defaultGain:0.14},{id:'verify-bed',kind:'music',uri:'file:///unknown.wav',license:'unknown',rightsStatus:'VERIFY',moods:['documentary','tension'],tags:['background'],costUsd:0}]}));
+let seenManifest=null;
+const inner={name:'fixture-renderer',async render(input){seenManifest=JSON.parse(await readFile(new URL(input.manifestUri),'utf8'));return{id:'r',uri:`file://${join(root,'final.mp4')}`,mimeType:'video/mp4',provider:'fixture',metadata:{inner:true}};}};
+const wrapped=withLicensedSoundtrack(inner,{catalogPath,enableSfx:false,requireZeroMarginalCost:true});
+const result=await wrapped.render({manifestUri:`file://${manifestPath}`,outputKey:'x.mp4'});
+assert.equal(seenManifest.music.assetId,'licensed-bed');
+assert.equal(seenManifest.music.rightsStatus,'CLEARED');
+assert.equal(seenManifest.soundtrack.rightsReady,true);
+assert.equal(seenManifest.soundtrack.estimatedCostUsd,0);
+assert.equal(result.metadata.soundtrack.music,'licensed-bed');
+assert.equal(result.metadata.sfxMixed,false);
+const persisted=JSON.parse(await readFile(manifestPath,'utf8'));assert.equal(persisted.music.assetId,'licensed-bed');
+const untouched=withLicensedSoundtrack(inner,{catalogPath:''});assert.equal(untouched,inner);
+console.log('✓ renderer injects only CLEARED soundtrack assets into the canonical manifest');
+console.log('✓ soundtrack selection remains auditable in render metadata');
+console.log('✓ empty audio-library configuration preserves voice-only rendering');
