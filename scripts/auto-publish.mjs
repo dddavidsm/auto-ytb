@@ -16,6 +16,8 @@ try{
   const row=(await db.query(`select p.id as publication_id,p.youtube_video_id,p.state,q.score::float as qa_score,q.blockers,q.report,r.research_confidence::float as research_confidence,pr.total_cost_usd::float as total_cost_usd,pr.state as production_state,pr.metadata as production_metadata from production_runs pr left join publications p on p.production_run_id=pr.id left join lateral (select score,blockers,report from qa_reports where production_run_id=pr.id order by created_at desc limit 1) q on true left join content_ideas ci on ci.id=pr.content_idea_id left join lateral (select research_confidence from research_dossiers rd where rd.opportunity_id=ci.opportunity_id order by rd.created_at desc limit 1) r on true where pr.id=$1`,[productionRunId])).rows[0];
   if(!row)throw new Error(`Production run ${productionRunId} not found`);
   const rights=await db.query(`select id from production_assets where production_run_id=$1 and provider='source-backed-direct' and (license is null or license='verify-before-public')`,[productionRunId]);
+  const seriesEpisode=(await db.query(`select se.id,se.episode_key,se.continuity_status,se.memory_compiled_at,s.series_key,s.title as series_title from series_episodes se join series s on s.id=se.series_id where se.production_run_id=$1 limit 1`,[productionRunId])).rows[0]??null;
+  const seriesContinuity=seriesEpisode?{required:true,passed:seriesEpisode.continuity_status==='passed'&&Boolean(seriesEpisode.memory_compiled_at),episodeId:seriesEpisode.id,episodeKey:seriesEpisode.episode_key,seriesKey:seriesEpisode.series_key,seriesTitle:seriesEpisode.series_title,status:seriesEpisode.continuity_status,memoryCompiledAt:seriesEpisode.memory_compiled_at??null}:{required:false,passed:true};
   const manifestPath=resolve(process.env.LOCAL_STORAGE_ROOT||'.data/storage','projects',productionRunId,'manifest.json');
   let manifest=null,manifestReadError=null;
   try{manifest=JSON.parse(await readFile(manifestPath,'utf8'));}catch(error){manifestReadError=error instanceof Error?error.message:String(error);}
@@ -45,6 +47,7 @@ try{
     autoPublishDelayMinutes:Number(publishing.autoPublishDelayMinutes??30),
   };
   const releaseBlockers=releaseSafety.passed?[]:releaseSafety.issues.map((issue)=>`release-safety: ${issue}`);
+  if(seriesContinuity.required&&!seriesContinuity.passed)releaseBlockers.push(`series-continuity: ${seriesContinuity.seriesKey}/${seriesContinuity.episodeKey} memory is ${seriesContinuity.status} and must be compiled/passed before public scheduling`);
   const context={
     qaScore:Number(row.qa_score??0),researchConfidence:Number(row.research_confidence??0),qaBlockers:[...(row.blockers??[]),...releaseBlockers],
     attentionScore:finite(attention?.score,0),attentionReady:attention?.ready===true,
@@ -53,7 +56,7 @@ try{
     unresolvedRights,policyWarnings,youtubeVideoId:row.youtube_video_id,
   };
   const decision=decideAutonomousPublication(policy,context);
-  const gateSnapshot={...context,maximumAutoPublishCostUsd,minimumAttentionScore,minimumFinalMediaScore,minimumQaScore:policy.minimumQaScoreForAutoPublish,minimumResearchConfidence:policy.minimumResearchConfidenceForAutoPublish,releaseSafety};
+  const gateSnapshot={...context,maximumAutoPublishCostUsd,minimumAttentionScore,minimumFinalMediaScore,minimumQaScore:policy.minimumQaScoreForAutoPublish,minimumResearchConfidence:policy.minimumResearchConfidenceForAutoPublish,releaseSafety,seriesContinuity};
 
   if(decision.action==='SCHEDULE'&&row.publication_id&&decision.publishAt){
     const jobKey=`schedule-publication:${row.publication_id}:${decision.publishAt}`;
