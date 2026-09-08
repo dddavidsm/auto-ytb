@@ -27,6 +27,23 @@ function formatSignals(row){
 function formatRisks(row){const risks=row.risks??{};return {madeForKidsRisk:clamp(risks.madeForKidsRisk??0),copyrightRisk:clamp(risks.copyrightRisk??0),policyRisk:clamp(risks.policyRisk??0),lowEffortRisk:clamp(risks.lowEffortRisk??risks.inauthenticRisk??0)};}
 function chooseConcreteFormat(rec){if(rec.primary==='LONG_HORIZONTAL'||rec.primary==='SHORT_VERTICAL')return rec.primary;return rec.scores.LONG_HORIZONTAL>=rec.scores.SHORT_VERTICAL?'LONG_HORIZONTAL':'SHORT_VERTICAL';}
 function titleCase(value){return String(value).split(/[-_\s]+/).filter(Boolean).slice(0,4).map((word)=>word.charAt(0).toUpperCase()+word.slice(1)).join(' ');}
+function buildBrandContext(binding){
+  const identity=binding.row.identity??binding.config.identity??{};
+  const assets=binding.row.brand_assets??{};
+  const characterMode=String(identity.characterMode??binding.config.identity?.characterMode??'none');
+  const characterName=identity.characterName??binding.config.identity?.characterName??null;
+  const required=characterMode!=='none'&&Boolean(characterName);
+  const referenceUris=required?[assets.characterReference].filter(Boolean).map(String):[];
+  const visualRules=identity.visualRules??binding.config.identity?.visualRules??[];
+  const rulesText=Array.isArray(visualRules)?visualRules.join('; '):String(visualRules??'');
+  const styleTags=Array.isArray(binding.config.styleTags)?binding.config.styleTags.map(String):[];
+  const styleGuidance=[
+    styleTags.length?`Keep the channel visual language consistent with: ${styleTags.join(', ')}.`:'',
+    rulesText?`Channel visual rules: ${rulesText}.`:'',
+    required?`The persistent character ${characterName} must remain visually identical to the canonical reference in every appearance.`:'',
+  ].filter(Boolean).join(' ');
+  return {required,channelKey:String(binding.config.channelKey),characterMode,characterName,continuityKey:identity.continuityKey??null,referenceUris,styleTags,styleGuidance,styleGuideUri:assets.styleGuide??null,brandVersion:identity.brandVersion??null};
+}
 
 async function persistNewChannelCandidate(item,fingerprint,route){
   if(!discoverNewChannels||Number(item.row.score)<newChannelMinScore)return null;
@@ -76,10 +93,16 @@ try{
     if(!binding)continue;
     await db.query(`insert into content_routing_decisions (opportunity_id,channel_id,channel_key,route_score,route_mode,style_fingerprint,rationale) values ($1,$2,$3,$4,'EXISTING_CHANNEL',$5::jsonb,$6::jsonb)`,[row.id,route.channelId,route.channelKey,route.routeScore,JSON.stringify(fingerprint),JSON.stringify(route.rationale)]);
     if(binding.row.lifecycle_state!=='ready'||binding.row.automation_enabled===false)continue;
+    const brandContext=buildBrandContext(binding);
+    if(brandContext.required&&!brandContext.referenceUris.length){
+      const brandJobKey=`bootstrap-channel-brand:${binding.row.id}`;
+      await db.query(`insert into jobs (job_key,kind,channel_id,state,priority,max_attempts,payload) values ($1,'bootstrap_channel_brand',$2,'queued',88,$3,$4::jsonb) on conflict (job_key) do nothing`,[brandJobKey,binding.row.id,maxAttempts,JSON.stringify({channelId:binding.row.id,channelKey:binding.config.channelKey,reason:'Missing canonical character reference required for production'})]);
+      continue;
+    }
     const learning=learningByChannelTopicFormat.get(`${route.channelId}:${row.topic_id}:${contentFormat}`);
     const config=binding.config;
     const reserve=Math.min(Number(config.maxProductionCostUsd??defaultLongReserve),contentFormat==='SHORT_VERTICAL'?defaultShortReserve:defaultLongReserve);
-    routed.push({row,recommendation,contentFormat,fingerprint,route,binding,reserve,learningBoost:learning?calculateLearningBoost(learning):0});
+    routed.push({row,recommendation,contentFormat,fingerprint,route,binding,brandContext,reserve,learningBoost:learning?calculateLearningBoost(learning):0});
   }
 
   const ranked=rankProductionCandidates(routed.map((item)=>({id:item.row.id,score:Number(item.row.score),detectedAt:new Date(item.row.detected_at).toISOString(),expiresAt:item.row.expires_at?new Date(item.row.expires_at).toISOString():null,riskPenalty:Number(item.row.risks?.totalPenalty??item.row.risks?.riskPenalty??0),expectedCostUsd:item.reserve,learningBoost:item.learningBoost})));
@@ -87,7 +110,7 @@ try{
   for(const candidate of ranked){
     if(portfolioSlots<=0||portfolioBudgetLeft<=0)break;
     const item=routed.find((entry)=>entry.row.id===candidate.id); if(!item)continue;
-    const {config,binding}=item.binding; const channelKey=String(config.channelKey);
+    const {config}=item.binding; const channelKey=String(config.channelKey);
     const channelDailyBudget=Math.max(0,Number(config.portfolio?.maximumDailyBudgetUsd??portfolioDailyBudget));
     const channelMaxVideos=Math.max(0,Math.floor(Number(config.portfolio?.maximumVideosPerDay??defaultMaxPerChannel)));
     await db.query(`insert into daily_budget_ledger (channel_key,spend_date) values ($1,$2::date) on conflict (channel_key,spend_date) do nothing`,[channelKey,budgetDate]);
@@ -97,7 +120,7 @@ try{
     if(channelSlots<=0||item.reserve>channelBudgetLeft||item.reserve>portfolioBudgetLeft)continue;
     const topic=item.row.canonical_name||item.row.angle; if(!topic)continue;
     const priority=Math.max(0,Math.min(100,Math.round(candidate.productionPriority)));
-    const payload={topic,angle:item.row.angle,channelId:item.route.channelId,channelKey,channelConfigPath:config.__path,credentialsRef:config.credentialsRef??'PRIMARY',budgetDate,score:Number(item.row.score),productionPriority:candidate.productionPriority,learningBoost:candidate.learningBoost,reservedCostUsd:item.reserve,contentFormat:item.contentFormat,formatRecommendation:item.recommendation,derivativeStrategy:item.recommendation.derivativeStrategy,styleFingerprint:item.fingerprint};
+    const payload={topic,angle:item.row.angle,channelId:item.route.channelId,channelKey,channelConfigPath:config.__path,credentialsRef:config.credentialsRef??'PRIMARY',budgetDate,score:Number(item.row.score),productionPriority:candidate.productionPriority,learningBoost:candidate.learningBoost,reservedCostUsd:item.reserve,contentFormat:item.contentFormat,formatRecommendation:item.recommendation,derivativeStrategy:item.recommendation.derivativeStrategy,styleFingerprint:item.fingerprint,brandContext:item.brandContext};
     const key=`produce-opportunity:${candidate.id}:${channelKey}:${item.contentFormat}`;
     const insert=await db.query(`insert into jobs (job_key,kind,channel_id,opportunity_id,state,priority,max_attempts,payload) values ($1,'produce_opportunity',$2,$3,'queued',$4,$5,$6::jsonb) on conflict (job_key) do nothing returning id`,[key,item.route.channelId,candidate.id,priority,maxAttempts,JSON.stringify(payload)]);
     if(!insert.rows[0])continue;
@@ -105,7 +128,7 @@ try{
     await db.query(`update channels set last_routed_at=now() where id=$1`,[item.route.channelId]);
     await db.query(`update daily_budget_ledger set reserved_usd=reserved_usd+$3,jobs_scheduled=jobs_scheduled+1,updated_at=now() where channel_key=$1 and spend_date=$2::date`,[channelKey,budgetDate,item.reserve]);
     await db.query(`insert into job_events (job_id,event_type,detail) values ($1,'scheduled',$2::jsonb)`,[insert.rows[0].id,JSON.stringify(payload)]);
-    scheduled.push({jobId:insert.rows[0].id,opportunityId:candidate.id,channelKey,topic,contentFormat:item.contentFormat,routeScore:item.route.routeScore,priority,score:candidate.score,learningBoost:candidate.learningBoost,reservedCostUsd:item.reserve});
+    scheduled.push({jobId:insert.rows[0].id,opportunityId:candidate.id,channelKey,topic,contentFormat:item.contentFormat,routeScore:item.route.routeScore,priority,score:candidate.score,learningBoost:candidate.learningBoost,reservedCostUsd:item.reserve,brandContinuityRequired:item.brandContext.required});
     portfolioSlots-=1; portfolioBudgetLeft-=item.reserve;
   }
   console.log(JSON.stringify({scheduled:scheduled.length,newChannelCandidates:newChannelCandidates.length,budgetDate,minScore,portfolioDailyBudget,portfolioBudgetLeft,portfolioSlots,jobs:scheduled,channelCandidates:newChannelCandidates},null,2));
