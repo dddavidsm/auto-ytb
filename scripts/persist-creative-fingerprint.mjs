@@ -23,8 +23,8 @@ try{
     where pr.id=$1 limit 1`,[productionRunId])).rows[0];
   if(!row?.script)throw new Error(`No persisted script for production run ${productionRunId}`);
   const packaging=(await db.query(`select variant_key as id,title,thumbnail_concept as "thumbnailConcept",payload from packaging_variants where content_idea_id=(select content_idea_id from production_runs where id=$1) order by variant_key`,[productionRunId])).rows.map((item)=>({...item.payload,id:item.id,title:item.title,thumbnailConcept:item.thumbnailConcept}));
-  const executionPlan=row.metadata?.executionPlan??row.publication_metadata?.executionPlan??null;
-  const contentArchetype=row.metadata?.contentArchetype??row.publication_metadata?.contentArchetype??null;
+  const executionPlan=row.metadata?.executionPlan??row.publication_metadata?.executionPlan??row.qa_report?.executionPlan??null;
+  const contentArchetype=row.metadata?.contentArchetype??row.publication_metadata?.contentArchetype??row.qa_report?.contentArchetype??null;
   const targetSceneDurationSec=Number(executionPlan?.targetSceneDurationSec??row.metadata?.productionProfile?.targetSceneDurationSec??10);
   const planned=planScenes(row.script,{targetSceneDurationSec,visualMode:executionPlan?.visualMode,generativeSpendBias:executionPlan?.generativeSpendBias,realityMode:executionPlan?.realityMode,cameraProfile:executionPlan?.cameraProfile});
   const assets=(await db.query(`select scene_id,generated,metadata from production_assets where production_run_id=$1 and scene_id is not null and scene_id not like 'thumbnail:%'`,[productionRunId])).rows;

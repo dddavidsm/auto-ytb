@@ -131,7 +131,7 @@ function replaceCheck(report:QaReport,id:string,status:'PASS'|'WARN'|'FAIL',scor
 }
 
 export function reconcileQaForExecutionPlan(base:QaReport, manifest:ProductionManifest, plan:ContentExecutionPlan):QaReport{
-  const report:QaReport={...base,checks:base.checks.map((check)=>({...check})),blockers:[...base.blockers]};
+  const report:QaReport&{contentArchetype?:ProductionManifest['contentArchetype'];executionPlan?:ProductionManifest['executionPlan']}={...base,checks:base.checks.map((check)=>({...check})),blockers:[...base.blockers]};
   if(!plan.researchRequired){
     replaceCheck(report,'factual','PASS',100,`Factual research intentionally skipped for ${plan.archetypeId}; creative-original safety rules apply instead.`);
   }
@@ -162,6 +162,8 @@ export function reconcileQaForExecutionPlan(base:QaReport, manifest:ProductionMa
       ?`Voice contract mismatch: ${plan.voiceMode} requires voice=${plan.voiceRequired} but manifest voice presence is ${Boolean(manifest.voice)}.`
       :`${plan.archetypeId} executed as ${plan.scriptMode}/${plan.voiceMode}/${plan.visualMode}; format ${manifest.contentFormat}${formatPreferred?' is preferred':' is supported but not preferred'}.`,
   );
+  report.contentArchetype=manifest.contentArchetype;
+  report.executionPlan=manifest.executionPlan;
   report.blockers=report.checks.filter((check)=>check.status==='FAIL').map((check)=>check.id);
   report.passed=report.blockers.length===0;
   report.score=Math.round(report.checks.reduce((sum,check)=>sum+check.score,0)/Math.max(1,report.checks.length));

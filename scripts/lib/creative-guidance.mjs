@@ -1,5 +1,8 @@
+import { inferContentArchetype } from '@auto-ytb/os';
+
 const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
 const num=(value,fallback=0)=>{const n=Number(value);return Number.isFinite(n)?n:fallback;};
+const cliArg=(name)=>process.argv.find((value)=>value.startsWith(`--${name}=`))?.slice(name.length+3)??'';
 
 function evidenceScore(row){
   const avp=num(row.average_video_avp);
@@ -13,9 +16,17 @@ function evidenceScore(row){
 }
 function usable(row){return num(row.sample_size)>=3&&num(row.confidence)>=0.32&&num(row.weighted_views)>=300;}
 function midpoint(bucket){const map={'<5s':4,'5-8s':6.5,'8-12s':10,'12-18s':15,'18s+':20,'<4':15,'4-7':10,'7-11':7,'11-18':4.5,'18+':3};return map[bucket]??null;}
+function parseJson(value){try{return JSON.parse(String(value??''));}catch{return null;}}
 
+function currentRuntimeArchetype(explicit){
+  const requested=String(explicit??'').trim();if(requested)return requested;
+  const profile=parseJson(process.env.AUTO_YTB_CONTENT_ARCHETYPE_PROFILE);if(profile?.id)return String(profile.id);
+  const topic=String(process.env.AUTO_YTB_CONTENT_TOPIC||cliArg('topic')||'').trim();if(!topic)return null;
+  const seriesContext=parseJson(process.env.AUTO_YTB_SERIES_CONTEXT)??undefined;
+  try{return inferContentArchetype({topic,contentFormat:String(process.env.AUTO_YTB_CONTENT_FORMAT||cliArg('format')||''),channelNiche:String(process.env.AUTO_YTB_CHANNEL_NICHE||''),seriesContext}).archetype;}catch{return null;}
+}
 function selectScope(rows,contentArchetype){
-  const archetype=String(contentArchetype??'').trim();
+  const archetype=currentRuntimeArchetype(contentArchetype);
   if(!archetype)return{rows:rows.filter((row)=>!String(row.feature_name??'').startsWith('archetype:')),scope:'GENERIC',contentArchetype:null};
   const prefix=`archetype:${archetype}:`;
   const scoped=rows.filter((row)=>String(row.feature_name??'').startsWith(prefix));
