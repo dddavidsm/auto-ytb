@@ -33,9 +33,10 @@ const schema={type:'object',additionalProperties:false,required:['overallScore',
   overallScore:{type:'integer',minimum:0,maximum:100},characterVisible:{type:'boolean'},characterIdentityScore:{type:'integer',minimum:0,maximum:100},styleScore:{type:'integer',minimum:0,maximum:100},paletteScore:{type:'integer',minimum:0,maximum:100},compositionScore:{type:'integer',minimum:0,maximum:100},confidence:{type:'integer',minimum:0,maximum:100},
   issues:{type:'array',items:{type:'object',additionalProperties:false,required:['code','severity','message'],properties:{code:{type:'string'},severity:{type:'string',enum:['WARN','BLOCK']},message:{type:'string'}}}},observations:{type:'array',items:{type:'string'}}
 }};
-async function inspect({characterRef,styleRef,candidateUrl,characterName,characterSpec,styleSpec,sceneId}){
-  const content=[{type:'input_text',text:`You are a strict visual continuity supervisor for an original recurring YouTube series. Compare the candidate scene against canonical references. Scene composition and action may change. Do NOT penalize a candidate merely because the character is absent; set characterVisible=false. If visible, identity must preserve face, proportions, silhouette, wardrobe/signature accessories and invariant features. Style must preserve the established rendering language, shape language, palette family and visual texture without requiring identical content. Severe redesign, wrong identity, photorealism-vs-illustration drift, materially wrong signature colors/accessories, or franchise-like reinterpretation is BLOCK. Scene id: ${sceneId}. Character: ${characterName??'none'}. Character invariants: ${JSON.stringify(characterSpec??{})}. Style canon: ${JSON.stringify(styleSpec??{})}. Return calibrated scores; 100 means effectively canonical, 80 means acceptable variation, below 65 means severe drift.`}];
-  if(characterRef){content.push({type:'input_text',text:'CANONICAL CHARACTER REFERENCE:'},{type:'input_image',image_url:characterRef,detail:'low'});}
+async function inspect({characterRefs,styleRef,candidateUrl,styleSpec,sceneId}){
+  const roster=(characterRefs??[]).map((item)=>({name:item.name,key:item.key,invariants:item.specification??{}}));
+  const content=[{type:'input_text',text:`You are a strict visual continuity supervisor for an original recurring YouTube series. Compare the candidate scene against the exact canonical references selected for this scene. Scene composition and action may change. If a listed character is visible, identity must preserve face, proportions, silhouette, wardrobe/signature accessories and invariant features. Multiple listed characters must remain distinct; identity blending or swapping is BLOCK. Do NOT penalize a candidate because a listed character is genuinely absent from the frame; set characterVisible according to what is visible and focus identity scoring on visible listed characters. Style must preserve the established rendering language, shape language, palette family and visual texture without requiring identical content. Severe redesign, wrong identity, photorealism-vs-illustration drift, materially wrong signature colors/accessories, or franchise-like reinterpretation is BLOCK. Scene id: ${sceneId}. Expected cast anchors: ${JSON.stringify(roster)}. Style canon: ${JSON.stringify(styleSpec??{})}. Return calibrated scores; 100 means effectively canonical, 80 means acceptable variation, below 65 means severe drift.`}];
+  for(const ref of characterRefs??[]){content.push({type:'input_text',text:`CANONICAL CHARACTER REFERENCE — ${ref.name}:`},{type:'input_image',image_url:ref.imageUrl,detail:'low'});}
   if(styleRef){content.push({type:'input_text',text:'CANONICAL STYLE REFERENCE:'},{type:'input_image',image_url:styleRef,detail:'low'});}
   content.push({type:'input_text',text:'CANDIDATE SCENE / FRAME:'},{type:'input_image',image_url:candidateUrl,detail:'low'});
   const response=await fetch(endpoint,{method:'POST',headers:{authorization:`Bearer ${apiKey}`,'content-type':'application/json'},body:JSON.stringify({model,store:false,input:[{role:'user',content}],text:{format:{type:'json_schema',name:'series_visual_continuity',strict:true,schema}}})});
@@ -51,6 +52,15 @@ async function persistQuality(row,status,score,report){
     else await tx.query(`update series_episodes set continuity_snapshot=continuity_snapshot||$2::jsonb,updated_at=now() where id=$1`,[row.episode_id,JSON.stringify(patch)]);
   });
 }
+function assetProof(asset){return asset?.metadata?.brandContinuity&&typeof asset.metadata.brandContinuity==='object'?asset.metadata.brandContinuity:{};}
+function selectedForAsset(asset,characters,styles){
+  const proof=assetProof(asset),keys=Array.isArray(proof.referenceKeys)?proof.referenceKeys.map(String):[],names=Array.isArray(proof.characterNames)?proof.characterNames.map(String):[];
+  let selectedCharacters=characters.filter((item)=>keys.includes(String(item.character_key))||names.includes(String(item.name)));
+  if(!selectedCharacters.length&&characters.length===1)selectedCharacters=characters;
+  if(!selectedCharacters.length&&characters.length>1&&!keys.length&&!names.length)throw new Error(`Asset ${asset.scene_id??asset.id} is missing cast-aware continuity proof for a multi-character series`);
+  let selectedStyle=styles.find((item)=>keys.includes(String(item.style_key)))??styles[0]??null;
+  return{proof,selectedCharacters,selectedStyle};
+}
 
 try{
   if(!enabled){console.log(JSON.stringify({enabled:false,processed:0}));process.exitCode=0;}
@@ -64,36 +74,43 @@ try{
     for(const row of episodes){
       const work=await mkdtemp(join(tmpdir(),`auto-ytb-visual-${row.episode_id}-`));
       try{
-        const [characters,styles,assets]=await Promise.all([
-          db.query(`select name,specification,canonical_reference_uri from series_characters where series_id=$1 and status='active' order by created_at limit 1`,[row.series_id]),
-          db.query(`select name,specification,canonical_reference_uri from series_styles where series_id=$1 and status='active' order by created_at limit 1`,[row.series_id]),
+        const [charactersResult,stylesResult,assets]=await Promise.all([
+          db.query(`select character_key,name,specification,canonical_reference_uri from series_characters where series_id=$1 and status='active' order by created_at`,[row.series_id]),
+          db.query(`select style_key,name,specification,canonical_reference_uri from series_styles where series_id=$1 and status='active' order by created_at`,[row.series_id]),
           db.query(`select id,scene_id,uri,asset_type,metadata from production_assets where production_run_id=$1 and generated=true and uri is not null and coalesce(scene_id,'') not like 'thumbnail:%' order by created_at asc limit $2`,[row.production_run_id,maxAssets]),
         ]);
-        const character=characters.rows[0]??null,style=styles.rows[0]??null;
-        if(character&&!character.canonical_reference_uri)throw new Error(`Persistent character ${character.name} has no canonical visual reference`);
+        const characters=charactersResult.rows,styles=stylesResult.rows;
+        const missingCharacterRefs=characters.filter((item)=>!item.canonical_reference_uri);
+        if(missingCharacterRefs.length)throw new Error(`Persistent characters missing canonical references: ${missingCharacterRefs.map((item)=>item.name).join(', ')}`);
         if(!assets.rows.length){
-          if(character)throw new Error(`Episode ${row.episode_key} has a persistent character but no generated visual assets to inspect`);
-          const report={passed:true,status:'passed',score:100,notApplicable:true,issues:[],inspections:[],model:null,usage:{inputTokens:0,outputTokens:0,costUsd:0},referenceSummary:{character:null,style:style?.name??null},reason:'No persistent character and no generated visual assets; source/procedural visuals are governed by deterministic provenance/render gates instead.'};
+          if(characters.length)throw new Error(`Episode ${row.episode_key} has persistent characters but no generated visual assets to inspect`);
+          const report={passed:true,status:'passed',score:100,notApplicable:true,issues:[],inspections:[],model:null,usage:{inputTokens:0,outputTokens:0,costUsd:0},referenceSummary:{characters:[],styles:styles.map((item)=>item.name)},reason:'No persistent character and no generated visual assets; source/procedural visuals are governed by deterministic provenance/render gates instead.'};
           await persistQuality(row,'passed',100,report);
           results.push({episodeId:row.episode_id,episodeKey:row.episode_key,status:'passed',score:100,inspected:0,costUsd:0,notApplicable:true});
           continue;
         }
-        if(!character&&!style)throw new Error(`Series ${row.series_title} has generated visuals but no canonical visual references`);
-        if(style&&!style.canonical_reference_uri)throw new Error(`Series style ${style.name} has no canonical visual reference`);
-        const characterRef=character?.canonical_reference_uri?await imageDataUrl(character.canonical_reference_uri,work,'character-ref'):null;
-        const styleRef=style?.canonical_reference_uri?await imageDataUrl(style.canonical_reference_uri,work,'style-ref'):null;
+        if(!characters.length&&!styles.length)throw new Error(`Series ${row.series_title} has generated visuals but no canonical visual references`);
+        const missingStyleRefs=styles.filter((item)=>!item.canonical_reference_uri);
+        if(missingStyleRefs.length)throw new Error(`Series styles missing canonical references: ${missingStyleRefs.map((item)=>item.name).join(', ')}`);
+        const refCache=new Map();
+        const refUrl=async(uri,key)=>{if(!uri)return null;if(!refCache.has(uri))refCache.set(uri,await imageDataUrl(uri,work,key));return refCache.get(uri);};
         const inspections=[];let totalInput=0,totalOutput=0,totalCost=0;
         for(let index=0;index<assets.rows.length;index+=1){
           const asset=assets.rows[index],candidateUrl=await imageDataUrl(asset.uri,work,`candidate-${index}`);
-          const inspected=await inspect({characterRef,styleRef,candidateUrl,characterName:character?.name,characterSpec:character?.specification,styleSpec:style?.specification,sceneId:asset.scene_id??String(asset.id)});
+          const {selectedCharacters,selectedStyle,proof}=selectedForAsset(asset,characters,styles);
+          const characterRefs=[];
+          for(let charIndex=0;charIndex<selectedCharacters.length;charIndex+=1){const character=selectedCharacters[charIndex];characterRefs.push({key:character.character_key,name:character.name,specification:character.specification,imageUrl:await refUrl(character.canonical_reference_uri,`character-${character.character_key}-${charIndex}`)});}
+          const styleRef=selectedStyle?.canonical_reference_uri?await refUrl(selectedStyle.canonical_reference_uri,`style-${selectedStyle.style_key}`):null;
+          if(!characterRefs.length&&!styleRef)throw new Error(`Asset ${asset.scene_id??asset.id} has no resolvable canonical references`);
+          const inspected=await inspect({characterRefs,styleRef,candidateUrl,styleSpec:selectedStyle?.specification,sceneId:asset.scene_id??String(asset.id)});
           const inputTokens=Number(inspected.usage.input_tokens??0),outputTokens=Number(inspected.usage.output_tokens??0),cost=inputTokens/1_000_000*inputRate+outputTokens/1_000_000*outputRate;
           totalInput+=inputTokens;totalOutput+=outputTokens;totalCost+=cost;
-          inspections.push({sceneId:asset.scene_id??String(asset.id),assetId:asset.id,...inspected.value});
+          inspections.push({sceneId:asset.scene_id??String(asset.id),assetId:asset.id,referenceKeys:Array.isArray(proof.referenceKeys)?proof.referenceKeys:[],expectedCharacterNames:characterRefs.map((item)=>item.name),expectedStyle:selectedStyle?.name??null,...inspected.value});
           await db.query(`insert into provider_cost_events (production_run_id,channel_id,event_key,stage,provider,model,operation,input_units,output_units,unit_name,cost_usd,estimated,pricing_source,metadata)
-            values ($1,$2,$3,'llm','openai',$4,'series_visual_continuity',$5,$6,'tokens',$7,true,'env-config',$8::jsonb) on conflict (production_run_id,event_key) do nothing`,[row.production_run_id,row.channel_id,`series-visual:${row.episode_id}:${asset.id}`,model,inputTokens,outputTokens,Math.round(cost*1e6)/1e6,JSON.stringify({episodeId:row.episode_id,sceneId:asset.scene_id,detail:'low'})]);
+            values ($1,$2,$3,'llm','openai',$4,'series_visual_continuity',$5,$6,'tokens',$7,true,'env-config',$8::jsonb) on conflict (production_run_id,event_key) do nothing`,[row.production_run_id,row.channel_id,`series-visual:${row.episode_id}:${asset.id}`,model,inputTokens,outputTokens,Math.round(cost*1e6)/1e6,JSON.stringify({episodeId:row.episode_id,sceneId:asset.scene_id,detail:'low',referenceKeys:Array.isArray(proof.referenceKeys)?proof.referenceKeys:[],characterNames:characterRefs.map((item)=>item.name),styleKey:selectedStyle?.style_key??null})]);
         }
         const decision=decideVisualContinuity(inspections,{minOverall:Number(process.env.SERIES_VISUAL_MIN_OVERALL||80),minCharacter:Number(process.env.SERIES_VISUAL_MIN_CHARACTER||84),minStyle:Number(process.env.SERIES_VISUAL_MIN_STYLE||78)});
-        const report={...decision,inspections,model,usage:{inputTokens:totalInput,outputTokens:totalOutput,costUsd:Math.round(totalCost*1e6)/1e6},referenceSummary:{character:character?.name??null,style:style?.name??null}};
+        const report={...decision,inspections,model,usage:{inputTokens:totalInput,outputTokens:totalOutput,costUsd:Math.round(totalCost*1e6)/1e6},referenceSummary:{characters:characters.map((item)=>item.name),styles:styles.map((item)=>item.name),sceneSpecific:true}};
         await persistQuality(row,decision.status,decision.score,report);
         results.push({episodeId:row.episode_id,episodeKey:row.episode_key,status:decision.status,score:decision.score,inspected:inspections.length,costUsd:Math.round(totalCost*1e6)/1e6});
       }catch(error){
