@@ -7,6 +7,12 @@ function normalizeVisualReferences(value){
     return{kind:kind==='character'||kind==='style'?kind:'generic',key:String(item.key??'').trim(),name:String(item.name??'').trim(),role:item.role==null?null:String(item.role),continuityKey:String(item.continuityKey??'').trim(),uri};
   }).filter(Boolean);
 }
+function normalizeVoiceCast(value){
+  return (Array.isArray(value)?value:[]).map((item)=>{
+    if(!item||typeof item!=='object')return null;
+    return{key:String(item.key??'').trim(),name:String(item.name??'').trim(),role:item.role==null?null:String(item.role),continuityKey:String(item.continuityKey??'').trim(),voiceProfile:item.voiceProfile&&typeof item.voiceProfile==='object'?item.voiceProfile:{}};
+  }).filter((item)=>item.key||item.name);
+}
 function normalize(value){
   if(!value)return null;
   if(typeof value==='string'){try{return normalize(JSON.parse(value));}catch{return null;}}
@@ -16,6 +22,7 @@ function normalize(value){
     audienceMode:String(value.audienceMode??'GENERAL'),targetAgeMin:value.targetAgeMin==null?null:Number(value.targetAgeMin),targetAgeMax:value.targetAgeMax==null?null:Number(value.targetAgeMax),
     seasonNumber:Number(value.seasonNumber??1),episodeNumber:Number(value.episodeNumber??1),episodeKey:String(value.episodeKey??''),
     referenceUris:Array.isArray(value.referenceUris)?value.referenceUris.map(String).filter(Boolean):[],visualReferences:normalizeVisualReferences(value.visualReferences),canonicalMemory:Array.isArray(value.canonicalMemory)?value.canonicalMemory:[],
+    voiceCast:normalizeVoiceCast(value.voiceCast),primaryVoiceKey:value.primaryVoiceKey==null?null:String(value.primaryVoiceKey),
     scriptGuidance:String(value.scriptGuidance??''),visualGuidance:String(value.visualGuidance??''),qaGuidance:String(value.qaGuidance??''),
     characterContinuityKeys:Array.isArray(value.characterContinuityKeys)?value.characterContinuityKeys.map(String):[],styleContinuityKeys:Array.isArray(value.styleContinuityKeys)?value.styleContinuityKeys.map(String):[],
   };
