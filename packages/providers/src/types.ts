@@ -44,9 +44,16 @@ export type BinaryAsset = {
   costUsd?: number;
 };
 
+export type VoiceAlignment = {
+  characters: string[];
+  characterStartTimesSeconds: number[];
+  characterEndTimesSeconds: number[];
+};
+export type VoiceAsset = BinaryAsset & { durationSeconds?: number; alignment?: VoiceAlignment; language?: string; voiceId?: string };
+
 export interface VoiceProvider {
   readonly name: string;
-  synthesize(input: { text: string; voice: string; language: string }): Promise<BinaryAsset & { durationSeconds?: number }>;
+  synthesize(input: { text: string; voice: string; language: string }): Promise<VoiceAsset>;
 }
 
 export interface ImageProvider {
