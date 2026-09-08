@@ -3,6 +3,7 @@ import { FfmpegThumbnailComposer } from './thumbnail.mjs';
 import { ProviderUsageMeter, meterSearchProvider, meterTextModel, meterVoiceProvider, meterImageProvider, meterVideoProvider } from './metering.mjs';
 import { withFinalMediaInspection } from './media-inspector.mjs';
 import { bindMediaProviderToBrand, parseBrandContinuityContext } from './brand-continuity.mjs';
+import { withLicensedSoundtrack } from './soundtrack.mjs';
 import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
 
@@ -49,7 +50,15 @@ export function createLiveRuntime(env = process.env) {
     truePeakDb:numFrom(env,'AUDIO_TRUE_PEAK_DB',-1.5),
     loudnessRange:numFrom(env,'AUDIO_LOUDNESS_RANGE',7),
   });
-  const renderer = withFinalMediaInspection(rawRenderer,{ffmpeg:env.FFMPEG_BIN||'ffmpeg',ffprobe:env.FFPROBE_BIN||'ffprobe'});
+  const soundtrackRenderer=withLicensedSoundtrack(rawRenderer,{
+    ffmpeg:env.FFMPEG_BIN||'ffmpeg',
+    catalogPath:env.AUDIO_LIBRARY_MANIFEST||'',
+    maxAudioCostUsd:numFrom(env,'AUDIO_MAX_COST_USD_PER_VIDEO',1.5),
+    enableMusic:env.AUDIO_MUSIC_ENABLED!=='false',
+    enableSfx:env.AUDIO_SFX_ENABLED!=='false',
+    requireZeroMarginalCost:env.AUDIO_REQUIRE_ZERO_MARGINAL_COST!=='false',
+  });
+  const renderer = withFinalMediaInspection(soundtrackRenderer,{ffmpeg:env.FFMPEG_BIN||'ffmpeg',ffprobe:env.FFPROBE_BIN||'ffprobe'});
   const thumbnailComposer = new FfmpegThumbnailComposer({ outputRoot: env.LOCAL_THUMBNAIL_ROOT || '.data/thumbnails' });
   const oauth = new GoogleOAuthTokenProvider({ clientId:reqFrom(env,'YOUTUBE_CLIENT_ID'), clientSecret:reqFrom(env,'YOUTUBE_CLIENT_SECRET'), refreshToken:reqFrom(env,'YOUTUBE_REFRESH_TOKEN') });
   const loader = new NodeUploadAssetLoader();
