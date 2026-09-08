@@ -1,5 +1,5 @@
 import type { ResearchDossier, StoryAngle } from '@auto-ytb/editorial';
-import type { ContentExecutionPlan, ProductionContentFormat, ProductionManifest } from '@auto-ytb/production';
+import { buildCreativeRecipe, type ContentExecutionPlan, type ProductionContentFormat, type ProductionManifest } from '@auto-ytb/production';
 import type { QaReport } from '@auto-ytb/qa';
 
 export type ContentArchetypeRuntimeProfile = {
@@ -94,74 +94,34 @@ export function buildArchetypeExecutionPlan(decision: ContentArchetypeRuntimeDec
 export function buildCreativeDossier(topic:string, decision:ContentArchetypeRuntimeDecision|undefined):ResearchDossier{
   const archetype=String(decision?.archetype??decision?.profile?.id??'CREATIVE_ORIGINAL');
   const angle:StoryAngle={
-    id:'creative-original',
-    title:topic,
-    thesis:`Create an original ${archetype} production around ${topic}.`,
-    viewerPromise:topic,
-    hook:`Open on the most immediately understandable action, problem, surprise or curiosity in ${topic}.`,
-    novelty:88,
-    emotionalPull:82,
-    retentionPotential:86,
-    monetizationFit:70,
-    evidenceFit:100,
-    productionFit:88,
-    risk:10,
-    score:86,
+    id:'creative-original',title:topic,thesis:`Create an original ${archetype} production around ${topic}.`,viewerPromise:topic,
+    hook:`Open on the most immediately understandable action, problem, surprise or curiosity in ${topic}.`,novelty:88,emotionalPull:82,retentionPotential:86,monetizationFit:70,evidenceFit:100,productionFit:88,risk:10,score:86,
   };
-  return{
-    topic,
-    generatedAt:new Date().toISOString(),
-    executiveSummary:`Original ${archetype} production. Factual research was intentionally skipped because the selected Content Archetype is creative-original; invented elements must not be presented as real-world evidence.`,
-    sources:[],
-    claims:[],
-    contradictions:[],
-    timeline:[],
-    angles:[angle],
-    recommendedAngleId:angle.id,
-    researchConfidence:100,
-    blockingIssues:[],
-  };
+  return{topic,generatedAt:new Date().toISOString(),executiveSummary:`Original ${archetype} production. Factual research was intentionally skipped because the selected Content Archetype is creative-original; invented elements must not be presented as real-world evidence.`,sources:[],claims:[],contradictions:[],timeline:[],angles:[angle],recommendedAngleId:angle.id,researchConfidence:100,blockingIssues:[]};
 }
 
 function replaceCheck(report:QaReport,id:string,status:'PASS'|'WARN'|'FAIL',score:number,message:string):void{
   const index=report.checks.findIndex((check)=>check.id===id);
   const next={id,status,score,message};
-  if(index>=0)report.checks[index]=next;
-  else report.checks.push(next);
+  if(index>=0)report.checks[index]=next;else report.checks.push(next);
 }
 
 export function reconcileQaForExecutionPlan(base:QaReport, manifest:ProductionManifest, plan:ContentExecutionPlan):QaReport{
   const report:QaReport&{contentArchetype?:ProductionManifest['contentArchetype'];executionPlan?:ProductionManifest['executionPlan']}={...base,checks:base.checks.map((check)=>({...check})),blockers:[...base.blockers]};
-  if(!plan.researchRequired){
-    replaceCheck(report,'factual','PASS',100,`Factual research intentionally skipped for ${plan.archetypeId}; creative-original safety rules apply instead.`);
-  }
-  if(!plan.voiceRequired){
-    replaceCheck(report,'audio-visual-sync','PASS',100,`No synthesized narration is required for ${plan.archetypeId}; scene timing is visual-first.`);
-  }
+  const recipe=buildCreativeRecipe(plan,manifest.contentFormat);
+  manifest.captionPlan=recipe.captionPlan;
+  manifest.editPlan=recipe.editPlan;
+  if(!plan.researchRequired)replaceCheck(report,'factual','PASS',100,`Factual research intentionally skipped for ${plan.archetypeId}; creative-original safety rules apply instead.`);
+  if(!plan.voiceRequired)replaceCheck(report,'audio-visual-sync','PASS',100,`No synthesized narration is required for ${plan.archetypeId}; scene timing is visual-first.`);
   const detectedSynthetic=manifest.scenes.some((scene)=>scene.generated)||manifest.assets.some((asset)=>asset.generated);
   const disclosureMismatch=detectedSynthetic!==Boolean(manifest.containsSyntheticMedia);
-  replaceCheck(
-    report,
-    'synthetic-disclosure',
-    disclosureMismatch?'FAIL':'PASS',
-    disclosureMismatch?0:100,
-    disclosureMismatch
-      ?'Synthetic media detection and manifest disclosure flag disagree.'
-      :detectedSynthetic
-        ?`Synthetic media is explicitly carried to publication; policy ${plan.syntheticDisclosurePolicy}.`
-        :'No synthetic visual media detected by the production manifest.',
-  );
+  replaceCheck(report,'synthetic-disclosure',disclosureMismatch?'FAIL':'PASS',disclosureMismatch?0:100,disclosureMismatch?'Synthetic media detection and manifest disclosure flag disagree.':detectedSynthetic?`Synthetic media is explicitly carried to publication; policy ${plan.syntheticDisclosurePolicy}.`:'No synthetic visual media detected by the production manifest.');
   const voiceContractFail=plan.voiceRequired?!manifest.voice:Boolean(manifest.voice);
   const formatPreferred=plan.preferredFormats.includes(manifest.contentFormat);
-  replaceCheck(
-    report,
-    'archetype-contract',
-    voiceContractFail?'FAIL':formatPreferred?'PASS':'WARN',
-    voiceContractFail?0:formatPreferred?100:78,
-    voiceContractFail
-      ?`Voice contract mismatch: ${plan.voiceMode} requires voice=${plan.voiceRequired} but manifest voice presence is ${Boolean(manifest.voice)}.`
-      :`${plan.archetypeId} executed as ${plan.scriptMode}/${plan.voiceMode}/${plan.visualMode}; format ${manifest.contentFormat}${formatPreferred?' is preferred':' is supported but not preferred'}.`,
-  );
+  replaceCheck(report,'archetype-contract',voiceContractFail?'FAIL':formatPreferred?'PASS':'WARN',voiceContractFail?0:formatPreferred?100:78,voiceContractFail?`Voice contract mismatch: ${plan.voiceMode} requires voice=${plan.voiceRequired} but manifest voice presence is ${Boolean(manifest.voice)}.`:`${plan.archetypeId} executed as ${plan.scriptMode}/${plan.voiceMode}/${plan.visualMode}; format ${manifest.contentFormat}${formatPreferred?' is preferred':' is supported but not preferred'}.`);
+  replaceCheck(report,'caption-plan',recipe.captionPlan.enabled&&recipe.captionPlan.burnIn?'PASS':'WARN',recipe.captionPlan.enabled&&recipe.captionPlan.burnIn?100:80,`${recipe.captionPlan.preset} · source ${recipe.captionPlan.source} · mode ${recipe.captionPlan.mode}.`);
+  replaceCheck(report,'edit-plan',recipe.editPlan.preserveAudioTiming?'PASS':'FAIL',recipe.editPlan.preserveAudioTiming?100:0,`${recipe.editPlan.preset} · transitions ${recipe.editPlan.transitionMode} · punch-ins ${recipe.editPlan.punchInAnchors?'enabled':'disabled'} · film look ${recipe.editPlan.filmLook?'enabled':'disabled'}.`);
+  if(plan.visualMode==='GENERATIVE_FIRST')replaceCheck(report,'hybrid-visual-balance','PASS',100,`${plan.archetypeId} intentionally uses a generative-first visual grammar; generic documentary hybrid-balance limits do not apply.`);
   report.contentArchetype=manifest.contentArchetype;
   report.executionPlan=manifest.executionPlan;
   report.blockers=report.checks.filter((check)=>check.status==='FAIL').map((check)=>check.id);
