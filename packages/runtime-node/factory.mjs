@@ -14,6 +14,7 @@ const reqFrom = (env,name) => {
   return value;
 };
 const numFrom=(env,name,fallback)=>{const value=Number(env[name]??fallback);return Number.isFinite(value)?value:fallback;};
+const first=(...values)=>values.find((value)=>String(value??'').trim()!=='');
 function mergeBrandAndSeries(brand,series){
   if(!series?.required)return brand;
   const base=brand??{};
@@ -82,13 +83,14 @@ export function createLiveRuntime(env = process.env) {
     truePeakDb:numFrom(env,'AUDIO_TRUE_PEAK_DB',-1.5),
     loudnessRange:numFrom(env,'AUDIO_LOUDNESS_RANGE',7),
   });
+  const soundtrackCatalog=String(first(env.AUDIO_LIBRARY_MANIFEST,env.SOUNDTRACK_CATALOG_PATH,'')??'');
   const soundtrackRenderer=withLicensedSoundtrack(rawRenderer,{
-    catalogPath:env.SOUNDTRACK_CATALOG_PATH||'',
+    catalogPath:soundtrackCatalog,
     ffmpeg:env.FFMPEG_BIN||'ffmpeg',
-    maxAudioCostUsd:numFrom(env,'SOUNDTRACK_MAX_COST_USD',1.5),
-    enableMusic:env.SOUNDTRACK_ENABLE_MUSIC!=='false',
-    enableSfx:env.SOUNDTRACK_ENABLE_SFX!=='false',
-    requireZeroMarginalCost:env.SOUNDTRACK_REQUIRE_ZERO_MARGINAL_COST!=='false',
+    maxAudioCostUsd:Number(first(env.AUDIO_MAX_COST_USD_PER_VIDEO,env.SOUNDTRACK_MAX_COST_USD,1.5)),
+    enableMusic:String(first(env.AUDIO_MUSIC_ENABLED,env.SOUNDTRACK_ENABLE_MUSIC,'true'))!=='false',
+    enableSfx:String(first(env.AUDIO_SFX_ENABLED,env.SOUNDTRACK_ENABLE_SFX,'true'))!=='false',
+    requireZeroMarginalCost:String(first(env.AUDIO_REQUIRE_ZERO_MARGINAL_COST,env.SOUNDTRACK_REQUIRE_ZERO_MARGINAL_COST,'true'))!=='false',
   });
   const renderer = withFinalMediaInspection(soundtrackRenderer,{ffmpeg:env.FFMPEG_BIN||'ffmpeg',ffprobe:env.FFPROBE_BIN||'ffprobe'});
   const thumbnailComposer = new FfmpegThumbnailComposer({ outputRoot: env.LOCAL_THUMBNAIL_ROOT || '.data/thumbnails' });
