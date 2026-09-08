@@ -42,6 +42,15 @@ async function inspect({characterRef,styleRef,candidateUrl,characterName,charact
   if(!response.ok)throw new Error(`Visual continuity model failed ${response.status}: ${(await response.text()).slice(0,800)}`);
   const json=await response.json();return{value:JSON.parse(responseText(json)),usage:json.usage??{}};
 }
+async function persistQuality(row,status,score,report){
+  await db.transaction(async(tx)=>{
+    await tx.query(`insert into series_episode_quality_reports (series_id,episode_id,production_run_id,report_type,status,score,report,model)
+      values ($1,$2,$3,'visual_continuity',$4,$5,$6::jsonb,$7) on conflict (episode_id,report_type) do update set status=excluded.status,score=excluded.score,report=excluded.report,model=excluded.model,updated_at=now()`,[row.series_id,row.episode_id,row.production_run_id,status,score,JSON.stringify(report),model]);
+    const patch={visualContinuity:{status,score,issues:report.issues??[],notApplicable:Boolean(report.notApplicable),evaluatedAt:new Date().toISOString(),model}};
+    if(status==='blocked')await tx.query(`update series_episodes set continuity_status='blocked',continuity_snapshot=continuity_snapshot||$2::jsonb,updated_at=now() where id=$1`,[row.episode_id,JSON.stringify(patch)]);
+    else await tx.query(`update series_episodes set continuity_snapshot=continuity_snapshot||$2::jsonb,updated_at=now() where id=$1`,[row.episode_id,JSON.stringify(patch)]);
+  });
+}
 
 try{
   if(!enabled){console.log(JSON.stringify({enabled:false,processed:0}));process.exitCode=0;}
@@ -56,13 +65,21 @@ try{
       const work=await mkdtemp(join(tmpdir(),`auto-ytb-visual-${row.episode_id}-`));
       try{
         const [characters,styles,assets]=await Promise.all([
-          db.query(`select name,specification,canonical_reference_uri from series_characters where series_id=$1 and status='active' and canonical_reference_uri is not null order by created_at limit 1`,[row.series_id]),
-          db.query(`select name,specification,canonical_reference_uri from series_styles where series_id=$1 and status='active' and canonical_reference_uri is not null order by created_at limit 1`,[row.series_id]),
+          db.query(`select name,specification,canonical_reference_uri from series_characters where series_id=$1 and status='active' order by created_at limit 1`,[row.series_id]),
+          db.query(`select name,specification,canonical_reference_uri from series_styles where series_id=$1 and status='active' order by created_at limit 1`,[row.series_id]),
           db.query(`select id,scene_id,uri,asset_type,metadata from production_assets where production_run_id=$1 and generated=true and uri is not null and coalesce(scene_id,'') not like 'thumbnail:%' order by created_at asc limit $2`,[row.production_run_id,maxAssets]),
         ]);
         const character=characters.rows[0]??null,style=styles.rows[0]??null;
-        if(!character&&!style)throw new Error(`Series ${row.series_title} has no canonical visual references`);
-        if(!assets.rows.length)throw new Error(`Episode ${row.episode_key} has no generated visual assets to inspect`);
+        if(character&&!character.canonical_reference_uri)throw new Error(`Persistent character ${character.name} has no canonical visual reference`);
+        if(!assets.rows.length){
+          if(character)throw new Error(`Episode ${row.episode_key} has a persistent character but no generated visual assets to inspect`);
+          const report={passed:true,status:'passed',score:100,notApplicable:true,issues:[],inspections:[],model:null,usage:{inputTokens:0,outputTokens:0,costUsd:0},referenceSummary:{character:null,style:style?.name??null},reason:'No persistent character and no generated visual assets; source/procedural visuals are governed by deterministic provenance/render gates instead.'};
+          await persistQuality(row,'passed',100,report);
+          results.push({episodeId:row.episode_id,episodeKey:row.episode_key,status:'passed',score:100,inspected:0,costUsd:0,notApplicable:true});
+          continue;
+        }
+        if(!character&&!style)throw new Error(`Series ${row.series_title} has generated visuals but no canonical visual references`);
+        if(style&&!style.canonical_reference_uri)throw new Error(`Series style ${style.name} has no canonical visual reference`);
         const characterRef=character?.canonical_reference_uri?await imageDataUrl(character.canonical_reference_uri,work,'character-ref'):null;
         const styleRef=style?.canonical_reference_uri?await imageDataUrl(style.canonical_reference_uri,work,'style-ref'):null;
         const inspections=[];let totalInput=0,totalOutput=0,totalCost=0;
@@ -77,18 +94,12 @@ try{
         }
         const decision=decideVisualContinuity(inspections,{minOverall:Number(process.env.SERIES_VISUAL_MIN_OVERALL||80),minCharacter:Number(process.env.SERIES_VISUAL_MIN_CHARACTER||84),minStyle:Number(process.env.SERIES_VISUAL_MIN_STYLE||78)});
         const report={...decision,inspections,model,usage:{inputTokens:totalInput,outputTokens:totalOutput,costUsd:Math.round(totalCost*1e6)/1e6},referenceSummary:{character:character?.name??null,style:style?.name??null}};
-        await db.transaction(async(tx)=>{
-          await tx.query(`insert into series_episode_quality_reports (series_id,episode_id,production_run_id,report_type,status,score,report,model)
-            values ($1,$2,$3,'visual_continuity',$4,$5,$6::jsonb,$7) on conflict (episode_id,report_type) do update set status=excluded.status,score=excluded.score,report=excluded.report,model=excluded.model,updated_at=now()`,[row.series_id,row.episode_id,row.production_run_id,decision.status,decision.score,JSON.stringify(report),model]);
-          const patch={visualContinuity:{status:decision.status,score:decision.score,issues:decision.issues,evaluatedAt:new Date().toISOString(),model}};
-          if(!decision.passed)await tx.query(`update series_episodes set continuity_status='blocked',continuity_snapshot=continuity_snapshot||$2::jsonb,updated_at=now() where id=$1`,[row.episode_id,JSON.stringify(patch)]);
-          else await tx.query(`update series_episodes set continuity_snapshot=continuity_snapshot||$2::jsonb,updated_at=now() where id=$1`,[row.episode_id,JSON.stringify(patch)]);
-        });
+        await persistQuality(row,decision.status,decision.score,report);
         results.push({episodeId:row.episode_id,episodeKey:row.episode_key,status:decision.status,score:decision.score,inspected:inspections.length,costUsd:Math.round(totalCost*1e6)/1e6});
       }catch(error){
-        await db.query(`insert into series_episode_quality_reports (series_id,episode_id,production_run_id,report_type,status,score,report,model) values ($1,$2,$3,'visual_continuity','blocked',0,$4::jsonb,$5) on conflict (episode_id,report_type) do update set status='blocked',score=0,report=excluded.report,model=excluded.model,updated_at=now()`,[row.series_id,row.episode_id,row.production_run_id,JSON.stringify({error:error instanceof Error?error.message:String(error)}),model]).catch(()=>{});
-        await db.query(`update series_episodes set continuity_status='blocked',continuity_snapshot=continuity_snapshot||$2::jsonb,updated_at=now() where id=$1`,[row.episode_id,JSON.stringify({visualContinuity:{status:'blocked',score:0,error:error instanceof Error?error.message:String(error),evaluatedAt:new Date().toISOString()}})]).catch(()=>{});
-        results.push({episodeId:row.episode_id,episodeKey:row.episode_key,status:'blocked',error:error instanceof Error?error.message:String(error)});
+        const message=error instanceof Error?error.message:String(error);
+        await persistQuality(row,'blocked',0,{passed:false,status:'blocked',score:0,issues:[message],error:message,model}).catch(()=>{});
+        results.push({episodeId:row.episode_id,episodeKey:row.episode_key,status:'blocked',error:message});
       }finally{await rm(work,{recursive:true,force:true});}
     }
     console.log(JSON.stringify({enabled:true,processed:results.length,model,maxAssets,results},null,2));
