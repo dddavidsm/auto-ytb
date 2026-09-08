@@ -41,13 +41,14 @@ try{
   assert.equal(audit.speakerCount,2);
 
   calls.length=0;
-  const unknown=await bound.synthesize({text:'[Old Owl] Come closer.\n[Stranger] I found it!',voice:'channel-default',language:'en'});
-  const unknownAudit=auditSeriesVoiceContinuity(unknown,context);
-  assert.equal(unknownAudit.passed,false);
-  assert.ok(unknownAudit.issues.some((issue)=>issue.startsWith('unknown-dialogue-speaker:')));
+  await assert.rejects(
+    ()=>bound.synthesize({text:'[Old Owl] Come closer.\n[Stranger] I found it!',voice:'channel-default',language:'en'}),
+    /Unknown series dialogue speaker\(s\): Stranger/
+  );
+  assert.equal(calls.length,0);
 
   console.log('✓ dialogue tags route recurring characters to distinct canonical voices');
   console.log('✓ per-turn audio is concatenated into one aligned voice asset for scene/subtitle synchronization');
   console.log('✓ multi-speaker continuity proof passes only for canonical cast and voice IDs');
-  console.log('✓ unknown dialogue speakers fail closed before release');
+  console.log('✓ unknown dialogue speakers fail before spending TTS budget');
 } finally {await rm(work,{recursive:true,force:true});}
