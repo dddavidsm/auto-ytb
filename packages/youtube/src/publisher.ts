@@ -21,6 +21,7 @@ export class YouTubePublisher implements Publisher {
     categoryId?: string;
     language: string;
     containsSyntheticMedia: boolean;
+    selfDeclaredMadeForKids?: boolean;
   }): Promise<{ externalId: string; url?: string; status: 'private' }> {
     const token = await this.tokenProvider.getAccessToken();
     const asset = await this.loader.load(input.fileUri);
@@ -34,7 +35,7 @@ export class YouTubePublisher implements Publisher {
       },
       status: {
         privacyStatus: 'private',
-        selfDeclaredMadeForKids: false,
+        selfDeclaredMadeForKids: input.selfDeclaredMadeForKids === true,
         containsSyntheticMedia: input.containsSyntheticMedia,
       },
     };
@@ -79,10 +80,16 @@ export class YouTubePublisher implements Publisher {
     const publishAt = new Date(input.publishAt);
     if (!Number.isFinite(publishAt.getTime()) || publishAt.getTime() <= Date.now()) throw new Error('publishAt must be a valid future timestamp');
     const token = await this.tokenProvider.getAccessToken();
+    const current = await this.fetchFn(`https://www.googleapis.com/youtube/v3/videos?part=status&id=${encodeURIComponent(input.externalId)}`, { headers:{ authorization:`Bearer ${token}` } });
+    let currentStatus: { selfDeclaredMadeForKids?: boolean; containsSyntheticMedia?: boolean } = {};
+    if (current.ok) {
+      const json = await current.json() as { items?: Array<{ status?: { selfDeclaredMadeForKids?: boolean; containsSyntheticMedia?: boolean } }> };
+      currentStatus = json.items?.[0]?.status ?? {};
+    }
     const response = await this.fetchFn('https://www.googleapis.com/youtube/v3/videos?part=status', {
       method: 'PUT',
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=UTF-8' },
-      body: JSON.stringify({ id: input.externalId, status: { privacyStatus: 'private', publishAt: publishAt.toISOString() } }),
+      body: JSON.stringify({ id: input.externalId, status: { privacyStatus: 'private', publishAt: publishAt.toISOString(), ...(currentStatus.selfDeclaredMadeForKids !== undefined ? { selfDeclaredMadeForKids:currentStatus.selfDeclaredMadeForKids } : {}), ...(currentStatus.containsSyntheticMedia !== undefined ? { containsSyntheticMedia:currentStatus.containsSyntheticMedia } : {}) } }),
     });
     if (!response.ok) throw new Error(`YouTube schedule failed ${response.status}: ${(await response.text()).slice(0, 500)}`);
     return { status: 'scheduled', publishAt: publishAt.toISOString() };
