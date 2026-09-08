@@ -22,16 +22,34 @@ async function recoverStale(){const result=await db.query(`update jobs set state
 async function claim(){const result=await db.query(`with candidate as (select id from jobs where state in ('queued','retry') and not_before<=now() order by priority desc,created_at asc for update skip locked limit 1) update jobs j set state='running',attempts=j.attempts+1,locked_at=now(),locked_by=$1,updated_at=now() from candidate where j.id=candidate.id returning j.*`,[workerId]);const job=result.rows[0];if(job)await emit(job.id,'started',{workerId,attempt:job.attempts,kind:job.kind,channelId:job.channel_id,credentialsRef:job.payload?.credentialsRef,contentFormat:job.payload?.contentFormat});return job;}
 function runNode(script,args=[],envOverrides={}){return new Promise((resolve,reject)=>{const child=spawn(process.execPath,[script,...args],{cwd:process.cwd(),env:{...process.env,...envOverrides},stdio:['ignore','pipe','pipe']});let stdout='',stderr='';const append=(current,chunk)=>`${current}${chunk.toString()}`.slice(-30000);child.stdout.on('data',(chunk)=>{stdout=append(stdout,chunk);process.stdout.write(chunk);});child.stderr.on('data',(chunk)=>{stderr=append(stderr,chunk);process.stderr.write(chunk);});const timer=setTimeout(()=>{child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),10000).unref();},timeoutMinutes*60_000);child.on('error',(error)=>{clearTimeout(timer);reject(error);});child.on('exit',(code,signal)=>{clearTimeout(timer);if(code===0)resolve({stdout,stderr});else reject(new Error(`child process failed code=${code} signal=${signal??'none'} stderr=${stderr.slice(-4000)}`));});});}
 function channelEnv(payload){return projectChannelCredentials(process.env,String(payload?.credentialsRef??'PRIMARY'));}
+async function latestRunForOpportunity(opportunityId){return (await db.query(`select pr.id,coalesce(pr.total_cost_usd,0)::float as cost from production_runs pr join content_ideas ci on ci.id=pr.content_idea_id where ci.opportunity_id=$1 order by pr.created_at desc limit 1`,[opportunityId])).rows[0]??null;}
+async function persistMeter(productionRunId,session,scoped){if(!productionRunId)return;await runNode('scripts/persist-cost-events.mjs',[`--production-run-id=${productionRunId}`,`--session=${session}`],scoped);}
 
 async function execute(job){
   const payload=job.payload??{};
   if(job.kind==='produce_opportunity'){
     const topic=String(payload.topic??'').trim();if(!topic)throw new Error('produce_opportunity job missing payload.topic');
-    const contentFormat=String(payload.contentFormat??'LONG_HORIZONTAL');const channelConfig=String(payload.channelConfigPath??payload.channelConfig??process.env.CHANNEL_CONFIG??'config/channels/future-tech-business.example.json');const scoped=channelEnv(payload);
-    await runNode('scripts/live-pipeline.mjs',[`--topic=${topic}`,`--opportunity-id=${job.opportunity_id}`,`--format=${contentFormat}`,`--channel-config=${channelConfig}`],scoped);
-    const runResult=await db.query(`select pr.id,coalesce(pr.total_cost_usd,0)::float as cost from production_runs pr join content_ideas ci on ci.id=pr.content_idea_id where ci.opportunity_id=$1 order by pr.created_at desc limit 1`,[job.opportunity_id]);const productionRunId=runResult.rows[0]?.id;
-    if(productionRunId){await runNode('scripts/economics-sync.mjs',[],scoped);if(process.env.CONTENT_LIBRARY_ENABLED!=='false')await runNode('scripts/finalize-production.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`],scoped);if(process.env.AUTO_UPLOAD_PRIVATE==='true')await runNode('scripts/auto-publish.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`],scoped);}
-    return {actualCostUsd:Number(runResult.rows[0]?.cost??0),contentFormat,productionRunId};
+    const contentFormat=String(payload.contentFormat??'LONG_HORIZONTAL');
+    const channelConfig=String(payload.channelConfigPath??payload.channelConfig??process.env.CHANNEL_CONFIG??'config/channels/future-tech-business.example.json');
+    const meterSession=`${job.id}-attempt-${job.attempts}`;
+    const scoped={...channelEnv(payload),AUTO_YTB_METER_SESSION_ID:meterSession};
+    try{
+      await runNode('scripts/live-pipeline.mjs',[`--topic=${topic}`,`--opportunity-id=${job.opportunity_id}`,`--format=${contentFormat}`,`--channel-config=${channelConfig}`],scoped);
+    }catch(error){
+      const failedRun=await latestRunForOpportunity(job.opportunity_id);
+      if(failedRun?.id)await persistMeter(failedRun.id,meterSession,scoped).catch(()=>{});
+      throw error;
+    }
+    const runResult=await latestRunForOpportunity(job.opportunity_id);
+    const productionRunId=runResult?.id;
+    if(productionRunId){
+      await persistMeter(productionRunId,meterSession,scoped);
+      await runNode('scripts/economics-sync.mjs',[],scoped);
+      if(process.env.CONTENT_LIBRARY_ENABLED!=='false')await runNode('scripts/finalize-production.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`],scoped);
+      if(process.env.AUTO_UPLOAD_PRIVATE==='true')await runNode('scripts/auto-publish.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${channelConfig}`],scoped);
+    }
+    const reconciled=productionRunId?(await db.query(`select total_cost_usd::float as cost from production_runs where id=$1`,[productionRunId])).rows[0]:null;
+    return {actualCostUsd:Number(reconciled?.cost??runResult?.cost??0),contentFormat,productionRunId,costMeterSession:meterSession};
   }
   if(job.kind==='bootstrap_channel_brand'){
     const candidateId=String(payload.candidateId??'').trim(),channelId=String(payload.channelId??job.channel_id??'').trim();if(!candidateId&&!channelId)throw new Error('bootstrap_channel_brand requires candidateId or channelId');await runNode('scripts/bootstrap-channel-brand.mjs',[candidateId?`--candidate-id=${candidateId}`:`--channel-id=${channelId}`]);return {};
@@ -45,7 +63,7 @@ async function execute(job){
   throw new Error(`Unsupported job kind ${job.kind}`);
 }
 async function settleBudget(job,actualCostUsd,releaseOnly=false){const payload=job.payload??{};const channelKey=String(payload.channelKey??'future-tech-business-en');const reserved=Math.max(0,Number(payload.reservedCostUsd??0));if(!reserved)return;const budgetDate=String(payload.budgetDate??new Date().toISOString().slice(0,10));await db.query(`update daily_budget_ledger set reserved_usd=greatest(0,reserved_usd-$3),actual_usd=actual_usd+$4,updated_at=now() where channel_key=$1 and spend_date=$2::date`,[channelKey,budgetDate,reserved,releaseOnly?0:Math.max(0,actualCostUsd)]);}
-async function complete(job,result){await db.query(`update jobs set state='succeeded',locked_at=null,locked_by=null,completed_at=now(),updated_at=now(),last_error=null where id=$1`,[job.id]);await settleBudget(job,result.actualCostUsd??0,false);await emit(job.id,'succeeded',{workerId,attempt:job.attempts,actualCostUsd:result.actualCostUsd??0,contentFormat:result.contentFormat??job.payload?.contentFormat,productionRunId:result.productionRunId});}
+async function complete(job,result){await db.query(`update jobs set state='succeeded',locked_at=null,locked_by=null,completed_at=now(),updated_at=now(),last_error=null where id=$1`,[job.id]);await settleBudget(job,result.actualCostUsd??0,false);await emit(job.id,'succeeded',{workerId,attempt:job.attempts,actualCostUsd:result.actualCostUsd??0,contentFormat:result.contentFormat??job.payload?.contentFormat,productionRunId:result.productionRunId,costMeterSession:result.costMeterSession});}
 async function fail(job,error){const message=(error instanceof Error?error.message:String(error)).slice(0,8000);if(shouldRetry(Number(job.attempts),Number(job.max_attempts))){const delayMs=computeRetryDelayMs(Number(job.attempts),{baseDelayMs:num('JOB_RETRY_BASE_MS',60000),maxDelayMs:num('JOB_RETRY_MAX_MS',6*60*60_000),jitterRatio:0.15});await db.query(`update jobs set state='retry',locked_at=null,locked_by=null,not_before=now()+($2::text || ' milliseconds')::interval,last_error=$3,updated_at=now() where id=$1`,[job.id,String(delayMs),message]);await emit(job.id,'retry_scheduled',{workerId,attempt:job.attempts,delayMs,error:message,kind:job.kind,contentFormat:job.payload?.contentFormat});}else{await db.query(`update jobs set state='dead',locked_at=null,locked_by=null,completed_at=now(),last_error=$2,updated_at=now() where id=$1`,[job.id,message]);await settleBudget(job,0,true);await emit(job.id,'dead_letter',{workerId,attempt:job.attempts,error:message,kind:job.kind,contentFormat:job.payload?.contentFormat});}}
 try{const recovered=await recoverStale();if(recovered)console.log(`Recovered ${recovered} stale jobs`);while(!stopping&&processed<maxJobs){const job=await claim();if(!job){if(once)break;await sleep(pollMs);continue;}try{const result=await execute(job);await complete(job,result);}catch(error){await fail(job,error);}processed+=1;if(once)break;}}finally{await db.close();}
 console.log(JSON.stringify({workerId,processed,stopping},null,2));
