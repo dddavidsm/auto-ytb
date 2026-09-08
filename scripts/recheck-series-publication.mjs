@@ -14,6 +14,8 @@ try{
     join publications p on p.production_run_id=se.production_run_id
     left join jobs j on j.kind='schedule_publication' and j.payload->>'publicationId'=p.id::text and j.state in ('queued','retry','running','succeeded')
     where se.continuity_status='passed' and se.memory_compiled_at is not null and p.state='private' and j.id is null
+      and exists (select 1 from series_episode_quality_reports vq where vq.episode_id=se.id and vq.report_type='visual_continuity' and vq.status in ('passed','warn'))
+      and (s.audience_mode<>'MADE_FOR_KIDS' or exists (select 1 from series_episode_quality_reports kq where kq.episode_id=se.id and kq.report_type='kids_family' and kq.status in ('passed','warn')))
       and coalesce((select pr.metadata->'autonomousPublication'->>'action' from production_runs pr where pr.id=se.production_run_id),'KEEP_PRIVATE')='KEEP_PRIVATE'
     order by se.memory_compiled_at desc limit $1`,[limit])).rows;
   const results=[];
