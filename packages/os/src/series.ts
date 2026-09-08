@@ -101,6 +101,7 @@ export type EpisodeMemory = {
   key: string;
   importance: number;
   canonical: boolean;
+  active?: boolean;
   payload: Record<string, unknown>;
 };
 
@@ -255,7 +256,7 @@ export function buildSeriesContinuityContext(input:{
 }):SeriesContinuityContext{
   const characters=input.characters?.length?input.characters:input.bible.characters;
   const styles=input.styles?.length?input.styles:input.bible.styles;
-  const memory=[...(input.memories??[])].filter((item)=>item.canonical!==false).sort((a,b)=>b.importance-a.importance).slice(0,20);
+  const memory=[...(input.memories??[])].filter((item)=>item.canonical!==false&&item.active!==false).sort((a,b)=>b.importance-a.importance).slice(0,20);
   const referenceUris=[...new Set([...characters.map((item)=>item.canonicalReferenceUri),...styles.map((item)=>item.canonicalReferenceUri)].filter(Boolean).map(String))].slice(0,8);
   const ageLabel=input.profile.audienceMode==='MADE_FOR_KIDS'
     ?`Target children aged ${input.profile.targetAgeMin??'?'}–${input.profile.targetAgeMax??'?'}.`
