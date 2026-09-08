@@ -1,5 +1,6 @@
 export * from './channel-routing.js';
 export * from './autonomy.js';
+export * from './branding.js';
 
 export type ChannelDna = {
   id: string;
