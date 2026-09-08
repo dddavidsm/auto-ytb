@@ -41,7 +41,9 @@ export class GoogleDriveLibraryProvider implements ContentLibraryProvider {
     const init=await this.request('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,webViewLink,size',{method:'POST',headers:{'content-type':'application/json; charset=UTF-8','x-upload-content-type':input.mimeType,'x-upload-content-length':String(input.data.byteLength)},body:JSON.stringify(metadata)});
     const location=init.headers.get('location');
     if(!location)throw new Error('Google Drive resumable upload did not return a session URL');
-    const response=await fetch(location,{method:'PUT',headers:{'content-type':input.mimeType,'content-length':String(input.data.byteLength)},body:input.data as BodyInit});
+    const copy=new Uint8Array(input.data.byteLength);
+    copy.set(input.data);
+    const response=await fetch(location,{method:'PUT',headers:{'content-type':input.mimeType,'content-length':String(copy.byteLength)},body:copy.buffer});
     if(!response.ok)throw new Error(`Google Drive upload failed ${response.status}: ${(await response.text()).slice(0,700)}`);
     return response.json() as Promise<{id:string;webViewLink?:string;size?:string}>;
   }
