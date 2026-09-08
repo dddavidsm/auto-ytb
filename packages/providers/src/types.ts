@@ -81,6 +81,13 @@ export interface VideoRenderer {
   render(input: { manifestUri: string; outputKey: string }): Promise<BinaryAsset & { durationSeconds?: number }>;
 }
 
+export interface ContentLibraryProvider {
+  readonly name: string;
+  ensurePath(pathSegments: string[]): Promise<{ folderId: string; path: string }>;
+  upload(input: { pathSegments: string[]; fileName: string; mimeType: string; data: Uint8Array | string; metadata?: Record<string, unknown> }): Promise<{ externalId: string; uri: string; bytes?: number }>;
+  writeJson(input: { pathSegments: string[]; fileName: string; value: unknown; metadata?: Record<string, unknown> }): Promise<{ externalId: string; uri: string; bytes?: number }>;
+}
+
 export interface Publisher {
   readonly name: string;
   uploadPrivate(input: {
