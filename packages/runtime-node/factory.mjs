@@ -5,6 +5,7 @@ import { withFinalMediaInspection } from './media-inspector.mjs';
 import { bindMediaProviderToBrand, parseBrandContinuityContext } from './brand-continuity.mjs';
 import { bindTextModelToSeries, parseSeriesContinuityContext } from './series-continuity.mjs';
 import { bindVoiceProviderToSeries } from './series-voice.mjs';
+import { withElevenLabsVoiceControls } from './elevenlabs-voice-controls.mjs';
 import { withContinuityBridgeVideo } from './continuity-video.mjs';
 import { withLicensedSoundtrack } from './soundtrack.mjs';
 import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
@@ -66,8 +67,10 @@ export function createLiveRuntime(env = process.env) {
   const voiceProvider = (env.VOICE_PROVIDER || 'elevenlabs').toLowerCase();
   if (voiceProvider !== 'elevenlabs') throw new Error(`Unsupported VOICE_PROVIDER: ${voiceProvider}`);
   const voiceModel=env.VOICE_MODEL || 'eleven_multilingual_v2';
-  const rawVoice = new ElevenLabsVoiceProvider({ apiKey: reqFrom(env,'VOICE_API_KEY'), store, modelId: voiceModel, useTimestamps:env.VOICE_TIMESTAMPS!=='false' });
-  const meteredVoice=meterVoiceProvider(rawVoice,meter,{model:voiceModel});
+  const voiceApiKey=reqFrom(env,'VOICE_API_KEY');
+  const rawVoice = new ElevenLabsVoiceProvider({ apiKey:voiceApiKey, store, modelId:voiceModel, useTimestamps:env.VOICE_TIMESTAMPS!=='false' });
+  const controlledVoice=withElevenLabsVoiceControls(rawVoice,{apiKey:voiceApiKey,store,modelId:voiceModel});
+  const meteredVoice=meterVoiceProvider(controlledVoice,meter,{model:voiceModel});
   const voice=bindVoiceProviderToSeries(meteredVoice,seriesContext);
 
   let image;
