@@ -6,6 +6,7 @@ import { bindMediaProviderToBrand, parseBrandContinuityContext } from './brand-c
 import { bindTextModelToSeries, parseSeriesContinuityContext } from './series-continuity.mjs';
 import { bindVoiceProviderToSeries } from './series-voice.mjs';
 import { withElevenLabsVoiceControls } from './elevenlabs-voice-controls.mjs';
+import { bindImageProviderToContentArchetype, bindTextModelToContentArchetype, bindVideoProviderToContentArchetype, normalizeContentArchetypeProfile } from './content-archetype.mjs';
 import { withContinuityBridgeVideo } from './continuity-video.mjs';
 import { withLicensedSoundtrack } from './soundtrack.mjs';
 import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
@@ -53,6 +54,7 @@ export function createLiveRuntime(env = process.env) {
   const store = new NodeLocalObjectStore(env.LOCAL_STORAGE_ROOT || '.data/storage');
   const meter = new ProviderUsageMeter(env);
   const seriesContext=parseSeriesContinuityContext(env.AUTO_YTB_SERIES_CONTEXT);
+  const archetypeProfile=normalizeContentArchetypeProfile(env.AUTO_YTB_CONTENT_ARCHETYPE_PROFILE);
   const brandContext=mergeBrandAndSeries(parseBrandContinuityContext(env.AUTO_YTB_BRAND_CONTEXT),seriesContext);
   const searchProvider = (env.SEARCH_PROVIDER || 'tavily').toLowerCase();
   if (searchProvider !== 'tavily') throw new Error(`Unsupported SEARCH_PROVIDER: ${searchProvider}`);
@@ -62,7 +64,8 @@ export function createLiveRuntime(env = process.env) {
   const modelName = env.TEXT_MODEL_RESEARCH || 'gpt-5';
   const rawModel = new OpenAIResponsesTextModel({ apiKey: reqFrom(env,'TEXT_MODEL_API_KEY'), model: modelName, endpoint: env.TEXT_MODEL_BASE_URL || undefined });
   const measuredModel = meterTextModel(rawModel,meter);
-  const model = bindTextModelToSeries(measuredModel,seriesContext);
+  const seriesModel = bindTextModelToSeries(measuredModel,seriesContext);
+  const model = bindTextModelToContentArchetype(seriesModel,archetypeProfile);
 
   const voiceProvider = (env.VOICE_PROVIDER || 'elevenlabs').toLowerCase();
   if (voiceProvider !== 'elevenlabs') throw new Error(`Unsupported VOICE_PROVIDER: ${voiceProvider}`);
@@ -81,10 +84,12 @@ export function createLiveRuntime(env = process.env) {
     const runway = new RunwayMediaProvider({ apiKey: env.IMAGE_API_KEY || env.VIDEO_API_KEY || reqFrom(env,'VIDEO_API_KEY'), store, imageModel, videoModel });
     const meteredImage=meterImageProvider(runway,meter,{model:imageModel});
     const meteredVideo=meterVideoProvider(runway,meter,{model:videoModel});
-    image = bindMediaProviderToBrand(meteredImage,brandContext);
+    const archetypeImage=bindImageProviderToContentArchetype(meteredImage,archetypeProfile);
+    const archetypeVideo=bindVideoProviderToContentArchetype(meteredVideo,archetypeProfile);
+    image = bindMediaProviderToBrand(archetypeImage,brandContext);
     video = (brandContext?.referenceUris?.length??0)>=2
-      ? withContinuityBridgeVideo(meteredVideo,image,brandContext)
-      : bindMediaProviderToBrand(meteredVideo,brandContext);
+      ? withContinuityBridgeVideo(archetypeVideo,image,brandContext)
+      : bindMediaProviderToBrand(archetypeVideo,brandContext);
   }
 
   const rawRenderer=new FfmpegRenderer({
@@ -115,5 +120,5 @@ export function createLiveRuntime(env = process.env) {
     : undefined;
   const db = env.DATABASE_URL ? new NodePostgresSqlClient(env.DATABASE_URL, { ssl: env.DATABASE_SSL === 'true' ? { rejectUnauthorized:false } : undefined }) : undefined;
 
-  return { store, meter, search, model, voice, image, video, renderer, thumbnailComposer, oauth, publisher, analytics, library, loader, db, brandContext, seriesContext };
+  return { store, meter, search, model, voice, image, video, renderer, thumbnailComposer, oauth, publisher, analytics, library, loader, db, brandContext, seriesContext, archetypeProfile };
 }
