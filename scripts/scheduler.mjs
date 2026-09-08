@@ -16,7 +16,7 @@ process.on('SIGINT',()=>{stopping=true;});
 const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
 
 function run(script){return new Promise((resolve,reject)=>{const child=spawn(process.execPath,[script],{cwd:process.cwd(),env:process.env,stdio:'inherit'});child.on('error',reject);child.on('exit',(code,signal)=>code===0?resolve():reject(new Error(`${script} failed code=${code} signal=${signal??'none'}`)));});}
-const scripts=['scripts/schedule-branding.mjs','scripts/schedule-intelligence.mjs','scripts/series-memory-sync.mjs','scripts/series-performance-sync.mjs','scripts/recheck-series-publication.mjs','scripts/schedule-production-series.mjs','scripts/schedule-maintenance.mjs'];
+const scripts=['scripts/schedule-branding.mjs','scripts/schedule-intelligence.mjs','scripts/series-memory-sync.mjs','scripts/series-performance-sync.mjs','scripts/recheck-series-publication.mjs','scripts/series-episode-planner.mjs','scripts/schedule-production-series.mjs','scripts/schedule-maintenance.mjs'];
 async function tick(){
   const startedAt=new Date().toISOString(),results=[];
   await heartbeat('running',{startedAt,intervalMs},true);
