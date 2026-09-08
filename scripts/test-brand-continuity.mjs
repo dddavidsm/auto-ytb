@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import { assertBrandContinuityReady, bindMediaProviderToBrand, parseBrandContinuityContext } from '../packages/runtime-node/brand-continuity.mjs';
+
+const calls=[];
+const provider={name:'fixture-media',async generate(input){calls.push(input);return{id:'x',uri:'mock://x',mimeType:'image/png',provider:'fixture-media'};}};
+const context={required:true,channelKey:'old-owl-stories-en',characterMode:'persistent',characterName:'Old Owl',continuityKey:'owl-v1',referenceUris:['file:///brand/old-owl-master.png'],styleTags:['cozy','storybook'],styleGuidance:'Warm illustrated night-time environments.'};
+const bound=bindMediaProviderToBrand(provider,context);
+const result=await bound.generate({prompt:'Old Owl opens a mysterious letter.',aspectRatio:'9:16'});
+assert.equal(calls.length,1);
+assert.deepEqual(calls[0].referenceUris,['file:///brand/old-owl-master.png']);
+assert.match(calls[0].prompt,/Persistent character: Old Owl/);
+assert.match(calls[0].prompt,/Do not redesign or reinterpret/);
+assert.match(calls[0].prompt,/mysterious letter/);
+assert.equal(result.brandContinuity.characterName,'Old Owl');
+assert.equal(result.brandContinuity.referenceCount,1);
+assert.throws(()=>assertBrandContinuityReady({...context,referenceUris:[]}),/requires a canonical visual reference/);
+assert.equal(parseBrandContinuityContext(JSON.stringify(context)).continuityKey,'owl-v1');
+const neutralCalls=[];
+const neutralProvider={name:'neutral',async generate(input){neutralCalls.push(input);return{id:'n',uri:'mock://n',mimeType:'image/png',provider:'neutral'};}};
+const untouched=bindMediaProviderToBrand(neutralProvider,null);
+await untouched.generate({prompt:'A chart',aspectRatio:'16:9'});
+assert.equal(neutralCalls[0].referenceUris,undefined);
+console.log('✓ persistent character generations inherit canonical reference');
+console.log('✓ missing required brand reference fails closed');
+console.log('✓ non-character channels remain unbound when no brand context is provided');
