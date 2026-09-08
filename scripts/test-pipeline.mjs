@@ -3,49 +3,89 @@ import { assessSource, rankAngles } from '../packages/editorial/dist/index.js';
 import { scorePackaging, planScenes, estimateProductionCost, explorationRateForSample, selectPackagingWithExploration, structuralExplorationRate, selectStructuralExperiment } from '../packages/production/dist/index.js';
 import { runQa, reviewAttentionBlueprint } from '../packages/qa/dist/index.js';
 import { analyzeRetention, calculateEconomics } from '../packages/analytics/dist/index.js';
-const source = assessSource({id:'s1',title:'Official',url:'https://example.com',snippet:'x',publishedAt:'2026-09-06T00:00:00Z',sourceType:'official'}, new Date('2026-09-07T00:00:00Z'));
-assert.ok(source.qualityScore > 90);
-const angle = rankAngles([{id:'a',title:'A',thesis:'T',viewerPromise:'P',hook:'H',novelty:90,emotionalPull:90,retentionPotential:95,monetizationFit:90,evidenceFit:90,productionFit:90,risk:10}])[0]; assert.ok(angle.score > 85);
-const packaging = scorePackaging({id:'p',title:'Why the System Changed Overnight',thumbnailConcept:'A familiar system visibly transforming into something new',thumbnailText:'IT CHANGED',promise:'Why the system changed and what the change means',curiosity:90,clarity:90,credibility:90,differentiation:90}); assert.equal(packaging.score,90);
-const packagingVariants=[scorePackaging({id:'a',title:'A',thumbnailConcept:'A',promise:'A',curiosity:92,clarity:72,credibility:80,differentiation:95}),scorePackaging({id:'b',title:'B',thumbnailConcept:'B',promise:'B',curiosity:70,clarity:96,credibility:94,differentiation:68}),scorePackaging({id:'c',title:'C',thumbnailConcept:'C',promise:'C',curiosity:82,clarity:84,credibility:87,differentiation:83})];
-assert.ok(explorationRateForSample(0) >= 0.25); assert.ok(explorationRateForSample(100) >= 0.08); assert.ok(explorationRateForSample(100) < explorationRateForSample(3));
+
+const source=assessSource({id:'s1',title:'Official',url:'https://example.com',snippet:'x',publishedAt:'2026-09-06T00:00:00Z',sourceType:'official'},new Date('2026-09-07T00:00:00Z'));
+assert.ok(source.qualityScore>90);
+const angle=rankAngles([{id:'a',title:'A',thesis:'T',viewerPromise:'P',hook:'H',novelty:90,emotionalPull:90,retentionPotential:95,monetizationFit:90,evidenceFit:90,productionFit:90,risk:10}])[0];
+assert.ok(angle.score>85);
+
+const packaging=scorePackaging({id:'p',title:'Why the System Changed Overnight',thumbnailConcept:'A familiar system visibly transforming into something new',thumbnailText:'IT CHANGED',promise:'Why the system changed and what the change means',curiosity:90,clarity:90,credibility:90,differentiation:90});
+assert.equal(packaging.score,90);
+const packagingVariants=[
+  scorePackaging({id:'a',title:'A',thumbnailConcept:'A',promise:'A',curiosity:92,clarity:72,credibility:80,differentiation:95}),
+  scorePackaging({id:'b',title:'B',thumbnailConcept:'B',promise:'B',curiosity:70,clarity:96,credibility:94,differentiation:68}),
+  scorePackaging({id:'c',title:'C',thumbnailConcept:'C',promise:'C',curiosity:82,clarity:84,credibility:87,differentiation:83}),
+];
+assert.ok(explorationRateForSample(0)>=0.25);
+assert.ok(explorationRateForSample(100)>=0.08);
+assert.ok(explorationRateForSample(100)<explorationRateForSample(3));
 const bandit=selectPackagingWithExploration({variants:packagingVariants,experimentSeed:'stable-seed',profile:{sampleSize:12,attributes:[{attribute:'clarity',sampleSize:12,slope:.6,confidence:1},{attribute:'curiosity',sampleSize:12,slope:-.25,confidence:1},{attribute:'credibility',sampleSize:12,slope:.3,confidence:1},{attribute:'differentiation',sampleSize:12,slope:.1,confidence:1}]}});
-assert.ok(packagingVariants.some(v=>v.id===bandit.selected.id)); assert.equal(bandit.scores.length,3); assert.ok(['EXPLOIT','EXPLORE'].includes(bandit.mode));
-const repeat=selectPackagingWithExploration({variants:packagingVariants,experimentSeed:'stable-seed',profile:{sampleSize:12,attributes:[{attribute:'clarity',sampleSize:12,slope:.6,confidence:1}]}}); const repeat2=selectPackagingWithExploration({variants:packagingVariants,experimentSeed:'stable-seed',profile:{sampleSize:12,attributes:[{attribute:'clarity',sampleSize:12,slope:.6,confidence:1}]}}); assert.equal(repeat.selected.id,repeat2.selected.id); assert.equal(repeat.mode,repeat2.mode);
-assert.ok(structuralExplorationRate(0) >= 0.2); assert.ok(structuralExplorationRate(100) >= 0.06); assert.ok(structuralExplorationRate(100) < structuralExplorationRate(4));
-const structuralA=selectStructuralExperiment({sampleSize:8,experimentSeed:'structural-seed'}); const structuralB=selectStructuralExperiment({sampleSize:8,experimentSeed:'structural-seed'}); assert.deepEqual(structuralA,structuralB); assert.ok(['CONTROL','EXPLORE'].includes(structuralA.mode)); assert.ok(structuralA.selected.targetDurationFactor>=0.92 && structuralA.selected.targetDurationFactor<=1.08); assert.ok(structuralA.selected.targetSceneDurationFactor>=0.85 && structuralA.selected.targetSceneDurationFactor<=1.15); assert.ok(structuralA.selected.maxCostFactor>=0.88 && structuralA.selected.maxCostFactor<=1.10);
+assert.ok(packagingVariants.some((v)=>v.id===bandit.selected.id));
+assert.equal(bandit.scores.length,3);
+assert.ok(['EXPLOIT','EXPLORE'].includes(bandit.mode));
+const structuralA=selectStructuralExperiment({sampleSize:8,experimentSeed:'structural-seed'});
+const structuralB=selectStructuralExperiment({sampleSize:8,experimentSeed:'structural-seed'});
+assert.deepEqual(structuralA,structuralB);
+assert.ok(structuralExplorationRate(100)<structuralExplorationRate(4));
+
 const script={title:'Why the System Changed Overnight',language:'en',targetDurationSec:100,thesis:'The system changed because a hidden constraint finally became impossible to ignore.',beats:[
   {id:'b1',startSec:0,targetDurationSec:10,purpose:'hook',narration:'The system looked normal until one hidden constraint forced it to change almost overnight. The surprising part is what actually caused it.',visualIntent:'Immediate before-versus-after contrast with the hidden constraint highlighted',sourceIds:['s1'],retentionDevice:'open_loop'},
   {id:'b2',startSec:10,targetDurationSec:16,purpose:'setup',narration:'For years the old design worked because one assumption stayed true. That assumption quietly stopped being true.',visualIntent:'Simple timeline showing the assumption holding and then breaking',sourceIds:['s1'],retentionDevice:'contrast'},
   {id:'b3',startSec:26,targetDurationSec:20,purpose:'evidence',narration:'The evidence shows the pressure building before the visible change. Each step made the old approach more expensive and less reliable.',visualIntent:'Evidence chart with pressure rising over time',sourceIds:['s1'],retentionDevice:'question'},
   {id:'b4',startSec:46,targetDurationSec:20,purpose:'escalation',narration:'Then the failure stopped being theoretical. The same weakness started affecting the result users actually cared about.',visualIntent:'Escalating consequence shown through a concrete system failure',sourceIds:['s1'],retentionDevice:'open_loop'},
   {id:'b5',startSec:66,targetDurationSec:18,purpose:'reveal',narration:'The real cause was not the obvious new feature. It was the old constraint underneath it, which changed the economics of the whole system.',visualIntent:'Reveal diagram connecting the hidden constraint to the visible change',sourceIds:['s1'],retentionDevice:'reveal'},
-  {id:'b6',startSec:84,targetDurationSec:16,purpose:'payoff',narration:'That is why the system changed so quickly: once the hidden constraint moved, keeping the old design became the riskier choice.',visualIntent:'Clean visual callback resolving the opening before-versus-after image',sourceIds:['s1'],retentionDevice:'reveal'}
+  {id:'b6',startSec:84,targetDurationSec:16,purpose:'payoff',narration:'That is why the system changed so quickly: once the hidden constraint moved, keeping the old design became the riskier choice.',visualIntent:'Clean visual callback resolving the opening before-versus-after image',sourceIds:['s1'],retentionDevice:'reveal'},
 ],outro:'The visible change was only the final symptom.'};
-const scenes=planScenes(script,{targetSceneDurationSec:8}); assert.ok(scenes.length>=6); assert.ok(scenes.some(s=>s.generated)); assert.ok(estimateProductionCost({narrationSeconds:100,scenes})>0);
+const scenes=planScenes(script,{targetSceneDurationSec:8});
+assert.ok(scenes.length>=6);
+assert.ok(scenes.some((s)=>s.generated));
+assert.ok(estimateProductionCost({narrationSeconds:100,scenes})>0);
 const dossier={topic:'x',generatedAt:'x',executiveSummary:'x',sources:[source],claims:[{id:'c',text:'x',importance:'critical',sourceIds:['s1'],confidence:90,disputed:false}],contradictions:[],timeline:[],angles:[angle],recommendedAngleId:'a',researchConfidence:90,blockingIssues:[]};
 const alignment={characters:['h','e','l','l','o'],characterStartTimesSeconds:[0,20,40,60,80],characterEndTimesSeconds:[20,40,60,80,100]};
 const voice={id:'voice',uri:'mock://voice.mp3',mimeType:'audio/mpeg',provider:'mock',language:'en',voiceId:'narrator',durationSeconds:100,alignment};
 const manifest={projectId:'x',createdAt:'x',contentFormat:'LONG_HORIZONTAL',aspectRatio:'16:9',frame:{width:1920,height:1080},script,packaging:[packaging],thumbnails:[{id:'thumb-p',uri:'mock://thumb.jpg',mimeType:'image/jpeg',provider:'mock',packagingId:'p',text:'IT CHANGED',bytes:250000,costUsd:0}],selectedPackagingId:'p',scenes,assets:scenes.map((scene)=>({id:`asset-${scene.id}`,uri:`mock://${scene.id}`,mimeType:scene.kind==='ai_video'?'video/mp4':'image/png',provider:'mock',sceneId:scene.id,generated:true,sourceIds:scene.sourceIds,costUsd:0})),voice,estimatedCostUsd:1,actualCostUsd:1,containsSyntheticMedia:true};
-const attention=reviewAttentionBlueprint({script,packaging:[packaging],scenes,contentFormat:'LONG_HORIZONTAL',selectedPackagingId:'p'}); assert.equal(attention.ready,true); assert.ok(attention.score>=86);
-const qa=runQa({dossier,script,manifest,maxCostUsd:20}); assert.equal(qa.passed,true); assert.equal(qa.containsSyntheticMedia,true); assert.ok(qa.checks.some(c=>c.id==='packaging-readiness'&&c.status==='PASS')); assert.ok(qa.checks.some(c=>c.id==='format-frame'&&c.status==='PASS')); assert.ok(qa.checks.some(c=>c.id==='audio-visual-sync'&&c.status==='PASS')); assert.ok(qa.checks.some(c=>c.id==='language-consistency'&&c.status==='PASS')); assert.ok(qa.checks.some(c=>c.id==='attention-readiness'&&c.status==='PASS'));
-const shortScript={...script,targetDurationSec:45,beats:[
+const attention=reviewAttentionBlueprint({script,packaging:[packaging],scenes,contentFormat:'LONG_HORIZONTAL',selectedPackagingId:'p'});
+assert.equal(attention.ready,true);
+assert.ok(attention.score>=86);
+const qa=runQa({dossier,script,manifest,maxCostUsd:20});
+assert.equal(qa.passed,true);
+assert.ok(qa.checks.some((c)=>c.id==='attention-readiness'&&c.status==='PASS'));
+assert.ok(qa.checks.some((c)=>c.id==='audio-visual-sync'&&c.status==='PASS'));
+
+const shortPackaging=scorePackaging({id:'sp',title:'The Hidden Constraint That Changed Everything',thumbnailConcept:'Instant before-and-after transformation',promise:'A hidden constraint changed the entire system',curiosity:92,clarity:96,credibility:90,differentiation:88});
+const shortScript={...script,title:'The Hidden Constraint That Changed Everything',thesis:'A hidden constraint changed the entire system and made the old approach riskier.',targetDurationSec:45,beats:[
   {id:'s1',startSec:0,targetDurationSec:3,purpose:'hook',narration:'One hidden constraint changed the entire system.',visualIntent:'Instant before and after transformation',sourceIds:['s1'],retentionDevice:'open_loop'},
   {id:'s2',startSec:3,targetDurationSec:8,purpose:'setup',narration:'The old design depended on one assumption that quietly stopped being true.',visualIntent:'Fast assumption diagram',sourceIds:['s1'],retentionDevice:'contrast'},
   {id:'s3',startSec:11,targetDurationSec:10,purpose:'evidence',narration:'Pressure built until the old approach became more expensive and less reliable.',visualIntent:'Rapid evidence chart',sourceIds:['s1'],retentionDevice:'question'},
   {id:'s4',startSec:21,targetDurationSec:9,purpose:'escalation',narration:'Then the weakness started hurting the result users cared about.',visualIntent:'Concrete consequence',sourceIds:['s1'],retentionDevice:'open_loop'},
   {id:'s5',startSec:30,targetDurationSec:8,purpose:'reveal',narration:'The new feature was not the cause. The hidden constraint was.',visualIntent:'Reveal connection',sourceIds:['s1'],retentionDevice:'reveal'},
-  {id:'s6',startSec:38,targetDurationSec:7,purpose:'payoff',narration:'Once that moved, changing the system became safer than keeping it.',visualIntent:'Resolve before and after',sourceIds:['s1'],retentionDevice:'reveal'}
+  {id:'s6',startSec:38,targetDurationSec:7,purpose:'payoff',narration:'Once that moved, changing the system became safer than keeping it.',visualIntent:'Resolve before and after',sourceIds:['s1'],retentionDevice:'reveal'},
 ]};
 const shortScenes=planScenes(shortScript,{targetSceneDurationSec:4});
 const shortAlignment={characters:['h','e','l','l','o'],characterStartTimesSeconds:[0,9,18,27,36],characterEndTimesSeconds:[9,18,27,36,45]};
 const shortVoice={...voice,durationSeconds:45,alignment:shortAlignment};
-const shortManifest={...manifest,script:shortScript,contentFormat:'SHORT_VERTICAL',aspectRatio:'9:16',frame:{width:1080,height:1920},scenes:shortScenes,assets:shortScenes.map((scene)=>({id:`asset-${scene.id}`,uri:`mock://${scene.id}`,mimeType:scene.kind==='ai_video'?'video/mp4':'image/png',provider:'mock',sceneId:scene.id,generated:true,sourceIds:scene.sourceIds,costUsd:0})),voice:shortVoice,thumbnails:[]};
-const shortQa=runQa({dossier,script:shortScript,manifest:shortManifest,maxCostUsd:20}); assert.equal(shortQa.passed,true); assert.ok(shortQa.checks.some(c=>c.id==='format-frame'&&c.status==='PASS')); assert.ok(shortQa.checks.some(c=>c.id==='attention-readiness'&&c.status==='PASS'));
-const events=analyzeRetention([{elapsedRatio:0,audienceWatchRatio:1},{elapsedRatio:.1,audienceWatchRatio:.82},{elapsedRatio:.2,audienceWatchRatio:.88},{elapsedRatio:.3,audienceWatchRatio:.70}]); assert.ok(events.some(e=>e.type==='DIP')); assert.ok(events.some(e=>e.type==='SPIKE'));
-const economics=calculateEconomics({videoId:'v',views:10000,watchTimeMinutes:1,averageViewDurationSec:1,averageViewPercentage:50,likes:1,comments:1,shares:1,subscribersGained:1,revenueUsd:50,productionCostUsd:10,retention:[]}); assert.equal(economics.profitUsd,40); assert.equal(economics.rpmUsd,5);
-console.log('✓ editorial source/angle scoring'); console.log('✓ script packaging/scene/cost planning'); console.log('✓ bounded packaging exploration/exploitation'); console.log('✓ bounded one-axis structural exploration'); console.log('✓ mandatory adaptive attention review for long + Shorts'); console.log('✓ language + audio synchronization QA'); console.log('✓ long + Shorts format-aware QA'); console.log('✓ retention and unit economics analysis');
-const { buildYouTubeAuthorizationUrl } = await import('../packages/youtube/dist/index.js'); const authUrl=buildYouTubeAuthorizationUrl({clientId:'client',redirectUri:'http://localhost/callback',state:'abc'}); assert.ok(authUrl.includes('youtube.upload')); assert.ok(authUrl.includes('drive.file')); assert.ok(authUrl.includes('access_type=offline')); assert.ok(authUrl.includes('state=abc')); console.log('✓ YouTube + Drive OAuth authorization bootstrap');
-const { allocatePortfolioBudget, rankProviders, dedupeJobs } = await import('../packages/os/dist/index.js');
-const allocation=allocatePortfolioBudget(30,[{channelId:'a',enabled:true,expectedRoi:2,evidenceConfidence:90,opportunityBacklogScore:90,growthPriority:100},{channelId:'b',enabled:true,expectedRoi:.5,evidenceConfidence:60,opportunityBacklogScore:60,growthPriority:50}]); assert.equal(allocation.reduce((s,x)=>s+x.dailyBudgetUsd,0),30); assert.equal(allocation[0].channelId,'a');
-assert.equal(rankProviders([{id:'cheap',enabled:true,quality:75,reliability:90,latency:80,cost:10},{id:'great',enabled:true,quality:95,reliability:95,latency:65,cost:40}])[0].id,'great'); assert.equal(dedupeJobs([{key:'x',kind:'a',priority:1,payload:{}},{key:'x',kind:'a',priority:9,payload:{}}])[0].priority,9); console.log('✓ multi-channel budget/provider/job routing');
+const shortManifest={...manifest,script:shortScript,packaging:[shortPackaging],selectedPackagingId:'sp',contentFormat:'SHORT_VERTICAL',aspectRatio:'9:16',frame:{width:1080,height:1920},scenes:shortScenes,assets:shortScenes.map((scene)=>({id:`asset-${scene.id}`,uri:`mock://${scene.id}`,mimeType:scene.kind==='ai_video'?'video/mp4':'image/png',provider:'mock',sceneId:scene.id,generated:true,sourceIds:scene.sourceIds,costUsd:0})),voice:shortVoice,thumbnails:[]};
+const shortQa=runQa({dossier,script:shortScript,manifest:shortManifest,maxCostUsd:20});
+assert.equal(shortQa.passed,true);
+assert.ok(shortQa.checks.some((c)=>c.id==='format-frame'&&c.status==='PASS'));
+assert.ok(shortQa.checks.some((c)=>c.id==='attention-readiness'&&c.status==='PASS'));
+
+const events=analyzeRetention([{elapsedRatio:0,audienceWatchRatio:1},{elapsedRatio:.1,audienceWatchRatio:.82},{elapsedRatio:.2,audienceWatchRatio:.88},{elapsedRatio:.3,audienceWatchRatio:.70}]);
+assert.ok(events.some((e)=>e.type==='DIP'));
+assert.ok(events.some((e)=>e.type==='SPIKE'));
+const economics=calculateEconomics({videoId:'v',views:10000,watchTimeMinutes:1,averageViewDurationSec:1,averageViewPercentage:50,likes:1,comments:1,shares:1,subscribersGained:1,revenueUsd:50,productionCostUsd:10,retention:[]});
+assert.equal(economics.profitUsd,40);
+assert.equal(economics.rpmUsd,5);
+
+const { buildYouTubeAuthorizationUrl }=await import('../packages/youtube/dist/index.js');
+const authUrl=buildYouTubeAuthorizationUrl({clientId:'client',redirectUri:'http://localhost/callback',state:'abc'});
+assert.ok(authUrl.includes('youtube.upload'));
+assert.ok(authUrl.includes('drive.file'));
+assert.ok(authUrl.includes('access_type=offline'));
+const { allocatePortfolioBudget,rankProviders,dedupeJobs }=await import('../packages/os/dist/index.js');
+const allocation=allocatePortfolioBudget(30,[{channelId:'a',enabled:true,expectedRoi:2,evidenceConfidence:90,opportunityBacklogScore:90,growthPriority:100},{channelId:'b',enabled:true,expectedRoi:.5,evidenceConfidence:60,opportunityBacklogScore:60,growthPriority:50}]);
+assert.equal(allocation.reduce((s,x)=>s+x.dailyBudgetUsd,0),30);
+assert.equal(allocation[0].channelId,'a');
+assert.equal(rankProviders([{id:'cheap',enabled:true,quality:75,reliability:90,latency:80,cost:10},{id:'great',enabled:true,quality:95,reliability:95,latency:65,cost:40}])[0].id,'great');
+assert.equal(dedupeJobs([{key:'x',kind:'a',priority:1,payload:{}},{key:'x',kind:'a',priority:9,payload:{}}])[0].priority,9);
+console.log('✓ editorial, attention, format-aware QA, analytics and OS integration');
