@@ -6,6 +6,7 @@ export function auditFinalManifestReleaseSafety(manifest={},channel={}){
   const issues=[];
   const warnings=[];
   const soundtrack=manifest.soundtrack??{};
+  const naturalSoundRequired=text(manifest.executionPlan?.audioMode)==='NATURAL_SOUND';
   const audioCues=[...(manifest.music?[manifest.music]:[]),...list(manifest.sfx),...(!manifest.music&&soundtrack.music?[soundtrack.music]:[]),...(list(soundtrack.sfx))];
   const uniqueAudio=new Map();
   for(const cue of audioCues){const key=`${text(cue?.kind)}:${text(cue?.assetId)}:${text(cue?.uri)}`;if(!uniqueAudio.has(key))uniqueAudio.set(key,cue);}
@@ -15,7 +16,10 @@ export function auditFinalManifestReleaseSafety(manifest={},channel={}){
     if(!text(cue?.uri))issues.push(`audio:${text(cue?.assetId)||'unknown'} has no source URI`);
   }
   if(soundtrack&&Object.keys(soundtrack).length&&soundtrack.rightsReady===false)issues.push('soundtrack rightsReady is false');
-  if(audioCues.length===0)warnings.push('No soundtrack cues in final manifest; voice-only release is allowed.');
+  if(audioCues.length===0){
+    if(naturalSoundRequired)issues.push('audio:natural-sound-required but no cleared ambience/foley/reaction cue is present in the final manifest');
+    else warnings.push('No soundtrack cues in final manifest; voice-only release is allowed.');
+  }
 
   const identity=channel.identity??{};
   const characterMode=identity.characterMode??channel.characterMode??'none';
@@ -48,7 +52,7 @@ export function auditFinalManifestReleaseSafety(manifest={},channel={}){
     brandReady,
     issues,
     warnings,
-    audio:{cueCount:uniqueAudio.size,rightsReady:audioReady},
+    audio:{cueCount:uniqueAudio.size,rightsReady:audioReady,naturalSoundRequired},
     brand:{required:continuityRequired,characterMode:text(characterMode),characterName:characterName||null,continuityKey,generatedAssetCount:generated.length,compliantAssetCount:continuityCompliant},
   };
 }
