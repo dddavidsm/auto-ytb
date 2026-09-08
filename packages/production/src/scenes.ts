@@ -14,6 +14,14 @@ function hasQuantitativeIntent(beat: ScriptBeat): boolean {
   return /\b(percent|percentage|billion|million|growth|decline|revenue|cost|market|share|rate|timeline|year|years|data|chart|graph|compare|comparison)\b/i.test(`${beat.narration} ${beat.visualIntent}`) || /\d/.test(beat.narration);
 }
 
+function sourceAttribution(sourceRefs: Scene['sourceRefs']): string {
+  const ref=sourceRefs?.[0];
+  if(!ref) return 'Source: research dossier';
+  let domain='';
+  try { domain=ref.url?new URL(ref.url).hostname.replace(/^www\./,''):''; } catch { domain=''; }
+  return `Source: ${ref.title || domain || ref.sourceType || ref.sourceId}${domain && ref.title ? ` · ${domain}` : ''}`;
+}
+
 function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, hasSourceRefs: boolean): Pick<Scene,'kind'|'generated'|'costTier'|'selectionReason'> {
   if (hasQuantitativeIntent(beat) && (beat.purpose === 'evidence' || beat.purpose === 'setup')) {
     return { kind:'chart', generated:false, costTier:'free', selectionReason:'Quantitative/evidence beat is clearer and cheaper as a procedural chart.' };
@@ -51,7 +59,7 @@ export function planScenes(script: VideoScript, options: { targetSceneDurationSe
         ...choice,
         visualValue,
         instruction: procedural
-          ? `${beat.onScreenText ?? beat.visualIntent}. ${choice.kind === 'chart' ? 'Evidence-led editorial chart/card with restrained labels and clear hierarchy.' : choice.kind === 'source_card' ? 'Attributed evidence card. Transform and summarize the source; do not reproduce a webpage verbatim.' : 'Editorial motion-graphic card with strong hierarchy, simple geometry and no decorative clutter.'}`
+          ? `${beat.onScreenText ?? beat.visualIntent}. ${choice.kind === 'chart' ? 'Evidence-led editorial chart/card with restrained labels and clear hierarchy.' : choice.kind === 'source_card' ? `Attributed evidence card. Transform and summarize the source; do not reproduce a webpage verbatim. ${sourceAttribution(sourceRefs)}` : 'Editorial motion-graphic card with strong hierarchy, simple geometry and no decorative clutter.'}`
           : choice.kind === 'ai_video'
             ? `${beat.visualIntent}. Cinematic editorial visualization, coherent with the narration, no fabricated readable interface text.`
             : `${beat.visualIntent}. Premium editorial documentary still, visually specific, no fabricated readable text or fake UI labels.`,
