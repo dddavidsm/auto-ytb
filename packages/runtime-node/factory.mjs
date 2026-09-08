@@ -147,9 +147,23 @@ export function createLiveRuntime(env = process.env) {
   const rawPublisher = new YouTubePublisher(oauth, loader);
   const publisher = bindPublisherToSeries(rawPublisher,seriesContext);
   const analytics = new YouTubeAnalyticsClient(oauth);
-  const library=(env.CONTENT_LIBRARY_PROVIDER||'google-drive').toLowerCase()==='google-drive'
-    ? new GoogleDriveLibraryProvider({getAccessToken:()=>oauth.getAccessToken(),rootFolderName:env.DRIVE_ROOT_FOLDER||'AUTO-YTB'})
-    : undefined;
+
+  const libraryProvider=(env.CONTENT_LIBRARY_PROVIDER||'google-drive').toLowerCase();
+  let library;
+  if(libraryProvider==='google-drive'){
+    const rootFolderId=String(env.DRIVE_ROOT_FOLDER_ID||'').trim();
+    const driveRefreshToken=String(env.DRIVE_REFRESH_TOKEN||'').trim();
+    if(rootFolderId&&!driveRefreshToken)throw new Error('DRIVE_ROOT_FOLDER_ID is pinned but DRIVE_REFRESH_TOKEN is missing; refusing to fall back to YouTube OAuth for Google Drive');
+    const driveClientId=String(env.DRIVE_CLIENT_ID||env.YOUTUBE_CLIENT_ID||'').trim();
+    const driveClientSecret=String(env.DRIVE_CLIENT_SECRET||env.YOUTUBE_CLIENT_SECRET||'').trim();
+    if(driveRefreshToken&&(!driveClientId||!driveClientSecret))throw new Error('DRIVE_REFRESH_TOKEN is configured but no Google OAuth client credentials are available');
+    library=new GoogleDriveLibraryProvider({
+      getAccessToken:()=>oauth.getAccessToken(),
+      rootFolderName:env.DRIVE_ROOT_FOLDER||'AUTO-YTB',
+      rootFolderId:rootFolderId||undefined,
+      oauth:driveRefreshToken?{clientId:driveClientId,clientSecret:driveClientSecret,refreshToken:driveRefreshToken}:undefined,
+    });
+  }
   const db = env.DATABASE_URL ? new NodePostgresSqlClient(env.DATABASE_URL, { ssl: env.DATABASE_SSL === 'true' ? { rejectUnauthorized:false } : undefined }) : undefined;
 
   return { store, meter, search, model, voice, image, video, renderer, thumbnailComposer, oauth, publisher, analytics, library, loader, db, brandContext, seriesContext, archetypeProfile, archetypeDecision };
