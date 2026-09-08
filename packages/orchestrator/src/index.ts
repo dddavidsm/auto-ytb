@@ -55,8 +55,9 @@ export async function runContentPipeline(input: {
   const packagingChoice = selectPackagingWithExploration({ variants: packaging, profile: input.packagingLearning, experimentSeed: `${input.projectId}:${contentFormat}` });
   event('PACKAGING', `${packagingChoice.mode} selected packaging ${packagingChoice.selected.id} at ${(packagingChoice.explorationRate * 100).toFixed(0)}% exploration policy`);
   event('PLAN', `Planning ${aspectRatio} scenes and production cost`);
-  const scenes = planScenes(script, { targetSceneDurationSec: input.targetSceneDurationSec });
-  const visualMix = Object.fromEntries(['ai_video','ai_image','chart','motion_graphic'].map((kind) => [kind, scenes.filter((scene) => scene.kind === kind).length]));
+  const scenes = planScenes(script, { targetSceneDurationSec: input.targetSceneDurationSec, sources:dossier.sources });
+  const visualKinds = ['ai_video','ai_image','source_card','chart','motion_graphic'];
+  const visualMix = Object.fromEntries(visualKinds.map((kind) => [kind, scenes.filter((scene) => scene.kind === kind).length]));
   const estimatedCostUsd = estimateProductionCost({ narrationSeconds: input.targetDurationSec, scenes }) + (isShort ? 0 : packaging.length * 0.12);
   event('PLAN', `Hybrid visual mix: ${Object.entries(visualMix).map(([kind,count]) => `${kind}=${count}`).join(', ')}`);
 
@@ -64,18 +65,38 @@ export async function runContentPipeline(input: {
   const voice = await input.voiceProvider.synthesize({ text: script.beats.map((beat) => beat.narration).join('\n\n'), voice: input.voice, language: input.language });
   const assets: AssetRecord[] = [];
 
-  for (const scene of scenes.filter((candidate) => !candidate.generated && ['chart','motion_graphic','text'].includes(candidate.kind))) {
+  for (const scene of scenes.filter((candidate) => !candidate.generated && ['chart','motion_graphic','text','source_card'].includes(candidate.kind))) {
+    const direct = scene.kind === 'source_card' ? scene.sourceRefs?.find((ref) => ref.policy === 'DIRECT_ASSET_ALLOWED' && ref.url) : undefined;
+    if (direct?.url) {
+      assets.push({
+        id:`source-${scene.id}`,
+        uri:direct.url,
+        mimeType:/\.(mp4|webm)(?:\?|#|$)/i.test(direct.url)?'video/mp4':'image/jpeg',
+        provider:'source-backed-direct',
+        model:'source-visual-v1',
+        costUsd:0,
+        sceneId:scene.id,
+        generated:false,
+        sourceIds:scene.sourceIds,
+        sourceUrl:direct.url,
+        license:'verify-before-public',
+        metadata:{ kind:scene.kind, instruction:scene.instruction, sourceRefs:scene.sourceRefs ?? [], visualValue:scene.visualValue ?? null, selectionReason:scene.selectionReason ?? null },
+      });
+      continue;
+    }
     assets.push({
       id:`procedural-${scene.id}`,
       uri:`procedural://${scene.kind}/${encodeURIComponent(scene.id)}`,
       mimeType:'application/x-auto-ytb-visual',
       provider:'procedural-ffmpeg',
-      model:'hybrid-visual-v1',
+      model:scene.kind === 'source_card' ? 'source-card-v1' : 'hybrid-visual-v1',
       costUsd:0.002,
       sceneId:scene.id,
       generated:false,
       sourceIds:scene.sourceIds,
-      metadata:{ kind:scene.kind, instruction:scene.instruction, visualValue:scene.visualValue ?? null, selectionReason:scene.selectionReason ?? null },
+      sourceUrl:scene.sourceRefs?.[0]?.url,
+      license:'original-transformed-card',
+      metadata:{ kind:scene.kind, instruction:scene.instruction, sourceRefs:scene.sourceRefs ?? [], visualValue:scene.visualValue ?? null, selectionReason:scene.selectionReason ?? null },
     });
   }
 
@@ -83,7 +104,7 @@ export async function runContentPipeline(input: {
     const generated = scene.kind === 'ai_video'
       ? await input.videoProvider.generate({ prompt: `${scene.instruction} Compose natively for ${aspectRatio}; keep the focal subject readable on a phone screen.`, durationSeconds: Math.min(scene.durationSec, 8), aspectRatio })
       : await input.imageProvider.generate({ prompt: `${scene.instruction} Compose natively for ${aspectRatio}; keep the focal subject readable on a phone screen.`, aspectRatio });
-    assets.push({ ...generated, sceneId: scene.id, generated: true, sourceIds: scene.sourceIds, metadata:{ visualValue:scene.visualValue ?? null, selectionReason:scene.selectionReason ?? null } });
+    assets.push({ ...generated, sceneId: scene.id, generated: true, sourceIds: scene.sourceIds, metadata:{ sourceRefs:scene.sourceRefs ?? [], visualValue:scene.visualValue ?? null, selectionReason:scene.selectionReason ?? null } });
   }
 
   const thumbnails: ThumbnailAsset[] = [];
@@ -125,7 +146,7 @@ export async function runContentPipeline(input: {
     containsSyntheticMedia: scenes.some((scene) => scene.generated),
   };
 
-  event('QA', 'Running factual, provenance, originality, visual coverage, hybrid-media, format, packaging and cost gates');
+  event('QA', 'Running factual, provenance, originality, visual coverage, source-rights, hybrid-media, format, packaging and cost gates');
   const qa = runQa({ dossier, script, manifest, maxCostUsd: input.maxCostUsd });
   if (!qa.passed) {
     event('BLOCKED', `QA blockers: ${qa.blockers.join(', ')}`);
