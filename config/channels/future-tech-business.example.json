@@ -1,16 +1,25 @@
 {
   "id": "future-tech-business-en",
   "channelKey": "future-tech-business-en",
+  "credentialsRef": "PRIMARY",
   "language": "en",
   "region": "US",
   "positioning": "Cinematic explain-documentaries about technology, AI, internet platforms and the businesses shaping the future.",
   "targetViewer": "18-44 English-speaking curious technology/business viewer",
   "audienceMode": "general",
+  "themes": ["ai", "technology", "business", "internet", "platforms", "cybersecurity", "startups", "future"],
+  "styleTags": ["cinematic", "documentary", "analytical", "evidence-led", "credible", "high-curiosity"],
   "supportedFormats": ["LONG_HORIZONTAL", "SHORT_VERTICAL", "HYBRID"],
   "preferredFormat": "AUTO",
   "targetDurationSec": 660,
   "shortTargetDurationSec": 45,
   "maxProductionCostUsd": 18,
+  "portfolio": {
+    "enabled": true,
+    "growthPriority": 100,
+    "maximumDailyBudgetUsd": 25,
+    "maximumVideosPerDay": 1
+  },
   "identity": {
     "archetype": "cinematic-analyst",
     "characterMode": "none",
@@ -44,6 +53,7 @@
     "autonomyMode": "FULL_AUTONOMOUS",
     "humanReviewRequired": false,
     "allowAutomaticPublicScheduling": true,
+    "autoPublishDelayMinutes": 30,
     "minimumQaScoreForAutoPublish": 88,
     "minimumResearchConfidenceForAutoPublish": 78,
     "blockOnUnresolvedRights": true,
