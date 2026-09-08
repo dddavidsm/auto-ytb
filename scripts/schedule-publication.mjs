@@ -34,7 +34,16 @@ try{
     body:JSON.stringify({id:publication.youtube_video_id,status:{privacyStatus:'private',publishAt:publishAt.toISOString()}}),
   });
   if(!response.ok) throw new Error(`YouTube schedule failed ${response.status}: ${(await response.text()).slice(0,700)}`);
-  await db.query(`update publications set state='scheduled',publish_at=$2,updated_at=now() where id=$1`,[publicationId,publishAt]);
-  await db.query(`insert into review_decisions (publication_id,action,publish_at,metadata) values ($1,'schedule',$2,$3::jsonb)`,[publicationId,publishAt,JSON.stringify({youtubeVideoId:publication.youtube_video_id,rightsGate:'passed'})]);
-  console.log(JSON.stringify({publicationId,youtubeVideoId:publication.youtube_video_id,state:'scheduled',publishAt:publishAt.toISOString(),rightsGate:'passed'},null,2));
+  await db.transaction(async(tx)=>{
+    await tx.query(`update publications set state='scheduled',publish_at=$2,updated_at=now() where id=$1`,[publicationId,publishAt]);
+    await tx.query(`insert into review_decisions (publication_id,action,publish_at,metadata) values ($1,'schedule',$2,$3::jsonb)`,[publicationId,publishAt,JSON.stringify({youtubeVideoId:publication.youtube_video_id,rightsGate:'passed'})]);
+    if(publication.production_run_id){
+      const episodes=await tx.query(`select id from series_episodes where production_run_id=$1`,[publication.production_run_id]);
+      for(const episode of episodes.rows){
+        await tx.query(`update series_episode_memory set canonical=true,active=true where episode_id=$1`,[episode.id]);
+        await tx.query(`update series_episodes set status='scheduled',continuity_snapshot=continuity_snapshot||$2::jsonb,updated_at=now() where id=$1`,[episode.id,JSON.stringify({memoryCanonical:true,memoryPromotedAt:new Date().toISOString(),publishAt:publishAt.toISOString()})]);
+      }
+    }
+  });
+  console.log(JSON.stringify({publicationId,youtubeVideoId:publication.youtube_video_id,state:'scheduled',publishAt:publishAt.toISOString(),rightsGate:'passed',seriesMemory:'promoted-if-present'},null,2));
 } finally { await db.close(); }
