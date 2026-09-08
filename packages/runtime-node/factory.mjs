@@ -12,7 +12,7 @@ import { withContinuityBridgeVideo } from './continuity-video.mjs';
 import { withLicensedSoundtrack } from './soundtrack.mjs';
 import { withArchetypeEditorialFinish } from './editorial-finish.mjs';
 import { inferContentArchetype } from '@auto-ytb/os';
-import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
+import { TavilySearchProvider, OpenAIResponsesTextModel, GeminiGenerateContentTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
 
 const reqFrom = (env,name) => {
@@ -84,8 +84,15 @@ export function createLiveRuntime(env = process.env) {
     if(searchKey){const rawSearch = new TavilySearchProvider({ apiKey: searchKey });search = meterSearchProvider(rawSearch,meter);}
   }
 
-  const modelName = env.TEXT_MODEL_RESEARCH || 'gpt-5';
-  const rawModel = new OpenAIResponsesTextModel({ apiKey: reqFrom(env,'TEXT_MODEL_API_KEY'), model: modelName, endpoint: env.TEXT_MODEL_BASE_URL || undefined });
+  const textProvider=String(env.TEXT_MODEL_PROVIDER||'openai').toLowerCase();
+  let rawModel;
+  if(textProvider==='gemini'){
+    const modelName=env.TEXT_MODEL_RESEARCH||env.GEMINI_TEXT_MODEL||'gemini-3.8-flash';
+    rawModel=new GeminiGenerateContentTextModel({apiKey:reqFrom(env,'GEMINI_API_KEY'),model:modelName,endpoint:env.GEMINI_API_BASE_URL||undefined});
+  }else if(textProvider==='openai'){
+    const modelName=env.TEXT_MODEL_RESEARCH||'gpt-5';
+    rawModel=new OpenAIResponsesTextModel({apiKey:reqFrom(env,'TEXT_MODEL_API_KEY'),model:modelName,endpoint:env.TEXT_MODEL_BASE_URL||undefined});
+  }else throw new Error(`Unsupported TEXT_MODEL_PROVIDER: ${textProvider}`);
   const measuredModel = meterTextModel(rawModel,meter);
   const seriesModel = bindTextModelToSeries(measuredModel,seriesContext);
   const model = bindTextModelToContentArchetype(seriesModel,archetypeProfile);
