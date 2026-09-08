@@ -4,7 +4,7 @@ import { ProviderUsageMeter, meterSearchProvider, meterTextModel, meterVoiceProv
 import { withFinalMediaInspection } from './media-inspector.mjs';
 import { bindMediaProviderToBrand, parseBrandContinuityContext } from './brand-continuity.mjs';
 import { bindTextModelToSeries, parseSeriesContinuityContext } from './series-continuity.mjs';
-import { bindVoiceProviderToSeries } from './series-voice.mjs';
+import { bindDialogueVoiceProviderToSeries } from './series-dialogue-voice.mjs';
 import { withElevenLabsVoiceControls } from './elevenlabs-voice-controls.mjs';
 import { bindImageProviderToContentArchetype, bindTextModelToContentArchetype, bindVideoProviderToContentArchetype, normalizeContentArchetypeProfile } from './content-archetype.mjs';
 import { withContinuityBridgeVideo } from './continuity-video.mjs';
@@ -84,7 +84,7 @@ export function createLiveRuntime(env = process.env) {
   const rawVoice = new ElevenLabsVoiceProvider({ apiKey:voiceApiKey, store, modelId:voiceModel, useTimestamps:env.VOICE_TIMESTAMPS!=='false' });
   const controlledVoice=withElevenLabsVoiceControls(rawVoice,{apiKey:voiceApiKey,store,modelId:voiceModel});
   const meteredVoice=meterVoiceProvider(controlledVoice,meter,{model:voiceModel});
-  const voice=bindVoiceProviderToSeries(meteredVoice,seriesContext);
+  const voice=bindDialogueVoiceProviderToSeries(meteredVoice,seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
 
   let image;
   let video;
