@@ -1,6 +1,6 @@
 import { NodeLocalObjectStore, FfmpegRenderer, NodeUploadAssetLoader, NodePostgresSqlClient } from './index.mjs';
 import { FfmpegThumbnailComposer } from './thumbnail.mjs';
-import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider } from '@auto-ytb/providers';
+import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
 
 const req = (name) => {
@@ -20,7 +20,7 @@ export function createLiveRuntime(env = process.env) {
 
   const voiceProvider = (env.VOICE_PROVIDER || 'elevenlabs').toLowerCase();
   if (voiceProvider !== 'elevenlabs') throw new Error(`Unsupported VOICE_PROVIDER: ${voiceProvider}`);
-  const voice = new ElevenLabsVoiceProvider({ apiKey: req('VOICE_API_KEY'), store, modelId: env.VOICE_MODEL || undefined });
+  const voice = new ElevenLabsVoiceProvider({ apiKey: req('VOICE_API_KEY'), store, modelId: env.VOICE_MODEL || undefined, useTimestamps:env.VOICE_TIMESTAMPS!=='false' });
 
   let image;
   let video;
@@ -36,7 +36,10 @@ export function createLiveRuntime(env = process.env) {
   const loader = new NodeUploadAssetLoader();
   const publisher = new YouTubePublisher(oauth, loader);
   const analytics = new YouTubeAnalyticsClient(oauth);
+  const library=(env.CONTENT_LIBRARY_PROVIDER||'google-drive').toLowerCase()==='google-drive'
+    ? new GoogleDriveLibraryProvider({getAccessToken:()=>oauth.getAccessToken(),rootFolderName:env.DRIVE_ROOT_FOLDER||'AUTO-YTB'})
+    : undefined;
   const db = env.DATABASE_URL ? new NodePostgresSqlClient(env.DATABASE_URL, { ssl: env.DATABASE_SSL === 'true' ? { rejectUnauthorized:false } : undefined }) : undefined;
 
-  return { store, search, model, voice, image, video, renderer, thumbnailComposer, oauth, publisher, analytics, db };
+  return { store, search, model, voice, image, video, renderer, thumbnailComposer, oauth, publisher, analytics, library, loader, db };
 }
