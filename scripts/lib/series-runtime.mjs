@@ -4,6 +4,7 @@ const arr=(value)=>Array.isArray(value)?value:[];
 const obj=(value)=>value&&typeof value==='object'?value:{};
 const text=(value,fallback='')=>String(value??fallback).trim();
 const num=(value,fallback=0)=>Number.isFinite(Number(value))?Number(value):fallback;
+const voiceRoleScore=(role)=>/narrator|host|lead|protagonist|main|hero/i.test(text(role))?3:text(role)?1:0;
 
 function characterFromRow(row){
   const spec=obj(row.specification);
@@ -27,6 +28,8 @@ function visualReferenceCatalog(characters,styles){
     ...styles.filter((item)=>item.canonicalReferenceUri).map((item)=>({kind:'style',key:item.key,name:item.name,role:null,continuityKey:item.continuityKey,uri:item.canonicalReferenceUri})),
   ];
 }
+function voiceCastCatalog(characters){return characters.map((item)=>({key:item.key,name:item.name,role:item.role??null,continuityKey:item.continuityKey,voiceProfile:obj(item.voiceProfile)}));}
+function primaryVoiceKey(characters){return [...characters].sort((a,b)=>voiceRoleScore(b.role)-voiceRoleScore(a.role))[0]?.key??null;}
 
 export async function loadSeriesRegistry(db,channelId){
   const rows=(await db.query(`select s.*,b.id as bible_id,b.version as bible_version,b.continuity_key as bible_continuity_key,b.bible,b.validation
@@ -69,7 +72,7 @@ async function reserveEpisode(db,entry,contextSeed){
     const episodeNumber=Math.max(1,Math.floor(num(next?.next_episode,1)));
     const episodeKey=`s01e${String(episodeNumber).padStart(3,'0')}`;
     const baseContext=buildSeriesContinuityContext({profile:entry.profile,bible:entry.bible,bibleVersion:num(entry.row.bible_version,1),continuityKey:text(entry.row.bible_continuity_key||entry.row.continuity_key),characters:entry.characters,styles:entry.styles,memories:entry.memories,seasonNumber:1,episodeNumber});
-    const continuityContext={...baseContext,visualReferences:visualReferenceCatalog(entry.characters,entry.styles)};
+    const continuityContext={...baseContext,visualReferences:visualReferenceCatalog(entry.characters,entry.styles),voiceCast:voiceCastCatalog(entry.characters),primaryVoiceKey:primaryVoiceKey(entry.characters)};
     const inserted=(await tx.query(`insert into series_episodes (series_id,bible_version_id,season_number,episode_number,episode_key,premise,status,continuity_snapshot)
       values ($1,$2,1,$3,$4,$5,'planned',$6::jsonb) returning id`,[entry.row.id,entry.row.bible_id,episodeNumber,episodeKey,contextSeed.topic,JSON.stringify(continuityContext)])).rows[0];
     return{seriesEpisodeId:inserted.id,continuityContext};
