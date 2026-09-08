@@ -124,6 +124,7 @@ export interface Publisher {
     categoryId?: string;
     language: string;
     containsSyntheticMedia: boolean;
+    selfDeclaredMadeForKids?: boolean;
   }): Promise<{ externalId: string; url?: string; status: 'private' }>;
   setThumbnail(input: { externalId: string; fileUri: string }): Promise<{ status: 'set' }>;
   schedule(input: { externalId: string; publishAt: string }): Promise<{ status: 'scheduled'; publishAt: string }>;
