@@ -8,17 +8,15 @@ const maxAttempts=Math.max(1,Math.min(20,Math.floor(num('JOB_MAX_ATTEMPTS',4))))
 const today=new Date().toISOString().slice(0,10);
 const db=new NodePostgresSqlClient(req('DATABASE_URL'),{ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined});
 try{
-  const publications=await db.query(`select count(*)::int as count from publications where youtube_video_id is not null and state in ('private','reviewed','scheduled','public')`);
-  if(Number(publications.rows[0]?.count ?? 0)===0){
-    console.log(JSON.stringify({scheduled:0,reason:'no YouTube publications to sync',date:today},null,2));
-  } else {
-    const payload={days,scheduledDate:today};
-    const result=await db.query(`insert into jobs (job_key,kind,state,priority,max_attempts,payload) values ($1,'analytics_sync','queued',$2,$3,$4::jsonb) on conflict (job_key) do nothing returning id`,[`analytics-sync:${today}`,priority,maxAttempts,JSON.stringify(payload)]);
-    if(result.rows[0]){
-      await db.query(`insert into job_events (job_id,event_type,detail) values ($1,'scheduled',$2::jsonb)`,[result.rows[0].id,JSON.stringify(payload)]);
-      console.log(JSON.stringify({scheduled:1,jobId:result.rows[0].id,kind:'analytics_sync',days,date:today},null,2));
-    } else {
-      console.log(JSON.stringify({scheduled:0,reason:'maintenance job already exists',date:today},null,2));
+  const channels=(await db.query(`select c.id,c.channel_key,c.credentials_ref,count(p.id)::int as publications from channels c join publications p on p.channel_id=c.id and p.youtube_video_id is not null and p.state in ('private','reviewed','scheduled','public') where c.is_owned=true and c.automation_enabled is distinct from false group by c.id,c.channel_key,c.credentials_ref order by c.channel_key`)).rows;
+  if(!channels.length){console.log(JSON.stringify({scheduled:0,reason:'no YouTube publications to sync',date:today},null,2));}
+  else{
+    const scheduled=[];
+    for(const channel of channels){
+      const payload={days,scheduledDate:today,channelId:channel.id,channelKey:channel.channel_key,credentialsRef:channel.credentials_ref??'PRIMARY'};
+      const result=await db.query(`insert into jobs (job_key,kind,channel_id,state,priority,max_attempts,payload) values ($1,'analytics_sync',$2,'queued',$3,$4,$5::jsonb) on conflict (job_key) do nothing returning id`,[`analytics-sync:${channel.id}:${today}`,channel.id,priority,maxAttempts,JSON.stringify(payload)]);
+      if(result.rows[0]){await db.query(`insert into job_events (job_id,event_type,detail) values ($1,'scheduled',$2::jsonb)`,[result.rows[0].id,JSON.stringify(payload)]);scheduled.push({jobId:result.rows[0].id,channelId:channel.id,channelKey:channel.channel_key,publications:Number(channel.publications)});}
     }
+    console.log(JSON.stringify({scheduled:scheduled.length,days,date:today,jobs:scheduled},null,2));
   }
-} finally { await db.close(); }
+} finally {await db.close();}
