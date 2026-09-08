@@ -19,7 +19,7 @@ function run(script){return new Promise((resolve,reject)=>{const child=spawn(pro
 async function tick(){
   const startedAt=new Date().toISOString(),results=[];
   await heartbeat('running',{startedAt,intervalMs},true);
-  for(const script of ['scripts/schedule-branding.mjs','scripts/schedule-intelligence.mjs','scripts/schedule-production.mjs','scripts/schedule-maintenance.mjs']){
+  for(const script of ['scripts/schedule-branding.mjs','scripts/schedule-intelligence.mjs','scripts/schedule-production-series.mjs','scripts/schedule-maintenance.mjs']){
     try{await run(script);results.push({script,status:'ok'});}catch(error){results.push({script,status:'error',error:error instanceof Error?error.message:String(error)});}
     await heartbeat('running',{startedAt,currentScript:script,completed:results.length,total:4});
   }
