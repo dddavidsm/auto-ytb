@@ -3,6 +3,7 @@ export const YOUTUBE_SCOPES = {
   manage: 'https://www.googleapis.com/auth/youtube.force-ssl',
   analytics: 'https://www.googleapis.com/auth/yt-analytics.readonly',
   analyticsMonetary: 'https://www.googleapis.com/auth/yt-analytics-monetary.readonly',
+  driveFile: 'https://www.googleapis.com/auth/drive.file',
 } as const;
 
 export type OAuthCredentials = {
@@ -24,7 +25,7 @@ export function buildYouTubeAuthorizationUrl(input: {
     response_type: 'code',
     access_type: 'offline',
     prompt: 'consent',
-    scope: (input.scopes ?? [YOUTUBE_SCOPES.upload, YOUTUBE_SCOPES.manage, YOUTUBE_SCOPES.analytics, YOUTUBE_SCOPES.analyticsMonetary]).join(' '),
+    scope: (input.scopes ?? [YOUTUBE_SCOPES.upload, YOUTUBE_SCOPES.manage, YOUTUBE_SCOPES.analytics, YOUTUBE_SCOPES.analyticsMonetary, YOUTUBE_SCOPES.driveFile]).join(' '),
   });
   if (input.state) params.set('state', input.state);
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
