@@ -1,6 +1,7 @@
 import { NodeLocalObjectStore, FfmpegRenderer, NodeUploadAssetLoader, NodePostgresSqlClient } from './index.mjs';
 import { FfmpegThumbnailComposer } from './thumbnail.mjs';
 import { ProviderUsageMeter, meterSearchProvider, meterTextModel, meterVoiceProvider, meterImageProvider, meterVideoProvider } from './metering.mjs';
+import { withFinalMediaInspection } from './media-inspector.mjs';
 import { TavilySearchProvider, OpenAIResponsesTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, GoogleDriveLibraryProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
 
@@ -38,7 +39,7 @@ export function createLiveRuntime(env = process.env) {
     video = meterVideoProvider(runway,meter,{model:videoModel});
   }
 
-  const renderer = new FfmpegRenderer({ outputRoot: env.LOCAL_RENDER_ROOT || '.data/renders' });
+  const renderer = withFinalMediaInspection(new FfmpegRenderer({ outputRoot: env.LOCAL_RENDER_ROOT || '.data/renders' }),{ffmpeg:env.FFMPEG_BIN||'ffmpeg',ffprobe:env.FFPROBE_BIN||'ffprobe'});
   const thumbnailComposer = new FfmpegThumbnailComposer({ outputRoot: env.LOCAL_THUMBNAIL_ROOT || '.data/thumbnails' });
   const oauth = new GoogleOAuthTokenProvider({ clientId:reqFrom(env,'YOUTUBE_CLIENT_ID'), clientSecret:reqFrom(env,'YOUTUBE_CLIENT_SECRET'), refreshToken:reqFrom(env,'YOUTUBE_REFRESH_TOKEN') });
   const loader = new NodeUploadAssetLoader();
