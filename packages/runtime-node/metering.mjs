@@ -74,7 +74,7 @@ export function meterSearchProvider(provider,meter){
 }
 
 export function meterTextModel(model,meter){
-  return {name:model.name,async generateJson(input){
+  return {name:model.name,getNonAssetCostUsd:()=>meter.nonAssetCostUsd,async generateJson(input){
     const result=await model.generateJson(input);
     const modelId=String(model.name||'').replace(/^openai:/,'');
     const rates=openAiRates(modelId,meter);
