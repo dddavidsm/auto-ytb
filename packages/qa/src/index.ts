@@ -1,8 +1,12 @@
 import type { ResearchDossier } from '@auto-ytb/editorial';
 import type { ProductionManifest, VideoScript } from '@auto-ytb/production';
+import { reviewAttentionBlueprint, type AttentionReview } from './attention.js';
+
+export { reviewAttentionBlueprint } from './attention.js';
+export type { AttentionDimension, AttentionDimensionId, AttentionIssue, AttentionReview } from './attention.js';
 
 export type QaCheck = { id: string; status: 'PASS' | 'WARN' | 'FAIL'; score: number; message: string };
-export type QaReport = { passed: boolean; score: number; checks: QaCheck[]; containsSyntheticMedia: boolean; blockers: string[] };
+export type QaReport = { passed: boolean; score: number; checks: QaCheck[]; containsSyntheticMedia: boolean; blockers: string[]; attention: AttentionReview };
 
 function words(text: string): string[] { return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean); }
 function overlap(a: string, b: string): number {
@@ -12,7 +16,7 @@ function overlap(a: string, b: string): number {
 }
 function clamp(value:number,min=0,max=100){return Math.max(min,Math.min(max,value));}
 
-export function runQa(input: { dossier: ResearchDossier; script: VideoScript; manifest: ProductionManifest; priorScripts?: VideoScript[]; maxCostUsd?: number }): QaReport {
+export function runQa(input: { dossier: ResearchDossier; script: VideoScript; manifest: ProductionManifest; priorScripts?: VideoScript[]; maxCostUsd?: number; minAttentionScore?: number }): QaReport {
   const checks: QaCheck[] = [];
   const criticalUnsupported = input.dossier.claims.filter((claim) => claim.importance === 'critical' && claim.sourceIds.length === 0);
   checks.push({ id: 'factual', status: criticalUnsupported.length ? 'FAIL' : input.dossier.researchConfidence < 65 ? 'WARN' : 'PASS', score: criticalUnsupported.length ? 0 : input.dossier.researchConfidence, message: criticalUnsupported.length ? `${criticalUnsupported.length} critical claims unsupported` : `Research confidence ${input.dossier.researchConfidence}` });
@@ -100,11 +104,14 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
   const synthetic = input.manifest.scenes.some((scene) => scene.generated) || input.manifest.assets.some((asset) => asset.generated);
   checks.push({ id: 'synthetic-disclosure', status: 'PASS', score: 100, message: synthetic ? 'Synthetic media disclosure required where applicable' : 'No synthetic-media disclosure required by video asset plan' });
 
-  const estimated = input.manifest.estimatedCostUsd;
+  const costForGate = Math.max(Number(input.manifest.estimatedCostUsd??0), Number(input.manifest.actualCostUsd??0));
   const maxCost = input.maxCostUsd ?? 25;
-  checks.push({ id: 'cost', status: estimated > maxCost ? 'FAIL' : estimated > maxCost * 0.75 ? 'WARN' : 'PASS', score: Math.max(0, Math.round(100 - (estimated / maxCost) * 70)), message: `Estimated cost $${estimated.toFixed(2)} / cap $${maxCost.toFixed(2)}` });
+  checks.push({ id: 'cost', status: costForGate > maxCost ? 'FAIL' : costForGate > maxCost * 0.75 ? 'WARN' : 'PASS', score: Math.max(0, Math.round(100 - (costForGate / maxCost) * 70)), message: `Pre-render cost $${costForGate.toFixed(2)} / cap $${maxCost.toFixed(2)}` });
+
+  const attention=reviewAttentionBlueprint({script:input.script,packaging:input.manifest.packaging,scenes:input.manifest.scenes,contentFormat:input.manifest.contentFormat,selectedPackagingId:input.manifest.selectedPackagingId,minScore:input.minAttentionScore});
+  checks.push({id:'attention-readiness',status:attention.ready?'PASS':'FAIL',score:attention.score,message:attention.ready?`Attention blueprint ${attention.score}/100 ready for production`:`Attention blueprint ${attention.score}/100 blocked · ${attention.issues.map((issue)=>issue.code).join(', ')}`});
 
   const blockers = checks.filter((check) => check.status === 'FAIL').map((check) => check.id);
   const score = Math.round(checks.reduce((sum, check) => sum + check.score, 0) / checks.length);
-  return { passed: blockers.length === 0, score, checks, containsSyntheticMedia: synthetic, blockers };
+  return { passed: blockers.length === 0, score, checks, containsSyntheticMedia: synthetic, blockers, attention };
 }
