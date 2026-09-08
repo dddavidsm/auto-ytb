@@ -21,6 +21,19 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
   const unknownSources = input.script.beats.flatMap((beat) => beat.sourceIds).filter((id) => !knownSourceIds.has(id));
   checks.push({ id: 'provenance', status: unknownSources.length ? 'FAIL' : 'PASS', score: unknownSources.length ? 0 : 100, message: unknownSources.length ? 'Script contains unknown source references' : 'All script source references resolve' });
 
+  const scriptLanguage=String(input.script.language||'').toLowerCase().slice(0,2);
+  const voiceLanguage=String(input.manifest.voice?.language||input.script.language||'').toLowerCase().slice(0,2);
+  const languageMismatch=Boolean(scriptLanguage&&voiceLanguage&&scriptLanguage!==voiceLanguage);
+  checks.push({id:'language-consistency',status:languageMismatch?'FAIL':'PASS',score:languageMismatch?0:100,message:languageMismatch?`Script language ${scriptLanguage} does not match narration language ${voiceLanguage}`:`Script and narration language aligned (${scriptLanguage||'unknown'})`});
+
+  const voiceDuration=Number(input.manifest.voice?.durationSeconds??0);
+  const scriptDuration=Number(input.script.targetDurationSec??0);
+  const durationDelta=voiceDuration>0&&scriptDuration>0?Math.abs(voiceDuration-scriptDuration)/voiceDuration:1;
+  const hasAlignment=Boolean(input.manifest.voice?.alignment?.characters?.length);
+  const audioSyncFail=voiceDuration<=0||scriptDuration<=0||durationDelta>0.06;
+  const audioSyncWarn=!audioSyncFail&&!hasAlignment;
+  checks.push({id:'audio-visual-sync',status:audioSyncFail?'FAIL':audioSyncWarn?'WARN':'PASS',score:audioSyncFail?0:audioSyncWarn?78:100,message:audioSyncFail?`Narration/script duration mismatch ${(durationDelta*100).toFixed(1)}%`:hasAlignment?`Timestamped narration aligned to ${voiceDuration.toFixed(1)}s`:`Narration duration aligned but provider supplied no timestamp map`});
+
   const sourceScenes = input.manifest.scenes.filter((scene) => scene.kind === 'source_card' || scene.kind === 'screenshot' || scene.kind === 'archive');
   const sourceScenesWithoutRefs = sourceScenes.filter((scene) => !scene.sourceRefs?.length || scene.sourceRefs.some((ref) => !knownSourceIds.has(ref.sourceId)));
   const directAssetsPendingLicense = input.manifest.assets.filter((asset) => asset.provider === 'source-backed-direct' && (!asset.license || asset.license === 'verify-before-public'));
