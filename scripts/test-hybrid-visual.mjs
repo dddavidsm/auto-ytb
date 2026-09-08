@@ -26,7 +26,11 @@ const packaging={id:'p',title:'Title',thumbnailConcept:'Concept',thumbnailText:'
 const assets=scenes.map((scene)=>scene.generated
   ? {id:`asset-${scene.id}`,uri:`mock://${scene.id}`,mimeType:scene.kind==='ai_video'?'video/mp4':'image/png',provider:'mock-ai',sceneId:scene.id,generated:true,sourceIds:scene.sourceIds,costUsd:0}
   : {id:`procedural-${scene.id}`,uri:`procedural://${scene.kind}/${scene.id}`,mimeType:'application/x-auto-ytb-visual',provider:'procedural-ffmpeg',sceneId:scene.id,generated:false,sourceIds:scene.sourceIds,costUsd:0.002});
-const manifest={projectId:'x',createdAt:'x',contentFormat:'LONG_HORIZONTAL',aspectRatio:'16:9',frame:{width:1920,height:1080},script,packaging:[packaging],thumbnails:[{id:'thumb',uri:'mock://thumb.jpg',mimeType:'image/jpeg',provider:'mock',packagingId:'p',bytes:250000,costUsd:0}],selectedPackagingId:'p',scenes,assets,estimatedCostUsd:hybridCost,actualCostUsd:hybridCost,containsSyntheticMedia:true};
+const voice={
+  id:'voice',uri:'mock://voice.mp3',mimeType:'audio/mpeg',provider:'mock-voice',durationSeconds:80,language:'en',voiceId:'narrator',
+  alignment:{characters:['A','.'],characterStartTimesSeconds:[0,79.5],characterEndTimesSeconds:[0.2,80]}
+};
+const manifest={projectId:'x',createdAt:'x',contentFormat:'LONG_HORIZONTAL',aspectRatio:'16:9',frame:{width:1920,height:1080},script,packaging:[packaging],thumbnails:[{id:'thumb',uri:'mock://thumb.jpg',mimeType:'image/jpeg',provider:'mock',packagingId:'p',bytes:250000,costUsd:0}],selectedPackagingId:'p',scenes,assets,voice,estimatedCostUsd:hybridCost,actualCostUsd:hybridCost,containsSyntheticMedia:true};
 const qa=runQa({dossier,script,manifest,maxCostUsd:20});
 assert.equal(qa.passed,true);
 assert.ok(qa.checks.some((check)=>check.id==='hybrid-visual-balance'));
