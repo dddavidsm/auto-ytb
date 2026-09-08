@@ -1,3 +1,5 @@
+export * from './channel-routing.js';
+
 export type ChannelDna = {
   id: string;
   language: string;
