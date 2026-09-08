@@ -34,20 +34,37 @@ export function channelProfileFromConfig(config,channelId){
   };
 }
 
+function persistedIdentity(config){
+  return {
+    ...(config.identity??{}),
+    channelKey:config.channelKey,
+    positioning:config.positioning??'',
+    targetViewer:config.targetViewer??'',
+    themes:Array.isArray(config.themes)?config.themes:[],
+    styleTags:Array.isArray(config.styleTags)?config.styleTags:[],
+    supportedFormats:Array.isArray(config.supportedFormats)?config.supportedFormats:[],
+    preferredFormat:config.preferredFormat??'AUTO',
+    portfolio:config.portfolio??{},
+    economics:config.economics??{},
+    quality:config.quality??{},
+  };
+}
+
 export async function ensureOwnedChannelRows(db,configs,env=process.env){
   const rows=[];
   for(const config of configs){
     const key=String(config.channelKey);
     const credentialsRef=String(config.credentialsRef??'PRIMARY');
     const youtubeChannelId=channelEnv(env,'YOUTUBE_CHANNEL_ID',credentialsRef)??null;
+    const identity=persistedIdentity(config);
     const existing=(await db.query(`select id,youtube_channel_id,lifecycle_state from channels where channel_key=$1 and is_owned=true limit 1`,[key])).rows[0];
     const lifecycleState=youtubeChannelId?'ready':'awaiting_channel';
     let row;
     if(existing){
-      const updated=await db.query(`update channels set youtube_channel_id=coalesce($2,youtube_channel_id),title=$3,language=$4,country=$5,niche=$6,identity=$7::jsonb,voice_profile=$8::jsonb,autonomy_policy=$9::jsonb,library_policy=$10::jsonb,channel_key=$1,credentials_ref=$11,config_path=$12,lifecycle_state=case when coalesce($2,youtube_channel_id) is not null then 'ready' else lifecycle_state end,automation_enabled=$13,updated_at=now() where id=$14 returning *`,[key,youtubeChannelId,String(config.id),String(config.language),config.region??null,String(config.id),JSON.stringify(config.identity??{}),JSON.stringify(config.voiceProfile??{}),JSON.stringify(config.publishing??{}),JSON.stringify(config.library??{}),credentialsRef,config.__path,config.portfolio?.enabled!==false,existing.id]);
+      const updated=await db.query(`update channels set youtube_channel_id=coalesce($2,youtube_channel_id),title=$3,language=$4,country=$5,niche=$6,identity=$7::jsonb,voice_profile=$8::jsonb,autonomy_policy=$9::jsonb,library_policy=$10::jsonb,channel_key=$1,credentials_ref=$11,config_path=$12,lifecycle_state=case when coalesce($2,youtube_channel_id) is not null then 'ready' else lifecycle_state end,automation_enabled=$13,updated_at=now() where id=$14 returning *`,[key,youtubeChannelId,String(config.id),String(config.language),config.region??null,String(config.id),JSON.stringify(identity),JSON.stringify(config.voiceProfile??{}),JSON.stringify(config.publishing??{}),JSON.stringify(config.library??{}),credentialsRef,config.__path,config.portfolio?.enabled!==false,existing.id]);
       row=updated.rows[0];
     } else {
-      const inserted=await db.query(`insert into channels (youtube_channel_id,title,language,country,niche,is_owned,channel_key,identity,voice_profile,autonomy_policy,library_policy,credentials_ref,config_path,lifecycle_state,automation_enabled) values ($1,$2,$3,$4,$5,true,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13,$14) returning *`,[youtubeChannelId,String(config.id),String(config.language),config.region??null,String(config.id),key,JSON.stringify(config.identity??{}),JSON.stringify(config.voiceProfile??{}),JSON.stringify(config.publishing??{}),JSON.stringify(config.library??{}),credentialsRef,config.__path,lifecycleState,config.portfolio?.enabled!==false]);
+      const inserted=await db.query(`insert into channels (youtube_channel_id,title,language,country,niche,is_owned,channel_key,identity,voice_profile,autonomy_policy,library_policy,credentials_ref,config_path,lifecycle_state,automation_enabled) values ($1,$2,$3,$4,$5,true,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,$13,$14) returning *`,[youtubeChannelId,String(config.id),String(config.language),config.region??null,String(config.id),key,JSON.stringify(identity),JSON.stringify(config.voiceProfile??{}),JSON.stringify(config.publishing??{}),JSON.stringify(config.library??{}),credentialsRef,config.__path,lifecycleState,config.portfolio?.enabled!==false]);
       row=inserted.rows[0];
     }
     rows.push({row,config,profile:channelProfileFromConfig(config,row.id)});
