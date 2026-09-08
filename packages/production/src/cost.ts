@@ -22,7 +22,7 @@ export function estimateProductionCost(input: { narrationSeconds: number; scenes
   const rates = input.rates ?? DEFAULT_COST_RATES;
   const aiImages = input.scenes.filter((scene) => scene.kind === 'ai_image').length;
   const aiVideoSeconds = input.scenes.filter((scene) => scene.kind === 'ai_video').reduce((sum, scene) => sum + scene.durationSec, 0);
-  const proceduralScenes = input.scenes.filter((scene) => scene.kind === 'chart' || scene.kind === 'motion_graphic' || scene.kind === 'text').length;
+  const proceduralScenes = input.scenes.filter((scene) => ['chart','motion_graphic','text','source_card'].includes(scene.kind)).length;
   const value = (input.narrationSeconds / 60) * rates.voicePerMinuteUsd
     + aiImages * rates.aiImageUsd
     + aiVideoSeconds * rates.aiVideoPerSecondUsd
