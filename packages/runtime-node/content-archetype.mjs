@@ -26,9 +26,17 @@ function schemaApplies(schemaName){
 }
 
 function promptPack(profile){
+  const dialogueSerialization=['MULTI_CHARACTER_DIALOGUE','HYBRID_DIALOGUE_NARRATION'].includes(profile.voiceMode)
+    ?'When writing spoken dialogue inside narration fields, serialize every speaker turn on its own line as [Exact Character Name] dialogue. Use [Narrator] only when the archetype explicitly allows integrated narration. Never combine two speakers inside one tagged line; these tags are production controls and will be removed before audio/subtitles.'
+    :'';
+  const noNarrator=profile.voiceMode==='NONE'
+    ?'Do not invent a voice-over just because the generic schema has a narration field. Treat the content as visual-first and keep any verbal context minimal; downstream production may replace non-spoken guidance with natural sound/on-screen context.'
+    :'';
   return[
     `CONTENT ARCHETYPE: ${profile.id} — ${profile.label}.`,
+    `Voice mode: ${profile.voiceMode}. Reality mode: ${profile.realityMode}.`,
     profile.hookPatterns.length?`Preferred hook grammar: ${profile.hookPatterns.join('; ')}.`:'',
+    dialogueSerialization,noNarrator,
     ...profile.scriptGuidance,
     ...profile.voiceGuidance,
     ...profile.packagingGuidance,
