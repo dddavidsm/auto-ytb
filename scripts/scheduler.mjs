@@ -16,12 +16,13 @@ process.on('SIGINT',()=>{stopping=true;});
 const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
 
 function run(script){return new Promise((resolve,reject)=>{const child=spawn(process.execPath,[script],{cwd:process.cwd(),env:process.env,stdio:'inherit'});child.on('error',reject);child.on('exit',(code,signal)=>code===0?resolve():reject(new Error(`${script} failed code=${code} signal=${signal??'none'}`)));});}
+const scripts=['scripts/schedule-branding.mjs','scripts/schedule-intelligence.mjs','scripts/series-memory-sync.mjs','scripts/series-performance-sync.mjs','scripts/recheck-series-publication.mjs','scripts/schedule-production-series.mjs','scripts/schedule-maintenance.mjs'];
 async function tick(){
   const startedAt=new Date().toISOString(),results=[];
   await heartbeat('running',{startedAt,intervalMs},true);
-  for(const script of ['scripts/schedule-branding.mjs','scripts/schedule-intelligence.mjs','scripts/schedule-production-series.mjs','scripts/schedule-maintenance.mjs']){
+  for(const script of scripts){
     try{await run(script);results.push({script,status:'ok'});}catch(error){results.push({script,status:'error',error:error instanceof Error?error.message:String(error)});}
-    await heartbeat('running',{startedAt,currentScript:script,completed:results.length,total:4});
+    await heartbeat('running',{startedAt,currentScript:script,completed:results.length,total:scripts.length});
   }
   const completedAt=new Date().toISOString();
   const failures=results.filter((item)=>item.status==='error').length;
