@@ -13,11 +13,20 @@ const db=new NodePostgresSqlClient(req('DATABASE_URL'),{ssl:process.env.DATABASE
 const oauth=new GoogleOAuthTokenProvider({clientId:req('YOUTUBE_CLIENT_ID'),clientSecret:req('YOUTUBE_CLIENT_SECRET'),refreshToken:req('YOUTUBE_REFRESH_TOKEN')});
 
 try{
-  const result=await db.query(`select id,youtube_video_id,state from publications where id=$1`,[publicationId]);
+  const result=await db.query(`select id,youtube_video_id,state,production_run_id from publications where id=$1`,[publicationId]);
   const publication=result.rows[0];
   if(!publication) throw new Error(`Publication ${publicationId} not found`);
   if(!publication.youtube_video_id) throw new Error('Publication has no YouTube video id');
   if(!['private','reviewed','scheduled'].includes(publication.state)) throw new Error(`Publication state ${publication.state} cannot be scheduled`);
+
+  if(publication.production_run_id){
+    const rights=await db.query(`select id,scene_id,source_url,license from production_assets where production_run_id=$1 and provider='source-backed-direct' and (license is null or license='verify-before-public')`,[publication.production_run_id]);
+    if(rights.rows.length){
+      const refs=rights.rows.slice(0,5).map((row)=>`${row.scene_id ?? row.id}: ${row.source_url ?? 'unknown source'}`).join('; ');
+      throw new Error(`Publication blocked: ${rights.rows.length} direct source assets still require license verification before public release. ${refs}`);
+    }
+  }
+
   const token=await oauth.getAccessToken();
   const response=await fetch('https://www.googleapis.com/youtube/v3/videos?part=status',{
     method:'PUT',
@@ -26,6 +35,6 @@ try{
   });
   if(!response.ok) throw new Error(`YouTube schedule failed ${response.status}: ${(await response.text()).slice(0,700)}`);
   await db.query(`update publications set state='scheduled',publish_at=$2,updated_at=now() where id=$1`,[publicationId,publishAt]);
-  await db.query(`insert into review_decisions (publication_id,action,publish_at,metadata) values ($1,'schedule',$2,$3::jsonb)`,[publicationId,publishAt,JSON.stringify({youtubeVideoId:publication.youtube_video_id})]);
-  console.log(JSON.stringify({publicationId,youtubeVideoId:publication.youtube_video_id,state:'scheduled',publishAt:publishAt.toISOString()},null,2));
+  await db.query(`insert into review_decisions (publication_id,action,publish_at,metadata) values ($1,'schedule',$2,$3::jsonb)`,[publicationId,publishAt,JSON.stringify({youtubeVideoId:publication.youtube_video_id,rightsGate:'passed'})]);
+  console.log(JSON.stringify({publicationId,youtubeVideoId:publication.youtube_video_id,state:'scheduled',publishAt:publishAt.toISOString(),rightsGate:'passed'},null,2));
 } finally { await db.close(); }
