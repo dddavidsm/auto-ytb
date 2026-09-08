@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { decideAutonomousPublication } from '@auto-ytb/os';
 import { NodePostgresSqlClient } from '../packages/runtime-node/index.mjs';
+import { auditFinalManifestReleaseSafety } from './lib/release-safety.mjs';
 
 const arg=(name,fallback)=>process.argv.find((value)=>value.startsWith(`--${name}=`))?.slice(name.length+3)??fallback;
 const req=(name)=>{const value=process.env[name]?.trim();if(!value)throw new Error(`${name} is required`);return value;};
@@ -15,9 +16,14 @@ try{
   const row=(await db.query(`select p.id as publication_id,p.youtube_video_id,p.state,q.score::float as qa_score,q.blockers,q.report,r.research_confidence::float as research_confidence,pr.total_cost_usd::float as total_cost_usd,pr.state as production_state,pr.metadata as production_metadata from production_runs pr left join publications p on p.production_run_id=pr.id left join lateral (select score,blockers,report from qa_reports where production_run_id=pr.id order by created_at desc limit 1) q on true left join content_ideas ci on ci.id=pr.content_idea_id left join lateral (select research_confidence from research_dossiers rd where rd.opportunity_id=ci.opportunity_id order by rd.created_at desc limit 1) r on true where pr.id=$1`,[productionRunId])).rows[0];
   if(!row)throw new Error(`Production run ${productionRunId} not found`);
   const rights=await db.query(`select id from production_assets where production_run_id=$1 and provider='source-backed-direct' and (license is null or license='verify-before-public')`,[productionRunId]);
-  let manifestRights=0;
-  try{const manifest=JSON.parse(await readFile(resolve(process.env.LOCAL_STORAGE_ROOT||'.data/storage','projects',productionRunId,'manifest.json'),'utf8'));manifestRights=(manifest.assets??[]).filter((asset)=>asset.provider==='source-backed-direct'&&(!asset.license||asset.license==='verify-before-public')).length;}catch{}
+  const manifestPath=resolve(process.env.LOCAL_STORAGE_ROOT||'.data/storage','projects',productionRunId,'manifest.json');
+  let manifest=null,manifestReadError=null;
+  try{manifest=JSON.parse(await readFile(manifestPath,'utf8'));}catch(error){manifestReadError=error instanceof Error?error.message:String(error);}
+  const manifestRights=(manifest?.assets??[]).filter((asset)=>asset.provider==='source-backed-direct'&&(!asset.license||asset.license==='verify-before-public')).length;
   const unresolvedRights=Math.max(rights.rows.length,manifestRights);
+  const releaseSafety=manifest
+    ? auditFinalManifestReleaseSafety(manifest,channel)
+    : {passed:false,audioReady:false,brandReady:false,issues:[`Final manifest unavailable: ${manifestReadError??'unknown error'}`],warnings:[],audio:{cueCount:0,rightsReady:false},brand:{required:false,generatedAssetCount:0,compliantAssetCount:0,continuityKey:null}};
   const checks=Array.isArray(row.report?.checks)?row.report.checks:[];
   const policyWarnings=checks.filter((check)=>check?.status==='WARN'&&['policy','advertiser-friendly','synthetic-disclosure'].includes(check?.id)).length;
   const attention=row.report?.attention??row.production_metadata?.attention??null;
@@ -38,15 +44,16 @@ try{
     blockOnPolicyWarning:publishing.blockOnPolicyWarning!==false,
     autoPublishDelayMinutes:Number(publishing.autoPublishDelayMinutes??30),
   };
+  const releaseBlockers=releaseSafety.passed?[]:releaseSafety.issues.map((issue)=>`release-safety: ${issue}`);
   const context={
-    qaScore:Number(row.qa_score??0),researchConfidence:Number(row.research_confidence??0),qaBlockers:row.blockers??[],
+    qaScore:Number(row.qa_score??0),researchConfidence:Number(row.research_confidence??0),qaBlockers:[...(row.blockers??[]),...releaseBlockers],
     attentionScore:finite(attention?.score,0),attentionReady:attention?.ready===true,
     finalMediaScore:finite(finalInspection?.score,0),finalMediaPassed:finalInspection?.passed===true,
     totalCostUsd:finite(row.total_cost_usd,0),productionState:row.production_state,
     unresolvedRights,policyWarnings,youtubeVideoId:row.youtube_video_id,
   };
   const decision=decideAutonomousPublication(policy,context);
-  const gateSnapshot={...context,maximumAutoPublishCostUsd,minimumAttentionScore,minimumFinalMediaScore,minimumQaScore:policy.minimumQaScoreForAutoPublish,minimumResearchConfidence:policy.minimumResearchConfidenceForAutoPublish};
+  const gateSnapshot={...context,maximumAutoPublishCostUsd,minimumAttentionScore,minimumFinalMediaScore,minimumQaScore:policy.minimumQaScoreForAutoPublish,minimumResearchConfidence:policy.minimumResearchConfidenceForAutoPublish,releaseSafety};
 
   if(decision.action==='SCHEDULE'&&row.publication_id&&decision.publishAt){
     const jobKey=`schedule-publication:${row.publication_id}:${decision.publishAt}`;
