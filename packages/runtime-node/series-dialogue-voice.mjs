@@ -20,7 +20,7 @@ function speakerFromLabel(label,cast,primary){
   }
   const exact=cast.find((item)=>lower(item.name)===wanted||lower(item.key)===wanted);
   if(exact)return{voice:exact,unknown:false,label:text(label)};
-  const fuzzy=cast.find((item)=>wanted.includes(lower(item.name))||lower(item.name).includes(wanted));
+  const fuzzy=cast.find((item)=>lower(item.name).length>=3&&(wanted.includes(lower(item.name))||lower(item.name).includes(wanted)));
   return{voice:fuzzy??primary,unknown:!fuzzy,label:text(label)};
 }
 
@@ -61,6 +61,8 @@ export function bindDialogueVoiceProviderToSeries(provider,contextValue,options=
     seriesVoiceContext:{seriesKey:text(context.seriesKey),primary,cast,multiSpeaker:true},
     async synthesize(input){
       const turns=parseSeriesDialogueTurns(input.text,context);
+      const unknown=[...new Set(turns.filter((turn)=>turn.unknownSpeaker).map((turn)=>turn.speakerLabel).filter(Boolean))];
+      if(unknown.length)throw new Error(`Unknown series dialogue speaker(s): ${unknown.join(', ')}`);
       const distinct=new Set(turns.map((turn)=>turn.voice?.key).filter(Boolean));
       if(turns.length<2||distinct.size<2)return single.synthesize(input);
       const work=await mkdtemp(join(tmpdir(),'auto-ytb-dialogue-'));
@@ -74,16 +76,15 @@ export function bindDialogueVoiceProviderToSeries(provider,contextValue,options=
           const loaded=await loader.load(asset.uri),path=join(work,`turn-${String(index).padStart(3,'0')}.mp3`);await writeFile(path,loaded.body);files.push(path);
           shiftAlignment(asset.alignment,offset,characters,starts,ends);
           const duration=Math.max(0,Number(asset.durationSeconds??0));offset+=duration;totalCost+=Math.max(0,Number(asset.costUsd??0));totalBytes+=Number(asset.bytes??loaded.size??0);
-          speakerProofs.push({turn:index+1,speakerLabel:turn.speakerLabel,characterKey:voice.key,characterName:voice.name,continuityKey:voice.continuityKey,resolvedVoiceId,canonicalVoiceId:voice.voiceId,usedFallbackVoice:!voice.voiceId,provider:voice.provider,seed,unknownSpeaker:Boolean(turn.unknownSpeaker),durationSeconds:duration});
+          speakerProofs.push({turn:index+1,speakerLabel:turn.speakerLabel,characterKey:voice.key,characterName:voice.name,continuityKey:voice.continuityKey,resolvedVoiceId,canonicalVoiceId:voice.voiceId,usedFallbackVoice:!voice.voiceId,provider:voice.provider,seed,unknownSpeaker:false,durationSeconds:duration});
         }
         const listPath=join(work,'concat.txt');await writeFile(listPath,files.map((path)=>`file '${path.replaceAll("'","'\\''")}'`).join('\n'));
         const outputPath=join(work,'dialogue.mp3');await run(ffmpeg,['-y','-f','concat','-safe','0','-i',listPath,'-c:a','libmp3lame','-b:a','128k',outputPath]);
         const bytes=new Uint8Array(await readFile(outputPath));
         const key=`voice/dialogue-${Date.now()}-${Math.random().toString(36).slice(2)}.mp3`,stored=await store.put({key,contentType:'audio/mpeg',data:bytes});
-        const unknownSpeakers=[...new Set(speakerProofs.filter((item)=>item.unknownSpeaker).map((item)=>item.speakerLabel))];
         return{
           id:key.replace(/[^a-z0-9]/gi,'-'),uri:stored.uri,mimeType:'audio/mpeg',bytes:stored.bytes??bytes.byteLength,provider:provider.name,model:'multi-speaker-series-dialogue',durationSeconds:offset,alignment:{characters,characterStartTimesSeconds:starts,characterEndTimesSeconds:ends},language:input.language,voiceId:'multi-speaker',costUsd:totalCost,
-          metadata:{voiceContinuity:{required:true,multiSpeaker:true,seriesKey:text(context.seriesKey),turnCount:turns.length,speakerCount:distinct.size,speakerProofs,unknownSpeakers,usedFallbackVoice:speakerProofs.some((item)=>item.usedFallbackVoice)},dialogue:{turns:turns.map((turn,index)=>({turn:index+1,speakerLabel:turn.speakerLabel,characterKey:turn.voice?.key??null,textLength:turn.text.length})),sourceBytes:totalBytes}},
+          metadata:{voiceContinuity:{required:true,multiSpeaker:true,seriesKey:text(context.seriesKey),turnCount:turns.length,speakerCount:distinct.size,speakerProofs,unknownSpeakers:[],usedFallbackVoice:speakerProofs.some((item)=>item.usedFallbackVoice)},dialogue:{turns:turns.map((turn,index)=>({turn:index+1,speakerLabel:turn.speakerLabel,characterKey:turn.voice?.key??null,textLength:turn.text.length})),sourceBytes:totalBytes}},
         };
       }finally{await rm(work,{recursive:true,force:true});}
     },
