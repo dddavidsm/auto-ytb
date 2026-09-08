@@ -96,7 +96,7 @@ export async function runContentPipeline(input: {
 
     event('PLAN', `Planning ${aspectRatio} ${executionPlan.visualMode} timeline for attention pass ${attempt+1}`);
     draftScenes=planScenes(draftScript,{targetSceneDurationSec:adaptiveSceneDuration,sources:dossier.sources,visualMode:executionPlan.visualMode,generativeSpendBias:executionPlan.generativeSpendBias,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile});
-    attention=reviewAttentionBlueprint({script:draftScript,packaging,scenes:draftScenes,contentFormat,selectedPackagingId:packagingChoice.selected.id,minScore:minAttentionScore});
+    attention=reviewAttentionBlueprint({script:draftScript,packaging,scenes:draftScenes,contentFormat,executionPlan,selectedPackagingId:packagingChoice.selected.id,minScore:minAttentionScore});
     event('QA', `Attention preflight ${attention.score}/100 · ${attention.ready?'READY':'REPAIR'} · ${attention.issues.length} issue(s)`);
     if(attention.ready)break;
     if(attempt===maxRepairs){
@@ -200,10 +200,17 @@ export async function runContentPipeline(input: {
   const stored = await input.store.put({ key:`projects/${input.projectId}/manifest.json`,contentType:'application/json',data:JSON.stringify(manifest) });
   event('RENDER', `Rendering ${frame.width}x${frame.height} ${executionPlan.voiceRequired?'synchronized to voice':'visual-first'} from ${stored.uri}`);
   const render = await input.renderer.render({ manifestUri:stored.uri,outputKey:`projects/${input.projectId}/final.mp4` });
+  if(render.metadata?.renderExecution)manifest.renderExecution=render.metadata.renderExecution as ProductionManifest['renderExecution'];
+  const expectedCaptionBurn=Boolean(manifest.captionPlan?.enabled&&manifest.captionPlan.burnIn);
+  if(expectedCaptionBurn&&!manifest.renderExecution?.captionsBurned){
+    event('BLOCKED',`Editorial finish rejected: ${manifest.captionPlan?.preset??'caption'} captions were required but no burn-in execution proof was returned`);
+    return{state:'BLOCKED',events,dossier,manifest,qa,attention:qa.attention,renderUri:render.uri};
+  }
+  const requireFinalAudio=executionPlan.voiceRequired||executionPlan.audioMode==='NATURAL_SOUND';
   const finalInspection:FinalMediaInspection=input.renderer.inspect
-    ? await input.renderer.inspect({fileUri:render.uri,expectedWidth:frame.width,expectedHeight:frame.height,expectedDurationSeconds:timelineDuration,requireAudio:executionPlan.voiceRequired})
+    ? await input.renderer.inspect({fileUri:render.uri,expectedWidth:frame.width,expectedHeight:frame.height,expectedDurationSeconds:timelineDuration,requireAudio:requireFinalAudio})
     : {passed:false,score:0,hasVideo:false,hasAudio:false,issues:['renderer-inspection-unavailable']};
-  event('QA', `Final render inspection ${finalInspection.score}/100 · ${finalInspection.passed?'PASS':'FAIL'} · ${finalInspection.width??'?'}x${finalInspection.height??'?'} · ${finalInspection.durationSeconds??'?'}s`);
+  event('QA', `Final render inspection ${finalInspection.score}/100 · ${finalInspection.passed?'PASS':'FAIL'} · ${finalInspection.width??'?'}x${finalInspection.height??'?'} · ${finalInspection.durationSeconds??'?'}s · audio ${requireFinalAudio?'required':'optional'}`);
   if(!finalInspection.passed){event('BLOCKED',`Final render rejected: ${finalInspection.issues.join(', ')}`);return{state:'BLOCKED',events,dossier,manifest,qa,attention:qa.attention,finalInspection,renderUri:render.uri};}
 
   if (!input.autoUploadPrivate) {
