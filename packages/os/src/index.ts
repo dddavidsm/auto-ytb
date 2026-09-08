@@ -2,6 +2,7 @@ export * from './channel-routing.js';
 export * from './autonomy.js';
 export * from './branding.js';
 export * from './series.js';
+export * from './series-memory.js';
 
 export type ChannelDna = {
   id: string;
