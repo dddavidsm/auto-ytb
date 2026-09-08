@@ -1,4 +1,4 @@
-import type { ImageProvider, ObjectStore, Publisher, SearchProvider, TextModel, ThumbnailComposer, VideoProvider, VideoRenderer, VoiceProvider } from '@auto-ytb/providers';
+import type { FinalMediaInspection, ImageProvider, ObjectStore, Publisher, SearchProvider, TextModel, ThumbnailComposer, VideoProvider, VideoRenderer, VoiceProvider } from '@auto-ytb/providers';
 import { buildResearchDossier, type ResearchDossier } from '@auto-ytb/editorial';
 import { estimateProductionCost, generatePackaging, generateScript, planScenes, selectPackagingWithExploration, synchronizeTimelineToVoice, type AssetRecord, type PackagingLearningProfile, type ProductionContentFormat, type ProductionManifest, type ThumbnailAsset, type VideoScript, type PackagingVariant, type Scene } from '@auto-ytb/production';
 import { reviewAttentionBlueprint, runQa, type AttentionReview, type QaReport } from '@auto-ytb/qa';
@@ -31,7 +31,7 @@ export async function runContentPipeline(input: {
   additionalCostUsd?: () => number;
   minAttentionScore?: number;
   maxAttentionRevisionPasses?: number;
-}): Promise<{ state: PipelineState; events: PipelineEvent[]; dossier?: ResearchDossier; manifest?: ProductionManifest; qa?: QaReport; attention?: AttentionReview; renderUri?: string; externalId?: string }> {
+}): Promise<{ state: PipelineState; events: PipelineEvent[]; dossier?: ResearchDossier; manifest?: ProductionManifest; qa?: QaReport; attention?: AttentionReview; finalInspection?: FinalMediaInspection; renderUri?: string; externalId?: string }> {
   const events: PipelineEvent[] = [];
   const event = (state: PipelineState, message: string) => events.push({ at: new Date().toISOString(), state, message });
   const contentFormat = input.contentFormat ?? 'LONG_HORIZONTAL';
@@ -115,36 +115,10 @@ export async function runContentPipeline(input: {
   for (const scene of scenes.filter((candidate) => !candidate.generated && ['chart','motion_graphic','text','source_card'].includes(candidate.kind))) {
     const direct = scene.kind === 'source_card' ? scene.sourceRefs?.find((ref) => ref.policy === 'DIRECT_ASSET_ALLOWED' && ref.url) : undefined;
     if (direct?.url) {
-      assets.push({
-        id:`source-${scene.id}`,
-        uri:direct.url,
-        mimeType:/\.(mp4|webm)(?:\?|#|$)/i.test(direct.url)?'video/mp4':'image/jpeg',
-        provider:'source-backed-direct',
-        model:'source-visual-v1',
-        costUsd:0,
-        sceneId:scene.id,
-        generated:false,
-        sourceIds:scene.sourceIds,
-        sourceUrl:direct.url,
-        license:'verify-before-public',
-        metadata:{ kind:scene.kind, instruction:scene.instruction, sourceRefs:scene.sourceRefs ?? [], visualValue:scene.visualValue ?? null, selectionReason:scene.selectionReason ?? null },
-      });
+      assets.push({id:`source-${scene.id}`,uri:direct.url,mimeType:/\.(mp4|webm)(?:\?|#|$)/i.test(direct.url)?'video/mp4':'image/jpeg',provider:'source-backed-direct',model:'source-visual-v1',costUsd:0,sceneId:scene.id,generated:false,sourceIds:scene.sourceIds,sourceUrl:direct.url,license:'verify-before-public',metadata:{kind:scene.kind,instruction:scene.instruction,sourceRefs:scene.sourceRefs??[],visualValue:scene.visualValue??null,selectionReason:scene.selectionReason??null}});
       continue;
     }
-    assets.push({
-      id:`procedural-${scene.id}`,
-      uri:`procedural://${scene.kind}/${encodeURIComponent(scene.id)}`,
-      mimeType:'application/x-auto-ytb-visual',
-      provider:'procedural-ffmpeg',
-      model:scene.kind === 'source_card' ? 'source-card-v1' : 'hybrid-visual-v1',
-      costUsd:0.002,
-      sceneId:scene.id,
-      generated:false,
-      sourceIds:scene.sourceIds,
-      sourceUrl:scene.sourceRefs?.[0]?.url,
-      license:'original-transformed-card',
-      metadata:{ kind:scene.kind, instruction:scene.instruction, sourceRefs:scene.sourceRefs ?? [], visualValue:scene.visualValue ?? null, selectionReason:scene.selectionReason ?? null },
-    });
+    assets.push({id:`procedural-${scene.id}`,uri:`procedural://${scene.kind}/${encodeURIComponent(scene.id)}`,mimeType:'application/x-auto-ytb-visual',provider:'procedural-ffmpeg',model:scene.kind==='source_card'?'source-card-v1':'hybrid-visual-v1',costUsd:0.002,sceneId:scene.id,generated:false,sourceIds:scene.sourceIds,sourceUrl:scene.sourceRefs?.[0]?.url,license:'original-transformed-card',metadata:{kind:scene.kind,instruction:scene.instruction,sourceRefs:scene.sourceRefs??[],visualValue:scene.visualValue??null,selectionReason:scene.selectionReason??null}});
   }
 
   for (const scene of scenes.filter((candidate) => candidate.generated)) {
@@ -157,75 +131,39 @@ export async function runContentPipeline(input: {
   const thumbnails: ThumbnailAsset[] = [];
   if (!isShort) {
     for (const variant of packaging) {
-      const background = await input.imageProvider.generate({
-        prompt: `${variant.thumbnailConcept}. YouTube documentary thumbnail background, one dominant focal subject, high visual contrast, uncluttered composition, strong separation between foreground and background, leave intentional negative space for optional typography, no readable text, no fake logos, no watermarks. The visual promise must be truthful to the opening and payoff.`,
-        aspectRatio: '16:9',
-      });
-      const composed = await input.thumbnailComposer.compose({
-        backgroundUri: background.uri,
-        text: variant.thumbnailText,
-        outputKey: `${input.projectId}/${variant.id}.jpg`,
-      });
+      const background = await input.imageProvider.generate({prompt:`${variant.thumbnailConcept}. YouTube documentary thumbnail background, one dominant focal subject, high visual contrast, uncluttered composition, strong separation between foreground and background, leave intentional negative space for optional typography, no readable text, no fake logos, no watermarks. The visual promise must be truthful to the opening and payoff.`,aspectRatio:'16:9'});
+      const composed = await input.thumbnailComposer.compose({backgroundUri:background.uri,text:variant.thumbnailText,outputKey:`${input.projectId}/${variant.id}.jpg`});
       thumbnails.push({ ...composed, packagingId: variant.id, text: variant.thumbnailText, costUsd: (background.costUsd ?? 0) + (composed.costUsd ?? 0) });
     }
   }
 
   const editorialCostUsd=Math.max(0,Number(input.additionalCostUsd?.() ?? input.model.getNonAssetCostUsd?.() ?? 0));
   const mediaCostUsd=(voice.costUsd ?? 0) + assets.reduce((sum, asset) => sum + (asset.costUsd ?? 0), 0) + thumbnails.reduce((sum, asset) => sum + (asset.costUsd ?? 0), 0);
-  const manifest: ProductionManifest = {
-    projectId: input.projectId,
-    createdAt: new Date().toISOString(),
-    contentFormat,
-    aspectRatio,
-    frame,
-    script,
-    packaging,
-    thumbnails,
-    selectedPackagingId: packagingChoice.selected.id,
-    packagingSelection: {
-      mode: packagingChoice.mode,
-      explorationRate: packagingChoice.explorationRate,
-      scores: packagingChoice.scores,
-    },
-    scenes,
-    assets,
-    voice,
-    estimatedCostUsd,
-    actualCostUsd: editorialCostUsd + mediaCostUsd,
-    containsSyntheticMedia: scenes.some((scene) => scene.generated),
-  };
+  const manifest: ProductionManifest = {projectId:input.projectId,createdAt:new Date().toISOString(),contentFormat,aspectRatio,frame,script,packaging,thumbnails,selectedPackagingId:packagingChoice.selected.id,packagingSelection:{mode:packagingChoice.mode,explorationRate:packagingChoice.explorationRate,scores:packagingChoice.scores},scenes,assets,voice,estimatedCostUsd,actualCostUsd:editorialCostUsd+mediaCostUsd,containsSyntheticMedia:scenes.some((scene)=>scene.generated)};
   event('PLAN', `Metered pre-render spend $${manifest.actualCostUsd.toFixed(4)} · editorial $${editorialCostUsd.toFixed(4)} · media $${mediaCostUsd.toFixed(4)}`);
 
   event('QA', 'Running factual, provenance, originality, language, audio-sync, attention, visual coverage, source-rights, hybrid-media, format, packaging and cost gates');
   const qa = runQa({ dossier, script, manifest, maxCostUsd: input.maxCostUsd,minAttentionScore });
-  if (!qa.passed) {
-    event('BLOCKED', `QA blockers: ${qa.blockers.join(', ')}`);
-    return { state: 'BLOCKED', events, dossier, manifest, qa, attention:qa.attention };
-  }
+  if (!qa.passed) {event('BLOCKED', `QA blockers: ${qa.blockers.join(', ')}`);return { state:'BLOCKED',events,dossier,manifest,qa,attention:qa.attention };}
 
-  const stored = await input.store.put({ key: `projects/${input.projectId}/manifest.json`, contentType: 'application/json', data: JSON.stringify(manifest) });
+  const stored = await input.store.put({ key:`projects/${input.projectId}/manifest.json`,contentType:'application/json',data:JSON.stringify(manifest) });
   event('RENDER', `Rendering ${frame.width}x${frame.height} synchronized to narration from ${stored.uri}`);
-  const render = await input.renderer.render({ manifestUri: stored.uri, outputKey: `projects/${input.projectId}/final.mp4` });
+  const render = await input.renderer.render({ manifestUri:stored.uri,outputKey:`projects/${input.projectId}/final.mp4` });
+  const finalInspection:FinalMediaInspection=input.renderer.inspect
+    ? await input.renderer.inspect({fileUri:render.uri,expectedWidth:frame.width,expectedHeight:frame.height,expectedDurationSeconds:sync.durationSeconds,requireAudio:true})
+    : {passed:false,score:0,hasVideo:false,hasAudio:false,issues:['renderer-inspection-unavailable']};
+  event('QA', `Final render inspection ${finalInspection.score}/100 · ${finalInspection.passed?'PASS':'FAIL'} · ${finalInspection.width??'?'}x${finalInspection.height??'?'} · ${finalInspection.durationSeconds??'?'}s`);
+  if(!finalInspection.passed){event('BLOCKED',`Final render rejected: ${finalInspection.issues.join(', ')}`);return{state:'BLOCKED',events,dossier,manifest,qa,attention:qa.attention,finalInspection,renderUri:render.uri};}
 
   if (!input.autoUploadPrivate) {
-    event('READY_FOR_REVIEW', isShort ? `Native vertical Short render ready · attention ${qa.attention.score}/100` : `Render and ${thumbnails.length} thumbnail variants ready · attention ${qa.attention.score}/100`);
-    return { state: 'READY_FOR_REVIEW', events, dossier, manifest, qa, attention:qa.attention, renderUri: render.uri };
+    event('READY_FOR_REVIEW', isShort ? `Native vertical Short render ready · attention ${qa.attention.score}/100 · render QA ${finalInspection.score}/100` : `Render and ${thumbnails.length} thumbnail variants ready · attention ${qa.attention.score}/100 · render QA ${finalInspection.score}/100`);
+    return { state:'READY_FOR_REVIEW',events,dossier,manifest,qa,attention:qa.attention,finalInspection,renderUri:render.uri };
   }
 
   event('PRIVATE_UPLOAD', `Uploading private ${contentFormat}`);
   const selected = packaging.find((variant) => variant.id === manifest.selectedPackagingId) ?? packaging[0];
-  const upload = await input.publisher.uploadPrivate({
-    fileUri: render.uri,
-    title: selected?.title ?? script.title,
-    description: dossier.executiveSummary,
-    tags: isShort ? ['Shorts'] : [],
-    language: input.language,
-    containsSyntheticMedia: qa.containsSyntheticMedia,
-  });
-  if (!isShort) {
-    const selectedThumbnail = thumbnails.find((thumbnail) => thumbnail.packagingId === manifest.selectedPackagingId) ?? thumbnails[0];
-    if (selectedThumbnail) await input.publisher.setThumbnail({ externalId: upload.externalId, fileUri: selectedThumbnail.uri });
-  }
-  event('READY_FOR_REVIEW', `Private ${contentFormat} upload ${upload.externalId} ready for downstream publication policy · attention ${qa.attention.score}/100`);
-  return { state: 'READY_FOR_REVIEW', events, dossier, manifest, qa, attention:qa.attention, renderUri: render.uri, externalId: upload.externalId };
+  const upload = await input.publisher.uploadPrivate({fileUri:render.uri,title:selected?.title??script.title,description:dossier.executiveSummary,tags:isShort?['Shorts']:[],language:input.language,containsSyntheticMedia:qa.containsSyntheticMedia});
+  if (!isShort) {const selectedThumbnail=thumbnails.find((thumbnail)=>thumbnail.packagingId===manifest.selectedPackagingId)??thumbnails[0];if(selectedThumbnail)await input.publisher.setThumbnail({externalId:upload.externalId,fileUri:selectedThumbnail.uri});}
+  event('READY_FOR_REVIEW', `Private ${contentFormat} upload ${upload.externalId} ready for downstream publication policy · attention ${qa.attention.score}/100 · render QA ${finalInspection.score}/100`);
+  return { state:'READY_FOR_REVIEW',events,dossier,manifest,qa,attention:qa.attention,finalInspection,renderUri:render.uri,externalId:upload.externalId };
 }
