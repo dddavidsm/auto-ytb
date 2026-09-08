@@ -17,15 +17,18 @@ services:
     volumes:
       - auto_ytb_data:/app/.data
 
-  dashboard:
+  web:
     build: .
-    command: ["node","apps/dashboard/server.mjs"]
+    command: ["npm","run","web:start"]
     env_file: [.env]
     restart: unless-stopped
+    depends_on:
+      - worker
+      - scheduler
     ports:
-      - "4310:4310"
+      - "4310:3000"
     volumes:
-      - auto_ytb_data:/app/.data
+      - auto_ytb_data:/app/.data:ro
 
 volumes:
   auto_ytb_data:
