@@ -1,0 +1,35 @@
+{
+  "assets": [
+    {
+      "id": "replace-with-cleared-background-track",
+      "kind": "music",
+      "uri": "file:///absolute/path/to/licensed/background.wav",
+      "title": "Replace with licensed background track",
+      "license": "REPLACE_WITH_LICENSE_OR_SUBSCRIPTION_REFERENCE",
+      "rightsStatus": "VERIFY",
+      "sourceUrl": "https://example.com/license-record",
+      "moods": ["documentary", "analytical", "tension"],
+      "tags": ["background", "cinematic"],
+      "formats": ["LONG_HORIZONTAL"],
+      "costUsd": 0,
+      "defaultGain": 0.15
+    },
+    {
+      "id": "replace-with-cleared-impact-sfx",
+      "kind": "sfx",
+      "uri": "file:///absolute/path/to/licensed/impact.wav",
+      "title": "Replace with licensed reveal impact",
+      "license": "REPLACE_WITH_LICENSE_OR_SUBSCRIPTION_REFERENCE",
+      "rightsStatus": "VERIFY",
+      "sourceUrl": "https://example.com/license-record",
+      "tags": ["reveal", "impact", "transition"],
+      "costUsd": 0,
+      "defaultGain": 0.2
+    }
+  ],
+  "notes": [
+    "This example is intentionally VERIFY so copying it cannot publish copyrighted audio by accident.",
+    "Change rightsStatus to CLEARED only after storing a valid license/subscription/public-domain record.",
+    "Runtime defaults to zero marginal per-video cost assets so audio cannot silently bypass cost accounting."
+  ]
+}
