@@ -63,6 +63,43 @@ export type Scene = {
 export type AssetRecord = BinaryAsset & { sceneId: string; generated: boolean; sourceIds: string[]; metadata?: Record<string, unknown> };
 export type ProductionContentFormat = 'LONG_HORIZONTAL' | 'SHORT_VERTICAL';
 
+export type AudioRightsStatus = 'CLEARED' | 'VERIFY' | 'BLOCKED';
+export type AudioLibraryAsset = {
+  id: string;
+  kind: 'music' | 'sfx';
+  uri: string;
+  title?: string;
+  license: string;
+  rightsStatus: AudioRightsStatus;
+  sourceUrl?: string;
+  moods?: string[];
+  tags?: string[];
+  formats?: ProductionContentFormat[];
+  costUsd?: number;
+  defaultGain?: number;
+  durationSeconds?: number;
+};
+export type SoundtrackCue = {
+  assetId: string;
+  kind: 'music' | 'sfx';
+  uri: string;
+  startSec: number;
+  endSec?: number;
+  gain: number;
+  license: string;
+  rightsStatus: AudioRightsStatus;
+  sourceUrl?: string;
+  costUsd?: number;
+  reason: string;
+};
+export type SoundtrackPlan = {
+  music?: SoundtrackCue;
+  sfx: SoundtrackCue[];
+  rightsReady: boolean;
+  estimatedCostUsd: number;
+  selectionNotes: string[];
+};
+
 export type ProductionManifest = {
   projectId: string;
   createdAt: string;
@@ -81,6 +118,9 @@ export type ProductionManifest = {
   scenes: Scene[];
   assets: AssetRecord[];
   voice?: VoiceAsset;
+  soundtrack?: SoundtrackPlan;
+  music?: SoundtrackCue;
+  sfx?: SoundtrackCue[];
   estimatedCostUsd: number;
   actualCostUsd: number;
   containsSyntheticMedia: boolean;
