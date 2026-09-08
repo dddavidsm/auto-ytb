@@ -134,7 +134,7 @@ export async function runContentPipeline(input: {
     }
   }
 
-  const editorialCostUsd=Math.max(0,Number(input.additionalCostUsd?.()??0));
+  const editorialCostUsd=Math.max(0,Number(input.additionalCostUsd?.() ?? input.model.getNonAssetCostUsd?.() ?? 0));
   const mediaCostUsd=(voice.costUsd ?? 0) + assets.reduce((sum, asset) => sum + (asset.costUsd ?? 0), 0) + thumbnails.reduce((sum, asset) => sum + (asset.costUsd ?? 0), 0);
   const manifest: ProductionManifest = {
     projectId: input.projectId,
