@@ -1,3 +1,5 @@
+export * from './creative.js';
+
 export type RetentionPoint = { elapsedRatio: number; audienceWatchRatio: number };
 export type VideoPerformance = {
   videoId: string;
