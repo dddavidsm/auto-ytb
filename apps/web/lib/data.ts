@@ -1,6 +1,22 @@
 import 'server-only';
 import { query } from './db';
 
+export type CreativeFormulaInsight={
+  channelId:string;
+  channelKey:string;
+  channelTitle:string;
+  contentFormat:string;
+  featureName:string;
+  winner:string;
+  runnerUp:string;
+  advantage:number;
+  confidence:number;
+  sampleSize:number;
+  weightedViews:number;
+  averageVideoAvp:number;
+  averageRetentionDelta:number|null;
+  averageRoi:number|null;
+};
 export type DashboardSnapshot={
   portfolio:{channels:number;candidates:number;cost:number;revenue:number;profit:number;roi:number|null;views:number;watchMinutes:number};
   channels:Array<Record<string,unknown>>;
@@ -8,10 +24,55 @@ export type DashboardSnapshot={
   runs:Array<Record<string,unknown>>;
   jobs:Array<Record<string,unknown>>;
   creative:Array<Record<string,unknown>>;
+  formula:CreativeFormulaInsight[];
   market:Array<Record<string,unknown>>;
   providers:Array<Record<string,unknown>>;
 };
 const n=(value:unknown)=>Number.isFinite(Number(value))?Number(value):0;
+const clamp=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
+
+function creativeEvidenceScore(row:Record<string,unknown>){
+  const avp=n(row.average_video_avp);
+  const localDelta=n(row.average_retention_delta)*100;
+  const share=n(row.average_share_rate);
+  const roi=clamp(n(row.average_roi),-1,3);
+  const confidence=clamp(n(row.confidence),0,1);
+  return (avp+localDelta*0.25+share*0.8+roi*1.5)*(0.6+confidence*0.4);
+}
+function deriveFormula(rows:Array<Record<string,unknown>>):CreativeFormulaInsight[]{
+  const groups=new Map<string,Array<Record<string,unknown>&{evidenceScore:number}>>();
+  for(const row of rows){
+    if(n(row.sample_size)<3||n(row.confidence)<0.35||n(row.weighted_views)<300)continue;
+    const key=`${row.channel_id}:${row.content_format}:${row.feature_name}`;
+    const bucket=groups.get(key)??[];
+    bucket.push({...row,evidenceScore:creativeEvidenceScore(row)});
+    groups.set(key,bucket);
+  }
+  const insights:CreativeFormulaInsight[]=[];
+  for(const items of groups.values()){
+    if(items.length<2)continue;
+    items.sort((a,b)=>b.evidenceScore-a.evidenceScore);
+    const best=items[0],runner=items[1],advantage=best.evidenceScore-runner.evidenceScore;
+    if(advantage<2.5||n(best.confidence)<0.42)continue;
+    insights.push({
+      channelId:String(best.channel_id),
+      channelKey:String(best.channel_key??''),
+      channelTitle:String(best.channel_title??best.channel_key??'Channel'),
+      contentFormat:String(best.content_format??'LONG_HORIZONTAL'),
+      featureName:String(best.feature_name),
+      winner:String(best.feature_value),
+      runnerUp:String(runner.feature_value),
+      advantage:Math.round(advantage*10)/10,
+      confidence:n(best.confidence),
+      sampleSize:n(best.sample_size),
+      weightedViews:n(best.weighted_views),
+      averageVideoAvp:n(best.average_video_avp),
+      averageRetentionDelta:best.average_retention_delta==null?null:n(best.average_retention_delta),
+      averageRoi:best.average_roi==null?null:n(best.average_roi),
+    });
+  }
+  return insights.sort((a,b)=>(b.advantage*b.confidence*Math.log10(b.weightedViews+10))-(a.advantage*a.confidence*Math.log10(a.weightedViews+10))).slice(0,18);
+}
 
 export async function loadDashboard():Promise<DashboardSnapshot>{
   const [channels,candidates,runs,jobs,creative,market,providers,totals]=await Promise.all([
@@ -35,8 +96,12 @@ export async function loadDashboard():Promise<DashboardSnapshot>{
       left join lateral (select * from video_economics x where x.production_run_id=pr.id order by x.captured_at desc limit 1) e on true
       order by pr.created_at desc limit 30`),
     query(`select state,count(*)::int as count from jobs group by state order by state`),
-    query(`select distinct on (feature_name,feature_value) feature_name,feature_value,content_format,sample_size,weighted_views,average_retention_delta::float,average_video_avp::float,average_share_rate::float,average_roi::float,confidence::float,observed_at
-      from creative_feature_snapshots where sample_size>=3 order by feature_name,feature_value,observed_at desc limit 80`),
+    query(`select distinct on (cfs.channel_id,cfs.content_format,cfs.feature_name,cfs.feature_value)
+      cfs.channel_id,c.channel_key,c.title as channel_title,cfs.feature_name,cfs.feature_value,cfs.content_format,cfs.sample_size,cfs.weighted_views,
+      cfs.average_retention_delta::float,cfs.average_segment_retention::float,cfs.average_video_avp::float,cfs.average_share_rate::float,cfs.average_roi::float,cfs.confidence::float,cfs.observed_at
+      from creative_feature_snapshots cfs join channels c on c.id=cfs.channel_id
+      where cfs.sample_size>=3
+      order by cfs.channel_id,cfs.content_format,cfs.feature_name,cfs.feature_value,cfs.observed_at desc limit 240`),
     query(`select distinct on (feature_name,feature_value,content_format) niche,content_format,feature_name,feature_value,sample_size,unique_channels,weighted_views,average_views_per_hour::float,average_market_velocity_multiple::float,outlier_rate::float,confidence::float,observed_at
       from market_pattern_snapshots order by feature_name,feature_value,content_format,observed_at desc limit 80`),
     query(`select provider,coalesce(model,'unknown') model,count(*)::int events,sum(coalesce(cost_usd,0))::float spend,count(*) filter(where priced=false)::int unpriced from provider_cost_events group by provider,coalesce(model,'unknown') order by spend desc limit 20`),
@@ -45,12 +110,12 @@ export async function loadDashboard():Promise<DashboardSnapshot>{
     ) select coalesce(sum(e.total_cost_usd),0)::float cost,coalesce(sum(e.total_revenue_usd),0)::float revenue,coalesce(sum(e.profit_usd),0)::float profit,coalesce(sum(a.views),0)::bigint views,coalesce(sum(a.watch_time_minutes),0)::float watch_minutes from latest_econ e left join latest_analytics a on a.production_run_id=e.production_run_id`),
   ]);
   const t=totals[0]??{} as Record<string,unknown>,cost=n(t.cost),profit=n(t.profit);
-  return{portfolio:{channels:channels.length,candidates:candidates.length,cost,revenue:n(t.revenue),profit,roi:cost>0?profit/cost:null,views:n(t.views),watchMinutes:n(t.watch_minutes)},channels,candidates,runs,jobs,creative,market,providers};
+  return{portfolio:{channels:channels.length,candidates:candidates.length,cost,revenue:n(t.revenue),profit,roi:cost>0?profit/cost:null,views:n(t.views),watchMinutes:n(t.watch_minutes)},channels,candidates,runs,jobs,creative,formula:deriveFormula(creative),market,providers};
 }
 
 export async function loadRun(id:string){
   const rows=await query(`select pr.id,pr.state,pr.total_cost_usd::float,pr.metadata,pr.created_at,pr.updated_at,ci.working_title,ci.premise,ci.format,o.angle,o.score::float as opportunity_score,
-      s.script,r.dossier,q.report as qa_report,q.score::float as qa_score,q.passed as qa_passed,p.youtube_video_id,p.state as publication_state,p.publish_at,p.metadata as publication_metadata,
+      s.script,r.dossier,q.report as qa_report,q.score::float as qa_score,q.passed as qa_passed,p.id as publication_id,p.youtube_video_id,p.state as publication_state,p.publish_at,p.metadata as publication_metadata,
       e.total_cost_usd::float as economic_cost,e.total_revenue_usd::float,e.profit_usd::float,e.roi::float,e.watch_minutes_per_dollar::float
     from production_runs pr join content_ideas ci on ci.id=pr.content_idea_id left join opportunities o on o.id=ci.opportunity_id
     left join lateral (select * from scripts x where x.content_idea_id=ci.id order by version desc,created_at desc limit 1) s on true
@@ -60,10 +125,18 @@ export async function loadRun(id:string){
     left join lateral (select * from video_economics x where x.production_run_id=pr.id order by captured_at desc limit 1) e on true
     where pr.id=$1`,[id]);
   if(!rows[0])return null;
-  const [assets,costs,analytics]=await Promise.all([
+  const [assets,costs,analytics,fingerprints,segments,retention,audienceContexts]=await Promise.all([
     query(`select id,scene_id,asset_type,uri,provider,model,generated,license,source_url,cost_usd::float,metadata from production_assets where production_run_id=$1 order by created_at`,[id]),
     query(`select stage,provider,coalesce(model,'unknown') model,sum(coalesce(cost_usd,0))::float cost,count(*)::int events,bool_and(priced) priced from provider_cost_events where production_run_id=$1 group by stage,provider,coalesce(model,'unknown') order by cost desc`,[id]),
     query(`select a.* from publications p join analytics_snapshots a on a.publication_id=p.id where p.production_run_id=$1 order by a.captured_at desc limit 1`,[id]),
+    query(`select content_format,language,topic,attention_score::float,hook_type,hook_retention_device,narrative_archetype,beat_count,scene_count,visual_mix,packaging,fingerprint from creative_fingerprints where production_run_id=$1 limit 1`,[id]),
+    query(`with latest as (select a.id from publications p join analytics_snapshots a on a.publication_id=p.id where p.production_run_id=$1 order by a.captured_at desc limit 1)
+      select segment_type,segment_key,start_seconds::float,end_seconds::float,start_ratio::float,end_ratio::float,start_retention::float,end_retention::float,average_retention::float,retention_delta::float,local_dips,local_spikes,features
+      from creative_segment_observations where production_run_id=$1 and analytics_snapshot_id=(select id from latest) order by start_seconds,segment_type`,[id]),
+    query(`with latest as (select a.id from publications p join analytics_snapshots a on a.publication_id=p.id where p.production_run_id=$1 order by a.captured_at desc limit 1)
+      select rp.elapsed_ratio::float,rp.audience_watch_ratio::float from retention_points rp where rp.analytics_snapshot_id=(select id from latest) order by rp.elapsed_ratio`,[id]),
+    query(`with latest as (select a.id from publications p join analytics_snapshots a on a.publication_id=p.id where p.production_run_id=$1 order by a.captured_at desc limit 1)
+      select context_type,context_value,views,watch_time_minutes::float,payload from audience_context_snapshots where analytics_snapshot_id=(select id from latest) order by context_type,views desc`,[id]),
   ]);
-  return{...rows[0],assets,costs,analytics:analytics[0]??null};
+  return{...rows[0],assets,costs,analytics:analytics[0]??null,fingerprint:fingerprints[0]??null,segments,retention,audienceContexts};
 }
