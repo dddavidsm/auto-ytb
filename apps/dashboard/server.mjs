@@ -3,108 +3,101 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { NodePostgresSqlClient } from '../../packages/runtime-node/index.mjs';
+import { loadDashboardData, summarizePortfolio, summarizeChannels, recentVideoEconomics, buildPipelineStages } from './data.mjs';
 
-const root = resolve(process.cwd());
-const port = Number(process.env.PORT ?? 4310);
-const db = process.env.DATABASE_URL ? new NodePostgresSqlClient(process.env.DATABASE_URL,{ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined}) : null;
-const controlToken=process.env.CONTROL_PLANE_TOKEN?.trim() || null;
+const root=resolve(process.cwd());
+const port=Number(process.env.PORT??4310);
+const version='v0.10.0';
+const db=process.env.DATABASE_URL?new NodePostgresSqlClient(process.env.DATABASE_URL,{ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined}):null;
+const controlToken=process.env.CONTROL_PLANE_TOKEN?.trim()||null;
 
-async function jsonFile(path) {
-  const full = resolve(root, path);
-  if (!existsSync(full)) return null;
-  try { return JSON.parse(await readFile(full, 'utf8')); } catch { return null; }
-}
+async function jsonFile(path){const full=resolve(root,path);if(!existsSync(full))return null;try{return JSON.parse(await readFile(full,'utf8'));}catch{return null;}}
+function send(res,status,body,type='application/json; charset=utf-8'){res.writeHead(status,{'content-type':type,'cache-control':'no-store','x-content-type-options':'nosniff'});res.end(typeof body==='string'?body:JSON.stringify(body,null,2));}
+function authorized(req){if(!controlToken)return false;const bearer=String(req.headers.authorization??'').replace(/^Bearer\s+/i,'').trim();const header=String(req.headers['x-control-token']??'').trim();return bearer===controlToken||header===controlToken;}
+async function readJson(req){let body='';for await(const chunk of req){body+=chunk.toString();if(body.length>64_000)throw new Error('Request body too large');}return body?JSON.parse(body):{};}
 
-async function opsStatus(){
-  if(!db) return {available:false,reason:'DATABASE_URL not configured'};
+async function portfolioStatus(){
+  if(!db)return {available:false,reason:'DATABASE_URL not configured',mutationsEnabled:Boolean(controlToken)};
   try{
-    const [jobs,budget,dead,recentRuns,reviewQueue]=await Promise.all([
-      db.query(`select state,count(*)::int as count from jobs group by state`),
-      db.query(`select channel_key,spend_date,reserved_usd::float,actual_usd::float,jobs_scheduled from daily_budget_ledger order by spend_date desc,channel_key limit 8`),
-      db.query(`select id,kind,attempts,max_attempts,last_error,updated_at from jobs where state='dead' order by updated_at desc limit 8`),
-      db.query(`select id,state,total_cost_usd::float,metadata,created_at,updated_at from production_runs order by created_at desc limit 8`),
-      db.query(`
-        select p.id,p.youtube_video_id,p.state,p.publish_at,p.content_format,p.metadata,p.created_at,
-          pr.total_cost_usd::float as total_cost_usd,ci.working_title,o.angle,o.score::float as opportunity_score,
-          q.score::float as qa_score,q.blockers
-        from publications p
-        left join production_runs pr on pr.id=p.production_run_id
-        left join content_ideas ci on ci.id=pr.content_idea_id
-        left join opportunities o on o.id=ci.opportunity_id
-        left join lateral (select score,blockers from qa_reports qr where qr.production_run_id=pr.id order by qr.created_at desc limit 1) q on true
-        where p.state in ('private','reviewed')
-        order by p.created_at asc limit 20`),
+    const [data,dead,reviewQueue]=await Promise.all([
+      loadDashboardData(db),
+      db.query(`select id,kind,attempts,max_attempts,last_error,updated_at,payload from jobs where state='dead' order by updated_at desc limit 12`),
+      db.query(`select p.id,p.youtube_video_id,p.state,p.publish_at,p.content_format,p.metadata,p.created_at,pr.total_cost_usd::float as total_cost_usd,ci.working_title,o.angle,o.score::float as opportunity_score,q.score::float as qa_score,q.blockers,c.channel_key from publications p left join production_runs pr on pr.id=p.production_run_id left join content_ideas ci on ci.id=pr.content_idea_id left join opportunities o on o.id=ci.opportunity_id left join channels c on c.id=p.channel_id left join lateral (select score,blockers from qa_reports qr where qr.production_run_id=pr.id order by qr.created_at desc limit 1) q on true where p.state in ('private','reviewed') order by p.created_at asc limit 20`),
     ]);
-    return {available:true,mutationsEnabled:Boolean(controlToken),jobs:Object.fromEntries(jobs.rows.map((row)=>[row.state,Number(row.count)])),budget:budget.rows,deadLetters:dead.rows,recentRuns:recentRuns.rows,reviewQueue:reviewQueue.rows};
-  } catch(error){return {available:false,error:error instanceof Error?error.message:String(error)};}
-}
-
-function send(res, status, body, type = 'application/json; charset=utf-8') {
-  res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' });
-  res.end(typeof body === 'string' ? body : JSON.stringify(body, null, 2));
-}
-
-function authorized(req){
-  if(!controlToken) return false;
-  const bearer=String(req.headers.authorization ?? '').replace(/^Bearer\s+/i,'').trim();
-  const header=String(req.headers['x-control-token'] ?? '').trim();
-  return bearer===controlToken || header===controlToken;
-}
-
-async function readJson(req){
-  let body='';
-  for await (const chunk of req){body+=chunk.toString();if(body.length>64_000)throw new Error('Request body too large');}
-  return body?JSON.parse(body):{};
+    return {
+      available:true,mutationsEnabled:Boolean(controlToken),
+      portfolio:summarizePortfolio(data),channels:summarizeChannels(data),videos:recentVideoEconomics(data),pipeline:buildPipelineStages(data),
+      candidates:data.candidates,jobs:data.jobs,budget:data.budget,library:data.library,rightsReview:data.rightsReview,routingDecisions:data.routingDecisions,recentRuns:data.recentRuns,
+      deadLetters:dead.rows,reviewQueue:reviewQueue.rows,
+    };
+  }catch(error){return {available:false,error:error instanceof Error?error.message:String(error),mutationsEnabled:Boolean(controlToken)};}
 }
 
 async function reviewAction(req,res,publicationId,action){
-  if(!db) return send(res,503,{error:'DATABASE_URL not configured'});
-  if(!authorized(req)) return send(res,401,{error:'Valid CONTROL_PLANE_TOKEN required'});
+  if(!db)return send(res,503,{error:'DATABASE_URL not configured'});
+  if(!authorized(req))return send(res,401,{error:'Valid CONTROL_PLANE_TOKEN required'});
   const body=await readJson(req);
-  const current=(await db.query(`select id,state,youtube_video_id from publications where id=$1`,[publicationId])).rows[0];
-  if(!current) return send(res,404,{error:'Publication not found'});
+  const current=(await db.query(`select p.id,p.state,p.youtube_video_id,c.credentials_ref from publications p left join channels c on c.id=p.channel_id where p.id=$1`,[publicationId])).rows[0];
+  if(!current)return send(res,404,{error:'Publication not found'});
   if(action==='approve'){
-    if(current.state!=='private') return send(res,409,{error:`Cannot approve publication in ${current.state}`});
+    if(current.state!=='private')return send(res,409,{error:`Cannot approve publication in ${current.state}`});
     await db.query(`update publications set state='reviewed',updated_at=now() where id=$1`,[publicationId]);
-    await db.query(`insert into review_decisions (publication_id,action,note,metadata) values ($1,'approve',$2,$3::jsonb)`,[publicationId,body.note??null,JSON.stringify({youtubeVideoId:current.youtube_video_id})]);
+    await db.query(`insert into review_decisions (publication_id,action,note,metadata) values ($1,'approve',$2,$3::jsonb)`,[publicationId,body.note??null,JSON.stringify({youtubeVideoId:current.youtube_video_id,source:'emergency-control-plane'})]);
     return send(res,200,{ok:true,publicationId,state:'reviewed'});
   }
   if(action==='reject'){
-    if(!['private','reviewed'].includes(current.state)) return send(res,409,{error:`Cannot reject publication in ${current.state}`});
+    if(!['private','reviewed'].includes(current.state))return send(res,409,{error:`Cannot reject publication in ${current.state}`});
     await db.query(`update publications set state='rejected',updated_at=now() where id=$1`,[publicationId]);
-    await db.query(`insert into review_decisions (publication_id,action,note,metadata) values ($1,'reject',$2,$3::jsonb)`,[publicationId,body.note??null,JSON.stringify({youtubeVideoId:current.youtube_video_id})]);
+    await db.query(`insert into review_decisions (publication_id,action,note,metadata) values ($1,'reject',$2,$3::jsonb)`,[publicationId,body.note??null,JSON.stringify({youtubeVideoId:current.youtube_video_id,source:'emergency-control-plane'})]);
     return send(res,200,{ok:true,publicationId,state:'rejected'});
   }
   if(action==='schedule'){
-    if(current.state!=='reviewed') return send(res,409,{error:'Approve the publication before scheduling it'});
+    if(current.state!=='reviewed')return send(res,409,{error:'Approve the publication before scheduling it'});
     const publishAt=new Date(body.publishAt);
-    if(!Number.isFinite(publishAt.getTime())||publishAt.getTime()<=Date.now()) return send(res,400,{error:'publishAt must be a future timestamp'});
+    if(!Number.isFinite(publishAt.getTime())||publishAt.getTime()<=Date.now())return send(res,400,{error:'publishAt must be a future timestamp'});
+    const payload={publicationId,publishAt:publishAt.toISOString(),credentialsRef:current.credentials_ref??'PRIMARY',source:'emergency-control-plane'};
     const jobKey=`schedule-publication:${publicationId}:${publishAt.toISOString()}`;
-    const inserted=await db.query(`insert into jobs (job_key,kind,state,priority,max_attempts,payload) values ($1,'schedule_publication','queued',95,4,$2::jsonb) on conflict (job_key) do nothing returning id`,[jobKey,JSON.stringify({publicationId,publishAt:publishAt.toISOString()})]);
-    if(!inserted.rows[0]) return send(res,200,{ok:true,deduped:true,publicationId,publishAt:publishAt.toISOString()});
-    await db.query(`insert into job_events (job_id,event_type,detail) values ($1,'scheduled',$2::jsonb)`,[inserted.rows[0].id,JSON.stringify({publicationId,publishAt:publishAt.toISOString(),source:'control-plane'})]);
+    const inserted=await db.query(`insert into jobs (job_key,kind,state,priority,max_attempts,payload) values ($1,'schedule_publication','queued',95,4,$2::jsonb) on conflict (job_key) do nothing returning id`,[jobKey,JSON.stringify(payload)]);
+    if(!inserted.rows[0])return send(res,200,{ok:true,deduped:true,publicationId,publishAt:publishAt.toISOString()});
+    await db.query(`insert into job_events (job_id,event_type,detail) values ($1,'scheduled',$2::jsonb)`,[inserted.rows[0].id,JSON.stringify(payload)]);
     return send(res,202,{ok:true,jobId:inserted.rows[0].id,publicationId,publishAt:publishAt.toISOString()});
   }
   return send(res,404,{error:'Unknown review action'});
 }
 
-const html = String.raw`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>auto-ytb control</title><style>:root{font-family:Inter,system-ui,sans-serif;background:#0a0a0b;color:#f3f3f3}body{margin:0}.wrap{max-width:1280px;margin:auto;padding:40px 24px}h1{font-size:34px;margin:0 0 6px}.sub{color:#9c9ca3;margin-bottom:30px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}.card{background:#141416;border:1px solid #29292d;border-radius:16px;padding:18px}.label{color:#8e8e96;font-size:12px;text-transform:uppercase;letter-spacing:.1em}.value{font-size:25px;font-weight:700;margin-top:8px}.ok{color:#7ee787}.warn{color:#f2cc60}.bad{color:#ff7b72}.muted{color:#9c9ca3}.wide{grid-column:1/-1}pre{white-space:pre-wrap;font-size:12px;color:#c6c6ce;max-height:360px;overflow:auto}.review{border-top:1px solid #29292d;padding:14px 0}.review:first-of-type{border-top:0}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}button,input{background:#202024;color:#f3f3f3;border:1px solid #3a3a40;border-radius:8px;padding:8px 10px}button{cursor:pointer}.approve{border-color:#2f7d49}.reject{border-color:#8c3b3b}.title{font-weight:700;margin:4px 0}.meta{font-size:12px;color:#9c9ca3}</style></head><body><div class="wrap"><h1>auto-ytb</h1><div class="sub">Autonomous YouTube Intelligence & Production OS</div><div id="app" class="grid"></div></div><script>const esc=function(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]})};function token(){let t=localStorage.getItem('autoYtbControlToken');if(!t){t=prompt('CONTROL_PLANE_TOKEN (only required for review actions)')||'';if(t)localStorage.setItem('autoYtbControlToken',t)}return t}async function act(id,action,payload){const t=token();if(!t)return;const r=await fetch('/api/review/'+encodeURIComponent(id)+'/'+action,{method:'POST',headers:{'content-type':'application/json','x-control-token':t},body:JSON.stringify(payload||{})});const j=await r.json();if(!r.ok){alert(j.error||'Action failed');return}await load()}function reviewHtml(rows,enabled){if(!rows||!rows.length)return '<div class="muted">No videos waiting for review.</div>';return rows.map(function(r){const title=r.working_title||r.angle||r.youtube_video_id;const yt=r.youtube_video_id?'https://www.youtube.com/watch?v='+encodeURIComponent(r.youtube_video_id):null;return '<div class="review"><div class="title">'+esc(title)+'</div><div class="meta">'+esc(r.content_format||'LONG_HORIZONTAL')+' · state '+esc(r.state)+' · QA '+esc(r.qa_score==null?'—':r.qa_score)+' · opportunity '+esc(r.opportunity_score==null?'—':r.opportunity_score)+' · cost $'+esc(r.total_cost_usd==null?'—':Number(r.total_cost_usd).toFixed(2))+'</div>'+(yt?'<div class="meta"><a style="color:#9ecbff" target="_blank" rel="noreferrer" href="'+yt+'">Open private YouTube video</a></div>':'')+(enabled?'<div class="actions">'+(r.state==='private'?'<button class="approve" onclick="act(\''+esc(r.id)+'\',\'approve\')">Approve</button>':'')+'<button class="reject" onclick="act(\''+esc(r.id)+'\',\'reject\',{note:prompt(\'Reason (optional)\')||null})">Reject</button>'+(r.state==='reviewed'?'<input id="dt-'+esc(r.id)+'" type="datetime-local"><button onclick="const v=document.getElementById(\'dt-'+esc(r.id)+'\').value;if(v)act(\''+esc(r.id)+'\',\'schedule\',{publishAt:new Date(v).toISOString()})">Schedule</button>':'')+'</div>':'<div class="meta">Set CONTROL_PLANE_TOKEN to enable review actions.</div>')+'</div>'}).join('')}async function load(){const s=await fetch('/api/status').then(function(r){return r.json()});const niche=s.niche&&s.niche.decision;const pipe=s.pipeline;const ops=s.ops||{};const jobs=ops.jobs||{};const dead=Number(jobs.dead||0);const queued=Number(jobs.queued||0)+Number(jobs.retry||0);const running=Number(jobs.running||0);const ledger=ops.budget&&ops.budget[0];const spend=ledger?Number(ledger.actual_usd||0).toFixed(2):'—';const reserved=ledger?Number(ledger.reserved_usd||0).toFixed(2):'—';const stateClass=pipe&&pipe.state==='READY_FOR_REVIEW'?'ok':'warn';const nicheClass=niche&&niche.status==='PRIMARY'?'ok':'warn';document.getElementById('app').innerHTML='<div class="card"><div class="label">System</div><div class="value ok">ONLINE</div><div class="muted">'+esc(s.version)+'</div></div><div class="card"><div class="label">Queue</div><div class="value '+(dead?'bad':queued?'warn':'ok')+'">'+queued+' queued</div><div class="muted">'+running+' running · '+dead+' dead</div></div><div class="card"><div class="label">Daily spend</div><div class="value">$'+spend+'</div><div class="muted">$'+reserved+' reserved</div></div><div class="card"><div class="label">Niche decision</div><div class="value '+nicheClass+'">'+esc(niche?niche.status:'NO DATA')+'</div><div class="muted">'+esc(niche&&niche.label?niche.label:'Awaiting live evidence')+'</div></div><div class="card"><div class="label">Latest pipeline</div><div class="value '+stateClass+'">'+esc(pipe?pipe.state:'NO LOCAL RUN')+'</div><div class="muted">QA '+esc(pipe&&pipe.qa?pipe.qa.score:'—')+'</div></div><div class="card wide"><div class="label">Human review queue</div>'+reviewHtml(ops.reviewQueue||[],Boolean(ops.mutationsEnabled))+'</div><div class="card wide"><div class="label">Recent production runs</div><pre>'+esc(JSON.stringify(ops.recentRuns||[],null,2))+'</pre></div><div class="card wide"><div class="label">Dead-letter queue</div><pre>'+esc(JSON.stringify(ops.deadLetters||[],null,2))+'</pre></div><div class="card wide"><div class="label">Niche ranking</div><pre>'+esc(JSON.stringify(s.niche&&s.niche.niches?s.niche.niches:[],null,2))+'</pre></div>';}load();setInterval(load,15000);</script></body></html>`;
+const html=String.raw`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>auto-ytb · Autonomous Channel OS</title><style>
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f7f7f8;background:#09090b;color-scheme:dark;--panel:#111114;--panel2:#17171b;--line:#29292f;--muted:#92929d;--good:#69db8a;--warn:#f0c75e;--bad:#ff7373;--blue:#87b8ff}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 18% -5%,#1d2336 0,transparent 31%),#09090b}.wrap{max-width:1480px;margin:auto;padding:34px 26px 80px}.top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:26px}.eyebrow,.label{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}h1{font-size:34px;letter-spacing:-.04em;margin:5px 0}.sub{color:var(--muted);max-width:760px;line-height:1.5}.status{display:flex;align-items:center;gap:8px;background:#111914;border:1px solid #24452e;padding:9px 12px;border-radius:999px;font-size:12px;color:var(--good)}.dot{width:8px;height:8px;border-radius:50%;background:currentColor;box-shadow:0 0 14px currentColor}.metrics{display:grid;grid-template-columns:repeat(8,minmax(120px,1fr));gap:10px;margin-bottom:22px}.card{background:linear-gradient(180deg,#151519,#111114);border:1px solid var(--line);border-radius:16px;padding:16px}.metric .value{font-size:24px;font-weight:750;letter-spacing:-.035em;margin:7px 0 3px}.muted{color:var(--muted)}.good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}.blue{color:var(--blue)}.section{margin-top:24px}.section-head{display:flex;align-items:end;justify-content:space-between;margin-bottom:10px}.section h2{font-size:17px;margin:0}.section-note{font-size:12px;color:var(--muted)}.pipeline{display:grid;grid-template-columns:repeat(10,minmax(110px,1fr));gap:7px}.stage{position:relative;min-height:105px;padding:13px;background:#111114;border:1px solid var(--line);border-radius:13px}.stage:after{content:"→";position:absolute;right:-9px;top:41px;color:#555660;z-index:2}.stage:last-child:after{display:none}.stage .num{font-size:10px;color:#666873}.stage .name{font-size:12px;font-weight:700;margin:10px 0 6px}.stage .detail{font-size:10px;color:var(--muted);line-height:1.35}.stage.ok{border-color:#254831}.stage.active{border-color:#36577e}.stage.warn{border-color:#765f2c}.channel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}.channel{padding:18px}.channel-top{display:flex;justify-content:space-between;gap:10px}.channel-name{font-weight:750}.pill{font-size:10px;letter-spacing:.05em;text-transform:uppercase;border:1px solid var(--line);border-radius:999px;padding:5px 8px;color:var(--muted);white-space:nowrap}.pill.ready{color:var(--good);border-color:#31543a}.pill.awaiting_channel,.pill.brand_ready{color:var(--warn);border-color:#655426}.channel-meta{font-size:11px;color:var(--muted);margin-top:5px}.channel-econ{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:15px}.mini{background:#0d0d10;border:1px solid #222227;border-radius:10px;padding:9px}.mini b{display:block;font-size:14px;margin-top:4px}.bar{height:5px;background:#24242a;border-radius:4px;overflow:hidden;margin-top:13px}.bar i{display:block;height:100%;background:#7aa9ef;border-radius:4px}.channel-foot{display:flex;justify-content:space-between;gap:10px;margin-top:10px;font-size:10px;color:var(--muted)}.two{display:grid;grid-template-columns:1.5fr 1fr;gap:12px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;color:var(--muted);font-weight:500;padding:10px 9px;border-bottom:1px solid var(--line);white-space:nowrap}td{padding:11px 9px;border-bottom:1px solid #202025;white-space:nowrap}td.title-cell{white-space:normal;min-width:220px;font-weight:650}.num-cell{text-align:right;font-variant-numeric:tabular-nums}.candidate{padding:12px 0;border-bottom:1px solid #25252a}.candidate:last-child{border-bottom:0}.candidate-title{display:flex;justify-content:space-between;gap:10px;font-size:12px;font-weight:700}.candidate p{font-size:11px;color:var(--muted);line-height:1.45;margin:5px 0}.alert{font-size:11px;padding:10px 12px;border-radius:10px;background:#181510;border:1px solid #4c4025;color:#e8cd7c;margin-top:8px}.empty{padding:20px 0;color:var(--muted);font-size:12px}.footer{margin-top:28px;color:#65656d;font-size:10px}.error{padding:18px;background:#211313;border:1px solid #5b2929;border-radius:14px;color:#ff9a9a}a{color:var(--blue)}@media(max-width:1150px){.metrics{grid-template-columns:repeat(4,1fr)}.pipeline{grid-template-columns:repeat(5,1fr)}.stage:nth-child(5):after{display:none}.two{grid-template-columns:1fr}}@media(max-width:650px){.wrap{padding:22px 14px}.top{display:block}.status{display:inline-flex;margin-top:12px}.metrics{grid-template-columns:repeat(2,1fr)}.pipeline{grid-template-columns:repeat(2,1fr)}.stage:after{display:none}.channel-econ{grid-template-columns:repeat(2,1fr)}}
+</style></head><body><div class="wrap"><div class="top"><div><div class="eyebrow">Autonomous YouTube Portfolio</div><h1>auto-ytb</h1><div class="sub">Intelligence → channel identity → production → publication → economics → learning. The system operates autonomously; this view exists to explain what it is doing.</div></div><div class="status"><span class="dot"></span><span id="system-status">ONLINE</span></div></div><div id="app"><div class="empty">Loading portfolio…</div></div><div class="footer" id="footer"></div></div><script>
+const esc=function(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]})};
+const money=function(v){return '$'+Number(v||0).toFixed(2)};const val=function(v,suffix){return v==null?'—':Number(v).toFixed(2)+(suffix||'')};
+function metric(label,value,note,cls){return '<div class="card metric"><div class="label">'+esc(label)+'</div><div class="value '+(cls||'')+'">'+esc(value)+'</div><div class="muted" style="font-size:10px">'+esc(note||'')+'</div></div>'}
+function pipelineHtml(rows){return '<div class="pipeline">'+rows.map(function(r,i){return '<div class="stage '+esc(r.state)+'"><div class="num">'+String(i+1).padStart(2,'0')+'</div><div class="name">'+esc(r.label)+'</div><div class="detail">'+esc(r.detail)+'</div></div>'}).join('')+'</div>'}
+function channelHtml(c){const state=c.lifecycleState||'unknown';const brandPct=Math.round((Number(c.brandReady||0)/3)*100);const character=c.characterMode&&c.characterMode!=='none'?(c.characterName||c.characterMode):'No persistent character';return '<div class="card channel"><div class="channel-top"><div><div class="channel-name">'+esc(c.channelKey||c.title)+'</div><div class="channel-meta">'+esc((c.language||'').toUpperCase())+' · '+esc(c.autonomyMode)+' · '+esc(character)+'</div></div><span class="pill '+esc(state)+'">'+esc(state.replaceAll('_',' '))+'</span></div><div class="channel-econ"><div class="mini"><span class="label">Cost</span><b>'+money(c.costUsd)+'</b></div><div class="mini"><span class="label">Revenue</span><b>'+money(c.revenueUsd)+'</b></div><div class="mini"><span class="label">Profit</span><b class="'+(Number(c.profitUsd)>=0?'good':'bad')+'">'+money(c.profitUsd)+'</b></div><div class="mini"><span class="label">ROI</span><b>'+esc(c.roi==null?'—':Number(c.roi).toFixed(2)+'x')+'</b></div></div><div class="bar"><i style="width:'+brandPct+'%"></i></div><div class="channel-foot"><span>Brand '+brandPct+'% · Drive '+Number(c.library&&c.library.items||0)+' items</span><span>'+Number(c.videos||0)+' videos · '+esc(c.watchMinutesPerDollar==null?'—':c.watchMinutesPerDollar+' watch min/$')+'</span></div></div>'}
+function videosHtml(rows){if(!rows.length)return '<div class="empty">No video economics yet. Revenue will remain empty until YouTube returns real data.</div>';return '<div class="table-wrap"><table><thead><tr><th>Video</th><th>Channel</th><th>Format</th><th>State</th><th class="num-cell">Cost</th><th class="num-cell">Revenue</th><th class="num-cell">Profit</th><th class="num-cell">ROI</th><th class="num-cell">Watch min/$</th></tr></thead><tbody>'+rows.map(function(v){return '<tr><td class="title-cell">'+esc(v.title)+'</td><td>'+esc(v.channelKey)+'</td><td>'+esc(v.contentFormat)+'</td><td>'+esc(v.state)+'</td><td class="num-cell">'+money(v.costUsd)+'</td><td class="num-cell">'+money(v.revenueUsd)+'</td><td class="num-cell '+(Number(v.profitUsd)>=0?'good':'bad')+'">'+money(v.profitUsd)+'</td><td class="num-cell">'+esc(v.roi==null?'—':Number(v.roi).toFixed(2)+'x')+'</td><td class="num-cell">'+esc(v.watchMinutesPerDollar==null?'—':Number(v.watchMinutesPerDollar).toFixed(1))+'</td></tr>'}).join('')+'</tbody></table></div>'}
+function candidatesHtml(rows){if(!rows.length)return '<div class="empty">No unresolved channel candidates.</div>';return rows.slice(0,8).map(function(c){return '<div class="candidate"><div class="candidate-title"><span>'+esc(c.proposed_name)+'</span><span class="pill '+esc(c.status)+'">'+esc(c.status.replaceAll('_',' '))+'</span></div><p>'+esc(c.proposed_positioning)+'</p><div class="channel-foot"><span>'+esc(c.character_name?('Character · '+c.character_name):(c.character_mode||'no character'))+'</span><span>Opportunity '+Number(c.opportunity_score||0).toFixed(1)+' · route '+Number(c.route_score||0).toFixed(1)+'</span></div></div>'}).join('')}
+async function load(){try{const s=await fetch('/api/status').then(function(r){if(!r.ok)throw new Error('status '+r.status);return r.json()});const o=s.ops||{};if(!o.available){document.getElementById('app').innerHTML='<div class="error">Database unavailable: '+esc(o.error||o.reason||'not configured')+'</div>';return}const p=o.portfolio||{};const profitClass=Number(p.profitUsd)>=0?'good':'bad';let html='<div class="metrics">'+metric('Channels',p.activeChannels+'/'+p.channels,p.channelCandidates+' candidates','blue')+metric('Total cost',money(p.totalCostUsd),p.videos+' videos')+metric('Revenue',money(p.totalRevenueUsd),'YouTube + external')+metric('Profit',money(p.profitUsd),'revenue − production',profitClass)+metric('ROI',p.roi==null?'—':Number(p.roi).toFixed(2)+'x','portfolio profit / cost')+metric('Watch min / $',p.watchMinutesPerDollar==null?'—':Number(p.watchMinutesPerDollar).toFixed(1),'retention efficiency')+metric('Queue',p.queuedJobs+' queued',p.runningJobs+' running',p.deadJobs?'warn':'good')+metric('Rights',p.unresolvedRights,p.unresolvedRights?'kept private until resolved':'clear',p.unresolvedRights?'warn':'good')+'</div>';
+html+='<section class="section"><div class="section-head"><h2>Autonomous generation flow</h2><div class="section-note">Every stage is independently observable and retry-safe.</div></div>'+pipelineHtml(o.pipeline||[])+'</section>';
+html+='<section class="section"><div class="section-head"><h2>Channel portfolio</h2><div class="section-note">Identity, OAuth, Drive, budget and learning remain isolated per channel.</div></div><div class="channel-grid">'+(o.channels||[]).map(channelHtml).join('')+'</div></section>';
+html+='<section class="section two"><div class="card"><div class="section-head"><h2>Recent video economics</h2><div class="section-note">No fabricated revenue.</div></div>'+videosHtml(o.videos||[])+'</div><div class="card"><div class="section-head"><h2>Channel launch candidates</h2><div class="section-note">Distinct identities are never forced into an unrelated channel.</div></div>'+candidatesHtml(o.candidates||[])+'</div></section>';
+html+='<section class="section two"><div class="card"><div class="section-head"><h2>Latest routing decisions</h2></div><div class="table-wrap"><table><thead><tr><th>Opportunity</th><th>Route</th><th class="num-cell">Fit</th></tr></thead><tbody>'+(o.routingDecisions||[]).slice(0,8).map(function(r){return '<tr><td class="title-cell">'+esc(r.angle||r.opportunity_id)+'</td><td>'+esc(r.channel_key||r.route_mode)+'</td><td class="num-cell">'+Number(r.route_score||0).toFixed(1)+'</td></tr>'}).join('')+'</tbody></table></div></div><div class="card"><div class="section-head"><h2>Operational safety</h2></div><div class="candidate"><div class="candidate-title"><span>Dead-letter queue</span><span class="'+(p.deadJobs?'bad':'good')+'">'+Number(p.deadJobs||0)+'</span></div><p>Failed jobs never disappear silently. Retries use backoff before reaching dead-letter.</p></div><div class="candidate"><div class="candidate-title"><span>Unresolved rights</span><span class="'+(p.unresolvedRights?'warn':'good')+'">'+Number(p.unresolvedRights||0)+'</span></div><p>FULL_AUTONOMOUS still keeps a video private when licensing/provenance is unresolved.</p></div><div class="candidate"><div class="candidate-title"><span>Emergency manual gate</span><span class="muted">'+(o.mutationsEnabled?'enabled':'disabled')+'</span></div><p>Not part of the normal workflow; CONTROL_PLANE_TOKEN exists only for intervention and recovery.</p></div></div></section>';
+document.getElementById('app').innerHTML=html;document.getElementById('footer').textContent=s.version+' · refreshed '+new Date(s.generatedAt).toLocaleString();document.getElementById('system-status').textContent=p.deadJobs?'ONLINE · ATTENTION':'ONLINE · AUTONOMOUS';}catch(error){document.getElementById('app').innerHTML='<div class="error">'+esc(error.message||String(error))+'</div>';}}load();setInterval(load,15000);
+</script></body></html>`;
 
-const server = http.createServer(async (req, res) => {
+const server=http.createServer(async(req,res)=>{
   try{
-    const url=new URL(req.url ?? '/',`http://${req.headers.host ?? 'localhost'}`);
-    if (url.pathname === '/api/status' && req.method==='GET') {
-      const [niche, pipeline, ops] = await Promise.all([jsonFile('.data/niche-live-latest.json'), jsonFile('.data/pipeline-mock-latest.json'),opsStatus()]);
-      return send(res, 200, { version: 'v0.8-dev', niche, pipeline, ops, generatedAt: new Date().toISOString() });
+    const url=new URL(req.url??'/',`http://${req.headers.host??'localhost'}`);
+    if(url.pathname==='/api/status'&&req.method==='GET'){
+      const [niche,pipeline,ops]=await Promise.all([jsonFile('.data/niche-live-latest.json'),jsonFile('.data/pipeline-mock-latest.json'),portfolioStatus()]);
+      return send(res,200,{version,niche,pipelineMock:pipeline,ops,generatedAt:new Date().toISOString()});
     }
-    if (url.pathname === '/health' && req.method==='GET') {
-      const ops=await opsStatus();
-      return send(res, ops.available || !db ? 200 : 503, { ok:ops.available || !db,database:ops.available,mutationsEnabled:Boolean(controlToken) });
+    if(url.pathname==='/api/portfolio'&&req.method==='GET')return send(res,200,await portfolioStatus());
+    if(url.pathname==='/health'&&req.method==='GET'){
+      const ops=await portfolioStatus();return send(res,ops.available||!db?200:503,{ok:ops.available||!db,database:ops.available,version,mutationsEnabled:Boolean(controlToken)});
     }
     const match=url.pathname.match(/^\/api\/review\/([0-9a-f-]+)\/(approve|reject|schedule)$/i);
-    if(match && req.method==='POST') return await reviewAction(req,res,match[1],match[2].toLowerCase());
-    if(url.pathname.startsWith('/api/')) return send(res,404,{error:'Not found'});
-    return send(res, 200, html, 'text/html; charset=utf-8');
-  } catch(error){return send(res,500,{error:error instanceof Error?error.message:String(error)});}
+    if(match&&req.method==='POST')return await reviewAction(req,res,match[1],match[2].toLowerCase());
+    if(url.pathname.startsWith('/api/'))return send(res,404,{error:'Not found'});
+    return send(res,200,html,'text/html; charset=utf-8');
+  }catch(error){return send(res,500,{error:error instanceof Error?error.message:String(error)});}
 });
-server.listen(port, () => console.log(`auto-ytb control plane: http://localhost:${port}`));
+server.listen(port,()=>console.log(`auto-ytb portfolio control plane: http://localhost:${port}`));
