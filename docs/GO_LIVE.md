@@ -1,33 +1,37 @@
-# Go-live checklist
+# Go-live checklist — v0.12
 
-The application is designed so production activation is configuration-first rather than a rewrite.
+Production activation is **configuration-first**. The factory, quality gates, schedulers, analytics/learning loops and secure web control plane are already wired; go-live should not require an architectural rewrite.
 
-## 1. Install and validate
+## 1. Validate the repository
 
 ```bash
 npm install
 npm run typecheck
 npm run test:all
 npm run pipeline:mock
-npm run doctor
+npm run web:build
 ```
+
+CI runs the same path and also installs FFmpeg so the real MP4 inspection regression executes.
 
 ## 2. Configure secrets
 
-Copy `.env.example` to `.env` locally or configure the same names in the deployment platform. Never commit `.env`, API keys or OAuth refresh tokens.
+Copy `.env.example` to `.env` locally or use secrets in the deployment platform. Never commit `.env`, API keys, OAuth refresh tokens, `CONTROL_PLANE_TOKEN` or `SESSION_SECRET`.
 
-Current minimum live stack:
+Minimum live stack:
 
 - `YOUTUBE_API_KEY`
 - `DATABASE_URL`
 - `SEARCH_PROVIDER=tavily` + `SEARCH_API_KEY`
-- `TEXT_MODEL_RESEARCH` + `TEXT_MODEL_API_KEY`
+- `TEXT_MODEL_API_KEY`
 - `VOICE_PROVIDER=elevenlabs` + `VOICE_API_KEY` + `VOICE_ID`
-- `IMAGE_PROVIDER=runway` + Runway API key
-- `VIDEO_PROVIDER=runway` + Runway API key
-- Google OAuth client ID/secret + refresh token + `YOUTUBE_CHANNEL_ID`
+- `IMAGE_PROVIDER=runway` + API key
+- `VIDEO_PROVIDER=runway` + API key
+- Google OAuth client ID/secret + refresh token + existing `YOUTUBE_CHANNEL_ID`
+- random `CONTROL_PLANE_TOKEN`
+- independent random `SESSION_SECRET` (>=32 chars in production)
 
-Runway image/video generation is currently required by the live scene planner. Providers remain replaceable behind the same contracts.
+Providers are replaceable behind contracts. Runway is the current live visual adapter, but the Hybrid Visual Engine deliberately avoids using premium generation for every scene.
 
 ## 3. Database
 
@@ -35,124 +39,111 @@ Runway image/video generation is currently required by the live scene planner. P
 npm run migrate
 ```
 
-Migrations are idempotently tracked in `schema_migrations`, including the durable queue, job event history and daily budget ledger.
+Migrations include intelligence, durable jobs, review/audit, channel identity, economics, provider cost ledger, Creative Performance Lab and public Market Pattern Lab.
 
-## 4. YouTube OAuth
+## 4. YouTube + Drive OAuth
 
 ```bash
 npm run oauth:url
-```
-
-Open the printed URL and approve the requested YouTube/Analytics permissions. After Google returns the authorization code:
-
-```bash
 npm run oauth:exchange -- --code=YOUR_CODE
 ```
 
-Store the returned refresh token as `YOUTUBE_REFRESH_TOKEN`.
+The authorization includes YouTube upload/Analytics capabilities and the Google Drive `drive.file` scope used by the content library. Store the returned refresh token only as a secret.
 
-## 5. Validate live configuration
+Each additional Channel DNA uses its own `credentialsRef` and suffixed OAuth variables. Tokens are never implicitly reused between channels.
+
+## 5. Configuration doctor
 
 ```bash
 npm run doctor
 ```
 
-All mandatory subsystems used by `pipeline:live` should report READY before autonomous production is enabled.
+Mandatory subsystems used by live production should report READY.
 
-## 6. Start market collection
+## 6. First controlled live render
 
-```bash
-npm run niche:live
-npm run discover:competitors -- --niche future-tech-business
-```
-
-Do not force a niche winner until the live evidence gate reaches sufficient confidence.
-
-## 7. Test one real production manually
-
-Keep public publishing disabled:
-
-```env
-AUTO_UPLOAD_PRIVATE=false
-AUTO_PUBLISH_PUBLIC=false
-```
-
-Then run:
+Public release is not required to validate production. Run one real topic through the complete factory:
 
 ```bash
-npm run pipeline:live -- --topic="YOUR APPROVED TEST TOPIC"
+npm run pipeline:live -- --topic="YOUR TEST TOPIC"
 ```
 
-Review the render, three thumbnail variants, sources, QA report and actual cost. After this passes, `AUTO_UPLOAD_PRIVATE=true` may be enabled so successful runs reach YouTube as private videos.
+The run must clear:
+
+1. research confidence / provenance
+2. script + packaging + storyboard Attention Review
+3. automatic repair passes if the attention score is below threshold
+4. timestamped narration synchronization
+5. visual / rights / originality / language / packaging / cost QA
+6. Full-HD render
+7. final ffprobe/FFmpeg inspection
+
+A failed gate must remain BLOCKED rather than being pushed forward manually.
+
+## 7. Secure web control plane
+
+Development:
+
+```bash
+npm run web:dev
+```
+
+Production is normally run through Compose and exposed at port 4310:
+
+```bash
+docker compose up -d
+```
+
+Open `http://HOST:4310` and authenticate using `CONTROL_PLANE_TOKEN`. After login, the token is not stored in browser JavaScript; the app uses a signed HttpOnly session cookie.
+
+The web app is observational by default and shows:
+- pre-publication render preview
+- QA / Attention / final media scores
+- scripts and publication state
+- cost / revenue / profit / ROI
+- provider/model spend
+- queue state
+- channels / brand candidates
+- Creative Performance Lab
+- public Market Pattern Lab
+
+The web process receives the shared `.data` volume read-only. It does not run FFmpeg workers or hold production jobs.
 
 ## 8. Autonomous operations
 
-Production is gated by score, daily video count and budget:
+Relevant safeguards:
 
 ```env
+AUTO_UPLOAD_PRIVATE=true
+MIN_ATTENTION_SCORE=86
+MAX_ATTENTION_REVISION_PASSES=2
 AUTO_PRODUCTION_MIN_SCORE=82
 AUTO_PRODUCTION_MAX_PER_DAY=1
 AUTO_PRODUCTION_DAILY_BUDGET_USD=25
 AUTO_PRODUCTION_RESERVED_COST_USD=18
 ```
 
-One scheduling pass:
+Persistent processes are already defined in Docker Compose:
+- `worker`
+- `scheduler`
+- `web`
 
-```bash
-npm run ops:schedule
-```
+The scheduler creates market, branding, production and maintenance jobs. The worker uses atomic PostgreSQL claims, timeout recovery, exponential retry/backoff and dead-letter handling.
 
-Run a single queued job:
+## 9. Autonomous intelligence and learning
 
-```bash
-npm run worker:once
-```
+Every market cycle performs public market intelligence and then updates the Market Pattern Lab using observable competitor signals only.
 
-Persistent processes:
+Every completed owned production stores a creative fingerprint. Analytics sync then aligns retention with exact beats/scenes and recomputes feature performance. When sample size and confidence are sufficient, learned hook/narrative/cadence/visual guidance is fed into future generation. Sparse evidence stays observational.
 
-```bash
-npm run scheduler
-npm run worker
-```
+Economics are reconciled from the provider cost ledger and latest Analytics rather than from a single opaque estimate.
 
-The worker uses atomic PostgreSQL claims (`FOR UPDATE SKIP LOCKED`), exponential retry/backoff, stale-lock recovery and a dead-letter state after retry exhaustion. Job keys prevent duplicate production of the same opportunity. Reserved budget is reconciled against the original scheduling date even when retries cross midnight.
+## 10. Public publishing policy
 
-## 9. Docker deployment
+A Channel DNA configured for `FULL_AUTONOMOUS` may schedule/publish without an operator click **only after all required gates pass**. The workflow still uploads private first so the transition is reversible and the video can be viewed in the web control plane.
 
-The repository includes a Node 22 + FFmpeg image and a Compose stack with persistent services:
+Unresolved direct-source rights, factual blockers, failed attention/media QA, budget violations or policy risk keep the video private/blocked.
 
-```bash
-docker compose build
-docker compose run --rm worker npm run migrate
-docker compose up -d
-```
+## External one-time limitation
 
-Services:
-
-- `worker`: executes expensive production and analytics jobs
-- `scheduler`: periodically queues approved high-value opportunities and maintenance
-- `dashboard`: control plane on port `4310`
-
-All three share `.data` through a Docker volume. The database should be a durable external PostgreSQL instance.
-
-## 10. Owned-channel learning loop
-
-Analytics is enqueued once per day automatically by the maintenance scheduler. Manual sync remains available:
-
-```bash
-npm run analytics:sync -- --days=28
-```
-
-This persists performance, retention, traffic sources, revenue and derived learning signals.
-
-## Safety defaults
-
-- private/review workflow before public publishing
-- `AUTO_PUBLISH_PUBLIC=false`
-- daily production budget and per-video cost cap
-- only `PRODUCE`/approved opportunities above the configured score can enter the autonomous queue
-- synthetic-media disclosure gate
-- factual/provenance/originality/visual-coverage/thumbnail QA
-- duplicate job protection
-- bounded retries + dead-letter queue
-- no secrets committed to Git or Docker build context
+The YouTube Data API does not provide a supported operation to create a brand-new YouTube channel. If the Channel Router discovers a materially different new brand/persona, the OS can create its complete candidate identity and mark it `AWAITING_CHANNEL`, but creation of that new channel/account itself is a one-time external account operation. Once linked through its OAuth, normal autonomous operation resumes.
