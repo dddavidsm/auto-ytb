@@ -21,30 +21,19 @@ export class YouTubeAnalyticsClient {
   }
 
   async getVideoPerformance(input: { videoId: string; startDate: string; endDate: string }): Promise<AnalyticsTable> {
-    return this.query({
-      ids: 'channel==MINE',
-      startDate: input.startDate,
-      endDate: input.endDate,
-      filters: `video==${input.videoId}`,
-      metrics: 'views,engagedViews,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost,estimatedRevenue,videosAddedToPlaylists,videosRemovedFromPlaylists',
-    });
+    const base={ids:'channel==MINE',startDate:input.startDate,endDate:input.endDate,filters:`video==${input.videoId}`};
+    try{
+      return await this.query({...base,metrics:'views,engagedViews,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,subscribersLost,estimatedRevenue,videosAddedToPlaylists,videosRemovedFromPlaylists'});
+    }catch{
+      return this.query({...base,metrics:'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,likes,comments,shares,subscribersGained,estimatedRevenue'});
+    }
   }
 
   async getRetention(input: { videoId: string; startDate: string; endDate: string }): Promise<AnalyticsTable> {
-    return this.query({
-      ids: 'channel==MINE',
-      startDate: input.startDate,
-      endDate: input.endDate,
-      filters: `video==${input.videoId}`,
-      dimensions: 'elapsedVideoTimeRatio',
-      metrics: 'audienceWatchRatio',
-      sort: 'elapsedVideoTimeRatio',
-    });
+    return this.query({ids:'channel==MINE',startDate:input.startDate,endDate:input.endDate,filters:`video==${input.videoId}`,dimensions:'elapsedVideoTimeRatio',metrics:'audienceWatchRatio',sort:'elapsedVideoTimeRatio'});
   }
 
-  async getTrafficSources(input: { videoId: string; startDate: string; endDate: string }): Promise<AnalyticsTable> {
-    return this.dimensionalVideoReport({...input,dimension:'insightTrafficSourceType',sort:'-views'});
-  }
+  async getTrafficSources(input: { videoId: string; startDate: string; endDate: string }): Promise<AnalyticsTable> {return this.dimensionalVideoReport({...input,dimension:'insightTrafficSourceType',sort:'-views'});}
   async getDeviceTypes(input:{videoId:string;startDate:string;endDate:string}):Promise<AnalyticsTable>{return this.dimensionalVideoReport({...input,dimension:'deviceType',sort:'-views'});}
   async getSubscriberStatus(input:{videoId:string;startDate:string;endDate:string}):Promise<AnalyticsTable>{return this.dimensionalVideoReport({...input,dimension:'subscribedStatus',sort:'-views'});}
   async getCountries(input:{videoId:string;startDate:string;endDate:string}):Promise<AnalyticsTable>{return this.dimensionalVideoReport({...input,dimension:'country',sort:'-views'});}
