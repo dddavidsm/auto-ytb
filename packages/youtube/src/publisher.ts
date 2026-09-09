@@ -14,6 +14,10 @@ function markerFor(value: string): string {
   return `auto_ytb_${createHash('sha256').update(value).digest('hex').slice(0, 24)}`;
 }
 
+function cliArg(name: string): string | undefined {
+  return process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
+}
+
 export class YouTubePublisher implements Publisher {
   readonly name = 'youtube-data-api';
   constructor(
@@ -62,7 +66,9 @@ export class YouTubePublisher implements Publisher {
     selfDeclaredMadeForKids?: boolean;
   }): Promise<{ externalId: string; url?: string; status: 'private' }> {
     const token = await this.tokenProvider.getAccessToken();
-    const stableSeed = String(this.options.idempotencyKey || input.fileUri);
+    // The opportunity id survives a process crash and a newly-created production run, unlike
+    // the local render path. This makes a retry recover the already-uploaded private video.
+    const stableSeed = String(this.options.idempotencyKey || process.env.AUTO_YTB_UPLOAD_IDEMPOTENCY_KEY || cliArg('opportunity-id') || input.fileUri);
     const marker = markerFor(stableSeed);
     const existing = await this.findExistingUpload(token, marker);
     if (existing) return { externalId:existing, url:`https://www.youtube.com/watch?v=${existing}`, status:'private' };
