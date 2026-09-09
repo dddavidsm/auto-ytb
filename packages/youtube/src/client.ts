@@ -10,7 +10,6 @@ export type SearchVideo = {
   publishedAt: string;
 };
 
-
 export type ChannelDetails = {
   id: string;
   title: string;
@@ -27,16 +26,27 @@ export type EnrichedVideo = SearchVideo & {
   duration: string;
 };
 
+export type YouTubeClientAuth = string | { apiKey?: string; accessToken?: string };
+
 export class YouTubeClient {
   readonly searchBudget = new DailyBudget(100);
+  private readonly apiKey?: string;
+  private readonly accessToken?: string;
 
-  constructor(private readonly apiKey: string) {
-    if (!apiKey) throw new Error('YOUTUBE_API_KEY is required');
+  constructor(auth: YouTubeClientAuth) {
+    if (typeof auth === 'string') this.apiKey = auth.trim() || undefined;
+    else {
+      this.apiKey = auth.apiKey?.trim() || undefined;
+      this.accessToken = auth.accessToken?.trim() || undefined;
+    }
+    if (!this.apiKey && !this.accessToken) throw new Error('YouTubeClient requires YOUTUBE_API_KEY or an OAuth access token');
   }
 
   private async get<T>(path: string, params: URLSearchParams): Promise<T> {
-    params.set('key', this.apiKey);
-    const response = await fetch(`${API}/${path}?${params.toString()}`);
+    if (this.apiKey) params.set('key', this.apiKey);
+    const response = await fetch(`${API}/${path}?${params.toString()}`, {
+      headers: this.accessToken ? { authorization: `Bearer ${this.accessToken}` } : undefined,
+    });
     if (!response.ok) {
       const body = await response.text();
       throw new Error(`YouTube API ${response.status}: ${body.slice(0, 500)}`);
