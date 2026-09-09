@@ -70,6 +70,36 @@ function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, h
   return { kind:'motion_graphic', generated:false, costTier:'free', selectionReason:'Procedural visual provides sufficient clarity at near-zero marginal media cost.' };
 }
 
+function diversifyLongRuns(input:Scene[]):Scene[]{
+  const out:Scene[]=[];
+  let previous:Scene['kind']|null=null;
+  let run=0;
+  for(const original of input){
+    let scene={...original};
+    if(scene.kind===previous)run+=1;else{previous=scene.kind;run=1;}
+    if(run>3&&['motion_graphic','source_card','chart','text'].includes(scene.kind)){
+      const before=scene.kind;
+      const usableSource=scene.sourceRefs?.some((ref)=>ref.policy!=='BLOCKED');
+      if(before==='motion_graphic')scene.kind=usableSource?'source_card':'text';
+      else if(before==='source_card')scene.kind='motion_graphic';
+      else if(before==='chart')scene.kind='motion_graphic';
+      else scene.kind='motion_graphic';
+      scene.generated=false;
+      scene.costTier='free';
+      scene.selectionReason=`Procedural variation inserted after ${run} consecutive ${before} scenes to preserve visual rhythm without extra generative spend.`;
+      scene.instruction=scene.kind==='source_card'
+        ? `${scene.instruction} Attributed transformed evidence card; ${sourceAttribution(scene.sourceRefs)}.`
+        : scene.kind==='text'
+          ? `${scene.instruction} Minimal high-contrast editorial text/shape beat used as a deliberate pattern interrupt.`
+          : `${scene.instruction} Purposeful motion-graphic pattern interrupt with a visibly different hierarchy/layout from the preceding scene.`;
+      previous=scene.kind;
+      run=1;
+    }
+    out.push(scene);
+  }
+  return out;
+}
+
 export function planScenes(script: VideoScript, options: ScenePlanningOptions = {}): Scene[] {
   const targetSceneDurationSec = Math.max(2.5, Math.min(16, options.targetSceneDurationSec ?? 10));
   const scenes: Scene[] = [];
@@ -100,5 +130,5 @@ export function planScenes(script: VideoScript, options: ScenePlanningOptions = 
       });
     }
   }
-  return scenes;
+  return diversifyLongRuns(scenes);
 }
