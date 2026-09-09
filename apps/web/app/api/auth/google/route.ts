@@ -5,12 +5,14 @@ import { controlGoogleConfig, googleOauthStateCookieName } from '../../../../lib
 export const runtime='nodejs';
 
 export async function GET(request:NextRequest){
-  // OAuth state is stored in a host-only cookie. Force one canonical loopback host so
-  // opening the panel through localhost cannot create a cookie that later disappears
-  // when the authorized OAuth bridge returns to 127.0.0.1.
-  if(request.nextUrl.hostname==='localhost'){
-    const canonical=request.nextUrl.clone();
+  // OAuth state is host-only. Use the browser's actual Host header (not nextUrl.hostname,
+  // which Next dev may normalize) to canonicalize localhost to 127.0.0.1 exactly once.
+  const rawHost=(request.headers.get('host')||'').trim().toLowerCase();
+  const [hostname,port]=rawHost.split(':');
+  if(hostname==='localhost'){
+    const canonical=new URL(request.url);
     canonical.hostname='127.0.0.1';
+    if(port)canonical.port=port;
     return NextResponse.redirect(canonical);
   }
 
