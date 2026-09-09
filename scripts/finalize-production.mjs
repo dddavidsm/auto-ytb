@@ -11,13 +11,15 @@ if(!productionRunId)throw new Error('Use --production-run-id=<uuid>');
 const provider=(process.env.CONTENT_LIBRARY_PROVIDER||'google-drive').toLowerCase();
 if(provider!=='google-drive')throw new Error(`Unsupported CONTENT_LIBRARY_PROVIDER=${provider}`);
 const db=new NodePostgresSqlClient(req('DATABASE_URL'),{ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined});
-const oauth=new GoogleOAuthTokenProvider({clientId:req('YOUTUBE_CLIENT_ID'),clientSecret:req('YOUTUBE_CLIENT_SECRET'),refreshToken:req('YOUTUBE_REFRESH_TOKEN')});
+// Drive and YouTube are intentionally independent OAuth identities. Never use the publishing
+// account token to archive into the pinned Drive tree.
+const driveOauth=new GoogleOAuthTokenProvider({clientId:req('DRIVE_CLIENT_ID'),clientSecret:req('DRIVE_CLIENT_SECRET'),refreshToken:req('DRIVE_REFRESH_TOKEN')});
 const loader=new NodeUploadAssetLoader();
 const configPath=resolve(arg('channel-config','config/channels/future-tech-business.example.json'));
 const channelConfig=JSON.parse(await readFile(configPath,'utf8'));
 const channelKey=String(channelConfig.channelKey??channelConfig.id);
 const channelFolder=String(channelConfig.library?.channelFolder??channelKey);
-const library=new GoogleDriveLibraryProvider({getAccessToken:()=>oauth.getAccessToken(),rootFolderName:String(channelConfig.library?.rootFolder??process.env.DRIVE_ROOT_FOLDER??'AUTO-YTB')});
+const library=new GoogleDriveLibraryProvider({getAccessToken:()=>driveOauth.getAccessToken(),rootFolderName:String(channelConfig.library?.rootFolder??process.env.DRIVE_ROOT_FOLDER??'AUTO-YTB'),rootFolderId:req('DRIVE_ROOT_FOLDER_ID')});
 
 const stageFolders={opportunity:'01_OPPORTUNITIES',research:'02_RESEARCH',script:'03_SCRIPTS',audio:'04_AUDIO',alignment:'05_ALIGNMENT',visuals:'06_VISUALS',thumbnails:'07_THUMBNAILS',render:'08_RENDERS',published:'09_PUBLISHED',analytics:'10_ANALYTICS',archive:'99_ARCHIVE'};
 const stageDb={opportunity:'research',research:'research',script:'script',audio:'audio',alignment:'alignment',visuals:'visuals',thumbnails:'thumbnails',render:'render',published:'published',analytics:'analytics',archive:'archive'};
@@ -64,5 +66,5 @@ try{
   for(const asset of allAssets){if(!asset?.uri||String(asset.uri).startsWith('procedural://')||(asset.sceneId&&String(asset.sceneId).startsWith('thumbnail:'))||asset.provider==='source-backed-direct')continue;const ext=extension(asset.mimeType,asset.uri)||'.bin';await putAsset('visuals',`${String(visualIndex++).padStart(3,'0')}__${safe(asset.sceneId||asset.id,40)}${ext}`,asset.uri,asset.mimeType,{sceneId:asset.sceneId??null,provider:asset.provider,model:asset.model??null,generated:Boolean(asset.generated),license:asset.license??null,sourceIds:asset.sourceIds??[],sourceUrl:asset.sourceUrl??null});}
   for(const thumbnail of manifest?.thumbnails??[]){const ext=extension(thumbnail.mimeType,thumbnail.uri)||'.jpg';await putAsset('thumbnails',`${safe(thumbnail.packagingId||thumbnail.id,48)}${ext}`,thumbnail.uri,thumbnail.mimeType,{packagingId:thumbnail.packagingId??null,text:thumbnail.text??null});}
   const renderUri=context.production_metadata?.renderUri??null;if(renderUri)await putAsset('render','final.mp4',renderUri,'video/mp4',{youtubeVideoId:context.youtube_video_id??null});
-  const librarySummary={productionRunId,channelKey,videoKey,seriesKey:seriesContext?.seriesKey??null,episodeKey:seriesContext?.episodeKey??null,rootFolder:channelConfig.library?.rootFolder??process.env.DRIVE_ROOT_FOLDER??'AUTO-YTB',channelFolder,finalizedAt:new Date().toISOString()};await putJson('archive','library-index.json',librarySummary);await db.query(`update production_runs set metadata=metadata||$2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({library:{provider:'google-drive',videoKey,channelFolder,seriesKey:seriesContext?.seriesKey??null,episodeKey:seriesContext?.episodeKey??null,finalizedAt:librarySummary.finalizedAt}})]);console.log(JSON.stringify(librarySummary,null,2));
+  const librarySummary={productionRunId,channelKey,videoKey,seriesKey:seriesContext?.seriesKey??null,episodeKey:seriesContext?.episodeKey??null,rootFolderId:req('DRIVE_ROOT_FOLDER_ID'),rootFolder:channelConfig.library?.rootFolder??process.env.DRIVE_ROOT_FOLDER??'AUTO-YTB',channelFolder,finalizedAt:new Date().toISOString()};await putJson('archive','library-index.json',librarySummary);await db.query(`update production_runs set metadata=metadata||$2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({library:{provider:'google-drive',rootFolderId:librarySummary.rootFolderId,videoKey,channelFolder,seriesKey:seriesContext?.seriesKey??null,episodeKey:seriesContext?.episodeKey??null,finalizedAt:librarySummary.finalizedAt}})]);console.log(JSON.stringify(librarySummary,null,2));
 } finally {await db.close();}
