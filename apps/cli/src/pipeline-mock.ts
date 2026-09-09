@@ -10,7 +10,7 @@ const search=new MockSearchProvider({
   'AI browser agents criticism':[{...source,id:'crit-1',url:'https://research.example.com/risks',title:'Researcher criticism',sourceType:'reference' as const}],
 });
 const beats=[
-  ['b1',0,18,'hook','The browser may be disappearing without closing a single tab. AI agents are turning it from the place you visit into the system that acts for you, and that changes who controls the internet interface.','A browser transforms into an autonomous execution layer','primary-1','open_loop'],
+  ['b1',0,18,'hook','AI agents could make your browser less visible and more strategically important. The real race is who controls the execution layer, which permissions it gets, and whether users trust it to act. That changes who controls the internet interface.','A browser transforms into an autonomous execution layer while trust and control become visible','primary-1','open_loop'],
   ['b2',18,32,'setup','For three decades the browser won because people navigated pages themselves. The new model starts with a different assumption: software can increasingly execute the workflow on your behalf.','Before-and-after workflow diagram','official-1','contrast'],
   ['b3',50,32,'evidence','Product documentation now shows agents moving beyond demos into real browser tasks. That shift matters because navigation, permission and execution begin to merge.','Source-backed product evidence with execution flow','primary-1','question'],
   ['b4',82,32,'escalation','Once the browser can act, distribution becomes more valuable. The company that owns the entry point can decide which agent receives the user intent first.','Competitive distribution map escalating toward the browser','news-1','open_loop'],
