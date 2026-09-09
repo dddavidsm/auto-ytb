@@ -79,7 +79,7 @@ export function wordTimestampsToCharacterAlignment(text,words,durationSeconds){
 }
 
 export function withGeminiWordAlignment(provider,options={}){
-  const fetchFn=options.fetchFn??fetch;const apiKey=String(options.apiKey||'').trim();const model=options.model??'gemini-3.5-transcribe';const strict=options.strict!==false;const minCoverage=Number.isFinite(Number(options.minCoverage))?Number(options.minCoverage):0.88;
+  const fetchFn=options.fetchFn??fetch;const apiKey=String(options.apiKey||'').trim();const model=options.model??'gemini-3.5-transcribe';const strict=options.strict!==false;const minCoverage=Number.isFinite(Number(options.minCoverage))?Number(options.minCoverage):0.88;const usdPerMinute=Number.isFinite(Number(options.usdPerMinute))?Math.max(0,Number(options.usdPerMinute)):0.005;
   if(!apiKey)throw new Error('Gemini word alignment requires GEMINI_API_KEY');
   return{name:provider.name,async synthesize(input){
     const asset=await provider.synthesize(input);const bytes=await loadAssetBytes(asset.uri,fetchFn);const mimeType=asset.mimeType||'audio/wav';let fileName=null;
@@ -93,8 +93,8 @@ export function withGeminiWordAlignment(provider,options={}){
       const json=await interaction.json();const words=extractWords(json);if(!words.length)throw new Error('Gemini Transcribe returned no word_info timestamps');
       const converted=wordTimestampsToCharacterAlignment(input.text,words,asset.durationSeconds??words.at(-1)?.end);
       if(converted.coverage<minCoverage)throw new Error(`Gemini word alignment coverage ${Math.round(converted.coverage*100)}% is below required ${Math.round(minCoverage*100)}%`);
-      const duration=Math.max(Number(asset.durationSeconds??0),Number(words.at(-1)?.end??0));const transcriptionCostUsd=round6(duration/60*0.005);
-      return{...asset,durationSeconds:duration,alignment:converted.alignment,metadata:{...(asset.metadata??{}),alignmentSource:'gemini-word-timestamps',alignmentCoverage:round6(converted.coverage),transcriptionModel:model,transcriptionWordCount:words.length,transcriptionCostUsd}};
+      const duration=Math.max(Number(asset.durationSeconds??0),Number(words.at(-1)?.end??0));const transcriptionCostUsd=round6(duration/60*usdPerMinute);
+      return{...asset,durationSeconds:duration,alignment:converted.alignment,metadata:{...(asset.metadata??{}),alignmentSource:'gemini-word-timestamps',alignmentCoverage:round6(converted.coverage),transcriptionModel:model,transcriptionWordCount:words.length,transcriptionUsdPerMinute:usdPerMinute,transcriptionCostUsd}};
     }catch(error){
       if(strict)throw error;
       return{...asset,metadata:{...(asset.metadata??{}),alignmentSource:'approximate-fallback',alignmentError:error instanceof Error?error.message:String(error)}};
@@ -105,5 +105,5 @@ export function withGeminiWordAlignment(provider,options={}){
 }
 
 export function withGeminiAlignmentMeter(provider,meter){
-  return{name:provider.name,async synthesize(input){const asset=await provider.synthesize(input);const transcriptionCostUsd=Number(asset.metadata?.transcriptionCostUsd??0);if(transcriptionCostUsd>0){await meter.record({stage:'voice',provider:'gemini',model:String(asset.metadata?.transcriptionModel??'gemini-3.5-transcribe'),operation:'word-timestamp-transcription',durationSeconds:asset.durationSeconds??null,inputUnits:asset.durationSeconds??null,unitName:'audio-second',quantity:1,costUsd:transcriptionCostUsd,estimated:true,pricingSource:'gemini-api-pricing-2026-09-09',metadata:{alignmentCoverage:asset.metadata?.alignmentCoverage??null,wordCount:asset.metadata?.transcriptionWordCount??null,usdPerMinute:0.005}});}return{...asset,costUsd:round6(Number(asset.costUsd??0)+transcriptionCostUsd)};}};
+  return{name:provider.name,async synthesize(input){const asset=await provider.synthesize(input);const transcriptionCostUsd=Number(asset.metadata?.transcriptionCostUsd??0);if(transcriptionCostUsd>0){await meter.record({stage:'voice',provider:'gemini',model:String(asset.metadata?.transcriptionModel??'gemini-3.5-transcribe'),operation:'word-timestamp-transcription',durationSeconds:asset.durationSeconds??null,inputUnits:asset.durationSeconds??null,unitName:'audio-second',quantity:1,costUsd:transcriptionCostUsd,estimated:true,pricingSource:'gemini-api-pricing-configurable',metadata:{alignmentCoverage:asset.metadata?.alignmentCoverage??null,wordCount:asset.metadata?.transcriptionWordCount??null,usdPerMinute:asset.metadata?.transcriptionUsdPerMinute??null}});}return{...asset,costUsd:round6(Number(asset.costUsd??0)+transcriptionCostUsd)};}};
 }
