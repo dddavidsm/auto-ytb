@@ -7,7 +7,7 @@ if(!clientId||!clientSecret)throw new Error('DRIVE_CLIENT_ID/DRIVE_CLIENT_SECRET
 const codeArg=process.argv.find((arg)=>arg.startsWith('--code='));
 if(!codeArg){
   console.log(buildGoogleDriveAuthorizationUrl({clientId,redirectUri,state:'auto-ytb-drive'}));
-  console.log('\nOpen the URL with the Google account that owns the AUTO-YTB Drive, approve Drive file access, then run: npm run drive:oauth:exchange -- --code=PASTE_CODE');
+  console.log('\nOpen the URL with the Google account that owns the AUTO-YTB Drive, approve Drive access, then run: npm run drive:oauth:exchange -- --code=PASTE_CODE');
   process.exit(0);
 }
 const code=codeArg.slice('--code='.length);
