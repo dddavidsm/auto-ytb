@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: auto-ytb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: auto_ytb
+      POSTGRES_USER: auto_ytb
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - auto_ytb_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auto_ytb -d auto_ytb"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  auto_ytb_postgres_data:
+    name: auto_ytb_postgres_data
