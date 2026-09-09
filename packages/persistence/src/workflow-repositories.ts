@@ -25,7 +25,21 @@ export class ProductionRepository {
 
 export class PublicationRepository {
   constructor(private readonly db:SqlClient){}
-  async create(input:{productionRunId?:string|null;channelId:string;youtubeVideoId?:string|null;state:'rendered'|'private'|'reviewed'|'scheduled'|'public'|'failed';publishAt?:Date|null;containsSyntheticMedia:boolean;contentFormat?:'LONG_HORIZONTAL'|'SHORT_VERTICAL'|null;metadata?:unknown}):Promise<string>{const r=await this.db.query<{id:string}>(`insert into publications (production_run_id,channel_id,youtube_video_id,state,publish_at,contains_synthetic_media,content_format,metadata) values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb) returning id`,[input.productionRunId??null,input.channelId,input.youtubeVideoId??null,input.state,input.publishAt??null,input.containsSyntheticMedia,input.contentFormat??null,JSON.stringify(input.metadata??{})]);if(!r.rows[0])throw new Error('Publication insert returned no row');return r.rows[0].id;}
+  async create(input:{productionRunId?:string|null;channelId:string;youtubeVideoId?:string|null;state:'rendered'|'private'|'reviewed'|'scheduled'|'public'|'failed';publishAt?:Date|null;containsSyntheticMedia:boolean;contentFormat?:'LONG_HORIZONTAL'|'SHORT_VERTICAL'|null;metadata?:unknown}):Promise<string>{
+    const r=await this.db.query<{id:string}>(`insert into publications (production_run_id,channel_id,youtube_video_id,state,publish_at,contains_synthetic_media,content_format,metadata)
+      values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+      on conflict (production_run_id) where production_run_id is not null do update set
+        channel_id=excluded.channel_id,
+        youtube_video_id=coalesce(publications.youtube_video_id,excluded.youtube_video_id),
+        state=excluded.state,
+        publish_at=coalesce(excluded.publish_at,publications.publish_at),
+        contains_synthetic_media=excluded.contains_synthetic_media,
+        content_format=coalesce(excluded.content_format,publications.content_format),
+        metadata=publications.metadata||excluded.metadata,
+        updated_at=now()
+      returning id`,[input.productionRunId??null,input.channelId,input.youtubeVideoId??null,input.state,input.publishAt??null,input.containsSyntheticMedia,input.contentFormat??null,JSON.stringify(input.metadata??{})]);
+    if(!r.rows[0])throw new Error('Publication upsert returned no row');return r.rows[0].id;
+  }
   async setState(id:string,state:'rendered'|'private'|'reviewed'|'scheduled'|'public'|'failed',publishAt?:Date|null):Promise<void>{await this.db.query(`update publications set state=$2,publish_at=coalesce($3,publish_at),updated_at=now() where id=$1`,[id,state,publishAt??null]);}
 }
 
