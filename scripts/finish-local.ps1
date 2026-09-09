@@ -23,6 +23,18 @@ function Set-DotEnvValue {
   [IO.File]::WriteAllLines($Path, $lines.ToArray(), (New-Object Text.UTF8Encoding($false)))
 }
 
+function Get-DotEnvValue {
+  param([string]$Path,[string]$Key)
+  if (-not (Test-Path $Path)) { return '' }
+  $line = Get-Content $Path | Where-Object { $_ -match "^$([Regex]::Escape($Key))=" } | Select-Object -First 1
+  if (-not $line) { return '' }
+  return $line.Substring($Key.Length + 1).Trim()
+}
+
+function New-RandomSecret {
+  return ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))
+}
+
 function Resolve-DockerCommand {
   $command = Get-Command docker -ErrorAction SilentlyContinue
   if ($command) { return $command.Source }
@@ -106,7 +118,7 @@ if (Test-Path $dockerEnv) {
   if ($existing) { $password = $existing.Substring('POSTGRES_PASSWORD='.Length) }
 }
 if ([string]::IsNullOrWhiteSpace($password)) {
-  $password = ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')).Substring(0,48)
+  $password = (New-RandomSecret).Substring(0,48)
   [IO.File]::WriteAllText($dockerEnv, "POSTGRES_PASSWORD=$password`n", (New-Object Text.UTF8Encoding($false)))
 }
 
@@ -141,6 +153,18 @@ Set-DotEnvValue $envPath 'GEMINI_VIDEO_MODEL' 'veo-3.1-fast-generate-preview'
 Set-DotEnvValue $envPath 'GEMINI_VIDEO_RESOLUTION' '720p'
 Set-DotEnvValue $envPath 'AUTO_UPLOAD_PRIVATE' 'true'
 
+# Control-plane identity is intentionally separate from Drive and YouTube identities.
+if ([string]::IsNullOrWhiteSpace((Get-DotEnvValue $envPath 'SESSION_SECRET'))) { Set-DotEnvValue $envPath 'SESSION_SECRET' (New-RandomSecret) }
+if ([string]::IsNullOrWhiteSpace((Get-DotEnvValue $envPath 'CONTROL_PLANE_TOKEN'))) { Set-DotEnvValue $envPath 'CONTROL_PLANE_TOKEN' (New-RandomSecret) }
+$controlClientId = Get-DotEnvValue $envPath 'CONTROL_GOOGLE_CLIENT_ID'
+if ([string]::IsNullOrWhiteSpace($controlClientId)) { $controlClientId = Get-DotEnvValue $envPath 'DRIVE_CLIENT_ID' }
+$controlClientSecret = Get-DotEnvValue $envPath 'CONTROL_GOOGLE_CLIENT_SECRET'
+if ([string]::IsNullOrWhiteSpace($controlClientSecret)) { $controlClientSecret = Get-DotEnvValue $envPath 'DRIVE_CLIENT_SECRET' }
+if (-not [string]::IsNullOrWhiteSpace($controlClientId)) { Set-DotEnvValue $envPath 'CONTROL_GOOGLE_CLIENT_ID' $controlClientId }
+if (-not [string]::IsNullOrWhiteSpace($controlClientSecret)) { Set-DotEnvValue $envPath 'CONTROL_GOOGLE_CLIENT_SECRET' $controlClientSecret }
+Set-DotEnvValue $envPath 'CONTROL_GOOGLE_REDIRECT_URI' 'http://localhost:3000/api/auth/google/callback'
+Set-DotEnvValue $envPath 'CONTROL_GOOGLE_ALLOWED_EMAILS' 'davidsanchezmora17@gmail.com'
+
 Write-Host 'Building and migrating AUTO-YTB database...' -ForegroundColor Cyan
 npm install --no-audit --no-fund | Out-Host
 npm run build | Out-Host
@@ -155,4 +179,5 @@ Write-Host 'PostgreSQL: READY (isolated Docker container)'
 Write-Host 'Drive: READY'
 Write-Host 'YouTube: READY'
 Write-Host 'Gemini text/search/TTS/image/video: configured'
+Write-Host 'Control plane: Google login configured for davidsanchezmora17@gmail.com (redirect must be authorized once in Google Cloud)'
 Write-Host 'No external media generation call was made, so this step incurred no video/image/TTS generation cost.'
