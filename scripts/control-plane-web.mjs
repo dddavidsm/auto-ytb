@@ -24,7 +24,6 @@ async function portAvailable(port){
     const probe=net.createServer();
     probe.unref();
     probe.once('error',()=>resolvePort(false));
-    // Probe the wildcard socket so an existing IPv4 or IPv6 localhost listener counts as occupied.
     probe.listen({port,exclusive:true},()=>probe.close(()=>resolvePort(true)));
   });
 }
@@ -46,6 +45,7 @@ const redirectUri=new URL(process.env.CONTROL_GOOGLE_REDIRECT_URI||'http://local
 const bridgePort=Number(redirectUri.port||80);
 const bridgeHost=redirectUri.hostname;
 const webBase=`http://${webHost}:${webPort}`;
+const runId=`${webPort}-${process.pid}-${Date.now()}`;
 
 if(webPort!==3000)console.log(`Port 3000 is busy. AUTO-YTB will use ${webBase} instead.`);
 
@@ -59,7 +59,7 @@ const bridge=createServer((req,res)=>{
 bridge.on('error',(error)=>{console.error(`Control OAuth bridge failed on ${bridgeHost}:${bridgePort}:`,error.message);process.exitCode=1;});
 bridge.listen(bridgePort,bridgeHost,()=>console.log(`Control OAuth bridge READY: ${redirectUri.toString()} -> ${webBase}/api/auth/google/callback`));
 
-const childEnv={...process.env,PORT:String(webPort),CONTROL_PLANE_PORT:String(webPort)};
+const childEnv={...process.env,PORT:String(webPort),CONTROL_PLANE_PORT:String(webPort),CONTROL_PLANE_RUN_ID:runId};
 let child;
 if(process.platform==='win32'){
   const command=`npm --workspace @auto-ytb/web run ${mode} -- --hostname ${webHost} --port ${webPort}`;
