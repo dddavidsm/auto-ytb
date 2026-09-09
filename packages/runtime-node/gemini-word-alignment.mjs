@@ -79,7 +79,7 @@ export function wordTimestampsToCharacterAlignment(text,words,durationSeconds){
 }
 
 export function withGeminiWordAlignment(provider,options={}){
-  const fetchFn=options.fetchFn??fetch;const apiKey=String(options.apiKey||'').trim();const model=options.model??'gemini-3.5-transcribe';const strict=options.strict!==false;const minCoverage=Number.isFinite(Number(options.minCoverage))?Number(options.minCoverage):0.88;const usdPerMinute=Number.isFinite(Number(options.usdPerMinute))?Math.max(0,Number(options.usdPerMinute)):0.005;
+  const fetchFn=options.fetchFn??fetch;const apiKey=String(options.apiKey||'').trim();const model=options.model??'gemini-3.5-transcribe';const strict=options.strict!==false;const minCoverage=Number.isFinite(Number(options.minCoverage))?Number(options.minCoverage):0.88;const configuredRate=options.usdPerMinute??process.env.GEMINI_TRANSCRIBE_USD_PER_MINUTE;const usdPerMinute=Number.isFinite(Number(configuredRate))?Math.max(0,Number(configuredRate)):0.005;
   if(!apiKey)throw new Error('Gemini word alignment requires GEMINI_API_KEY');
   return{name:provider.name,async synthesize(input){
     const asset=await provider.synthesize(input);const bytes=await loadAssetBytes(asset.uri,fetchFn);const mimeType=asset.mimeType||'audio/wav';let fileName=null;
