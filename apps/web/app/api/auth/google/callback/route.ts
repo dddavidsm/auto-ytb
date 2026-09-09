@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { controlGoogleConfig, createSessionToken, googleOauthStateCookieName, isAllowedControlEmail, sessionCookieName, sessionCookieOptions } from '../../../../../lib/auth';
+import { controlGoogleConfig, createGoogleCompletionTicket, googleOauthStateCookieName, isAllowedControlEmail } from '../../../../../lib/auth';
 
 export const runtime='nodejs';
 
@@ -34,11 +34,12 @@ export async function GET(request:NextRequest){
   const verified=profile.email_verified!==false&&profile.verified_email!==false;
   if(!verified||!email||!isAllowedControlEmail(email))return loginError(request,'not_allowed');
 
-  // Set the authenticated session explicitly on the same redirect response that sends
-  // the browser into the dashboard. This avoids Route Handler cookie propagation
-  // differences between Next dev/runtime versions.
-  const response=NextResponse.redirect(new URL('/',request.url));
-  response.cookies.set(sessionCookieName,createSessionToken({email,auth:'google'}),sessionCookieOptions());
+  // Complete session creation on a same-site hop. Some browsers/dev stacks do not
+  // reliably persist the final session cookie when it is set directly on the external
+  // Google callback response. The short-lived signed ticket contains no OAuth token.
+  const complete=new URL('/api/auth/google/complete',request.url);
+  complete.searchParams.set('ticket',createGoogleCompletionTicket(email));
+  const response=NextResponse.redirect(complete);
   response.cookies.set(googleOauthStateCookieName,'',{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production',path:'/',maxAge:0});
   return response;
 }
