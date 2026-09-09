@@ -43,7 +43,9 @@ function extractWords(interaction){
 }
 
 export function wordTimestampsToCharacterAlignment(text,words,durationSeconds){
-  const characters=[...String(text)];
+  // RegExp match.index and String.length use UTF-16 code-unit offsets. Keep the alignment arrays
+  // in the same coordinate system so emoji/non-BMP characters cannot shift every later timestamp.
+  const characters=String(text).split('');
   const starts=Array(characters.length).fill(Number.NaN),ends=Array(characters.length).fill(Number.NaN);
   const tokens=sourceTokens(String(text));let tokenCursor=0,matchedCharacters=0;
   for(const word of words){
