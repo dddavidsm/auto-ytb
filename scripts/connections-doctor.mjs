@@ -24,6 +24,9 @@ const searchProvider=text(env.SEARCH_PROVIDER||'gemini').toLowerCase();
 const voiceProvider=text(env.VOICE_PROVIDER||'gemini').toLowerCase();
 const imageProvider=text(env.IMAGE_PROVIDER||'gemini').toLowerCase();
 const videoProvider=text(env.VIDEO_PROVIDER||'gemini').toLowerCase();
+const alignmentCheck=voiceProvider==='gemini'
+  ?check('voice-alignment','Exact Gemini word alignment',['GEMINI_API_KEY'],{provider:'gemini',model:text(env.GEMINI_TRANSCRIBE_MODEL||'gemini-3.5-transcribe'),strict:env.VOICE_ALIGNMENT_STRICT!=='false',minCoverage:Number(env.VOICE_ALIGNMENT_MIN_COVERAGE||0.88),mode:'verbatim-word-timestamps'})
+  :{id:'voice-alignment',label:'Exact Gemini word alignment',state:'NOT_REQUIRED',missing:[],details:{conditional:true,provider:voiceProvider,reason:voiceProvider==='elevenlabs'?'provider supplies native timestamps':'voice disabled'}};
 const checks=[
   check('drive','Google Drive archive',['DRIVE_CLIENT_ID','DRIVE_CLIENT_SECRET','DRIVE_ROOT_FOLDER_ID','DRIVE_REFRESH_TOKEN'],{rootFolderId:text(env.DRIVE_ROOT_FOLDER_ID)||null,dedicatedAccount:Boolean(text(env.DRIVE_REFRESH_TOKEN))}),
   check('youtube','YouTube publishing + Analytics',['YOUTUBE_CLIENT_ID','YOUTUBE_CLIENT_SECRET','YOUTUBE_REFRESH_TOKEN','YOUTUBE_CHANNEL_ID'],{privateUpload:env.AUTO_UPLOAD_PRIVATE!=='false'}),
@@ -31,6 +34,7 @@ const checks=[
   check('database','PostgreSQL state',['DATABASE_URL']),
   providerCheck('search','Factual web research',searchProvider,'SEARCH_API_KEY',text(env.GEMINI_SEARCH_MODEL||'gemini-3.6-flash')),
   providerCheck('voice','Voice/TTS',voiceProvider,'VOICE_API_KEY',text(env.VOICE_MODEL||(voiceProvider==='gemini'?'gemini-3.1-flash-tts-preview':'eleven_multilingual_v2'))),
+  alignmentCheck,
   providerCheck('image','Image generation',imageProvider,'IMAGE_API_KEY',text(env.IMAGE_MODEL||(imageProvider==='gemini'?'gemini-3.1-flash-image':'gen4_image'))),
   providerCheck('video','Video generation',videoProvider,'VIDEO_API_KEY',text(env.VIDEO_MODEL||(videoProvider==='gemini'?'veo-3.1-fast-generate-preview':'gen4.5'))),
   executableCheck('ffmpeg','FFmpeg renderer',text(env.FFMPEG_BIN||'ffmpeg')),
@@ -41,13 +45,13 @@ const checks=[
 ];
 for(const item of checks){if(item.id==='instagram'&&!item.details.token)item.missing.push('INSTAGRAM_ACCESS_TOKEN|META_ACCESS_TOKEN');if(item.id==='instagram'&&!item.details.publicMediaBase)item.missing.push('DISTRIBUTION_PUBLIC_MEDIA_BASE_URL');if(item.id==='facebook'&&!item.details.token)item.missing.push('FACEBOOK_PAGE_ACCESS_TOKEN|META_ACCESS_TOKEN');if(item.missing.length)item.state='BLOCKED';}
 const coreIds=new Set(['drive','youtube','text','database']);
-const productionIds=new Set([...coreIds,'search','voice','image','video','ffmpeg','ffprobe']);
+const productionIds=new Set([...coreIds,'search','voice','voice-alignment','image','video','ffmpeg','ffprobe']);
 const requiredIds=production?productionIds:coreIds;
-const coreReady=checks.filter((item)=>requiredIds.has(item.id)).every((item)=>item.state==='READY');
+const coreReady=checks.filter((item)=>requiredIds.has(item.id)).every((item)=>item.state==='READY'||item.state==='NOT_REQUIRED');
 const result={coreReady,mode:production?'production':'core',textProvider,searchProvider,voiceProvider,imageProvider,videoProvider,checks};
 if(jsonMode)console.log(JSON.stringify(result,null,2));else{
   console.log(`AUTO-YTB connections: ${coreReady?(production?'PRODUCTION READY':'CORE READY'):(production?'PRODUCTION BLOCKED':'CORE BLOCKED')}\n`);
   for(const item of checks){const suffix=item.missing.length?` — missing: ${item.missing.join(', ')}`:'';console.log(`${item.state.padEnd(12)} ${item.label}${suffix}`);}
-  console.log(`\nPreflight mode: ${production?'production (paid-media/render dependencies enforced)':'core'}. Social platforms remain optional per Series Automation Profile.`);
+  console.log(`\nPreflight mode: ${production?'production (paid-media/render dependencies and exact voice alignment enforced)':'core'}. Social platforms remain optional per Series Automation Profile.`);
 }
 if(strict&&!coreReady)process.exitCode=1;
