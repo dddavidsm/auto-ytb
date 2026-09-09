@@ -20,6 +20,62 @@ function Set-DotEnvValue {
   [IO.File]::WriteAllLines($Path, $lines, (New-Object Text.UTF8Encoding($false)))
 }
 
+function Resolve-DockerCommand {
+  $command = Get-Command docker -ErrorAction SilentlyContinue
+  if ($command) { return $command.Source }
+  $known = @(
+    "$Env:ProgramFiles\Docker\Docker\resources\bin\docker.exe",
+    "$Env:ProgramFiles\Docker\Docker\resources\docker.exe"
+  )
+  foreach ($candidate in $known) {
+    if (Test-Path $candidate) {
+      $bin = Split-Path $candidate -Parent
+      if (-not (($Env:Path -split ';') -contains $bin)) { $Env:Path = "$bin;$Env:Path" }
+      return $candidate
+    }
+  }
+  return $null
+}
+
+function Ensure-DockerDesktop {
+  $docker = Resolve-DockerCommand
+  if (-not $docker) {
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $winget) {
+      throw 'Docker Desktop is not installed and Windows Package Manager (winget) is unavailable. Install Docker Desktop once, then rerun this command.'
+    }
+    Write-Host "Docker Desktop is missing. Installing it automatically now..." -ForegroundColor Yellow
+    Write-Host "Approve the Windows/UAC prompt if it appears." -ForegroundColor Yellow
+    & $winget.Source install --id Docker.DockerDesktop -e --accept-package-agreements --accept-source-agreements --silent
+    $installExit = $LASTEXITCODE
+    if ($installExit -ne 0) {
+      throw "Docker Desktop installation failed with exit code $installExit."
+    }
+    $docker = Resolve-DockerCommand
+    if (-not $docker) {
+      throw 'Docker Desktop installed, but its CLI is not available yet. A Windows sign-out/restart may be required; after that rerun the same AUTO-YTB command.'
+    }
+  }
+
+  try { & $docker info | Out-Null; return $docker } catch {}
+
+  $dockerDesktop = "$Env:ProgramFiles\Docker\Docker\Docker Desktop.exe"
+  if (-not (Test-Path $dockerDesktop)) {
+    throw 'Docker CLI is present but Docker Desktop executable was not found.'
+  }
+  Write-Host 'Starting Docker Desktop...' -ForegroundColor Yellow
+  Start-Process $dockerDesktop
+  $ready = $false
+  for ($i=0; $i -lt 120; $i++) {
+    Start-Sleep -Seconds 2
+    try { & $docker info | Out-Null; $ready = $true; break } catch {}
+  }
+  if (-not $ready) {
+    throw 'Docker Desktop did not become ready in 4 minutes. If Windows requested a restart or WSL update, complete it and rerun the same AUTO-YTB command.'
+  }
+  return $docker
+}
+
 if (-not (Test-Path $RepoPath)) { throw "AUTO-YTB repo not found at $RepoPath. Run bootstrap-local.ps1 first." }
 Write-Host "Updating AUTO-YTB..." -ForegroundColor Cyan
 git -C $RepoPath pull --ff-only origin main
@@ -28,24 +84,7 @@ Set-Location $RepoPath
 $envPath = Join-Path $RepoPath '.env.local'
 if (-not (Test-Path $envPath)) { throw '.env.local is missing. Run bootstrap-local.ps1 first.' }
 
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-  throw 'Docker Desktop is required for the isolated local PostgreSQL runtime. Install Docker Desktop, then rerun this command.'
-}
-
-try { docker info | Out-Null }
-catch {
-  $dockerDesktop = "$Env:ProgramFiles\Docker\Docker\Docker Desktop.exe"
-  if (Test-Path $dockerDesktop) {
-    Write-Host 'Starting Docker Desktop...' -ForegroundColor Yellow
-    Start-Process $dockerDesktop
-    $ready = $false
-    for ($i=0; $i -lt 60; $i++) {
-      Start-Sleep -Seconds 2
-      try { docker info | Out-Null; $ready = $true; break } catch {}
-    }
-    if (-not $ready) { throw 'Docker Desktop did not become ready in time.' }
-  } else { throw 'Docker is installed but the daemon is not running. Start Docker Desktop and rerun.' }
-}
+$dockerExe = Ensure-DockerDesktop
 
 $dockerEnv = Join-Path $RepoPath '.env.docker.local'
 $password = $null
@@ -59,13 +98,14 @@ if ([string]::IsNullOrWhiteSpace($password)) {
 }
 
 Write-Host 'Starting isolated PostgreSQL 17 container...' -ForegroundColor Cyan
-docker compose --env-file $dockerEnv -f docker-compose.local.yml up -d postgres | Out-Host
+& $dockerExe compose --env-file $dockerEnv -f docker-compose.local.yml up -d postgres | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'docker compose failed to start PostgreSQL.' }
 
 $healthy = $false
 for ($i=0; $i -lt 60; $i++) {
   Start-Sleep -Seconds 2
   try {
-    docker exec auto-ytb-postgres pg_isready -U auto_ytb -d auto_ytb | Out-Null
+    & $dockerExe exec auto-ytb-postgres pg_isready -U auto_ytb -d auto_ytb | Out-Null
     if ($LASTEXITCODE -eq 0) { $healthy = $true; break }
   } catch {}
 }
