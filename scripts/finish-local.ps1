@@ -39,8 +39,24 @@ function Resolve-DockerCommand {
 
 function Test-DockerDaemon {
   param([string]$DockerExe)
-  & $DockerExe info *> $null
-  return ($LASTEXITCODE -eq 0)
+  $process = New-Object System.Diagnostics.Process
+  $process.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+  $process.StartInfo.FileName = $DockerExe
+  $process.StartInfo.Arguments = 'info'
+  $process.StartInfo.UseShellExecute = $false
+  $process.StartInfo.RedirectStandardOutput = $true
+  $process.StartInfo.RedirectStandardError = $true
+  $process.StartInfo.CreateNoWindow = $true
+  try {
+    if (-not $process.Start()) { return $false }
+    if (-not $process.WaitForExit(15000)) {
+      try { $process.Kill() } catch {}
+      return $false
+    }
+    return ($process.ExitCode -eq 0)
+  }
+  catch { return $false }
+  finally { $process.Dispose() }
 }
 
 function Ensure-DockerDesktop {
@@ -69,16 +85,21 @@ function Ensure-DockerDesktop {
   if (-not (Test-Path $dockerDesktop)) {
     throw 'Docker CLI is present but Docker Desktop executable was not found.'
   }
-  Write-Host 'Docker CLI found but daemon is not running. Starting Docker Desktop...' -ForegroundColor Yellow
-  Start-Process $dockerDesktop
+
+  Write-Host 'Docker daemon is not ready. Starting Docker Desktop...' -ForegroundColor Yellow
+  $existingDesktop = Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue
+  if (-not $existingDesktop) { Start-Process $dockerDesktop | Out-Null }
+
+  Write-Host 'Waiting for Docker Desktop engine...' -ForegroundColor Yellow
   $ready = $false
-  for ($i=0; $i -lt 120; $i++) {
+  for ($i=0; $i -lt 150; $i++) {
     Start-Sleep -Seconds 2
     if (Test-DockerDaemon -DockerExe $docker) { $ready = $true; break }
   }
   if (-not $ready) {
-    throw 'Docker Desktop did not become ready in 4 minutes. Open Docker Desktop once and complete any first-run/WSL prompt, then rerun the same AUTO-YTB command.'
+    throw 'Docker Desktop is installed but its engine did not become ready in 5 minutes. Open Docker Desktop and complete any first-run terms, WSL update, restart, or engine-start prompt; then rerun this same AUTO-YTB command.'
   }
+  Write-Host 'Docker Desktop engine READY.' -ForegroundColor Green
   return $docker
 }
 
