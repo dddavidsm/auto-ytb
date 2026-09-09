@@ -1,17 +1,22 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { evaluateNiches, selectNicheWinner, summarizeNicheObservation, type NichePrior } from '@auto-ytb/core';
 import { discoverCompetitors } from '@auto-ytb/intelligence';
-import { YouTubeClient } from '@auto-ytb/youtube';
+import { GoogleOAuthTokenProvider, YouTubeClient } from '@auto-ytb/youtube';
 
-const apiKey = process.env.YOUTUBE_API_KEY;
-if (!apiKey) {
-  console.error('YOUTUBE_API_KEY is required');
-  process.exit(1);
+async function createYouTubeClient(){
+  const apiKey=process.env.YOUTUBE_API_KEY?.trim();
+  if(apiKey)return new YouTubeClient(apiKey);
+  const clientId=process.env.YOUTUBE_CLIENT_ID?.trim();
+  const clientSecret=process.env.YOUTUBE_CLIENT_SECRET?.trim();
+  const refreshToken=process.env.YOUTUBE_REFRESH_TOKEN?.trim();
+  if(!clientId||!clientSecret||!refreshToken)throw new Error('YouTube market intelligence requires YOUTUBE_API_KEY or the existing YouTube OAuth credentials');
+  const provider=new GoogleOAuthTokenProvider({clientId,clientSecret,refreshToken});
+  return new YouTubeClient({accessToken:await provider.getAccessToken()});
 }
 
 const priors = JSON.parse(await readFile(`${process.cwd()}/config/niche-priors.json`, 'utf8')) as NichePrior[];
 const seeds = JSON.parse(await readFile(`${process.cwd()}/config/niche-seeds.json`, 'utf8')) as Record<string, string[]>;
-const client = new YouTubeClient(apiKey);
+const client = await createYouTubeClient();
 const observations = [];
 
 for (const prior of priors) {
