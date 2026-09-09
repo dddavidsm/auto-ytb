@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { controlGoogleConfig, googleOauthStateCookieName, isAllowedControlEmail, setSessionCookie } from '../../../../../lib/auth';
+import { controlGoogleConfig, createSessionToken, googleOauthStateCookieName, isAllowedControlEmail, sessionCookieName, sessionCookieOptions } from '../../../../../lib/auth';
 
 export const runtime='nodejs';
 
@@ -34,8 +34,11 @@ export async function GET(request:NextRequest){
   const verified=profile.email_verified!==false&&profile.verified_email!==false;
   if(!verified||!email||!isAllowedControlEmail(email))return loginError(request,'not_allowed');
 
-  await setSessionCookie({email,auth:'google'});
+  // Set the authenticated session explicitly on the same redirect response that sends
+  // the browser into the dashboard. This avoids Route Handler cookie propagation
+  // differences between Next dev/runtime versions.
   const response=NextResponse.redirect(new URL('/',request.url));
+  response.cookies.set(sessionCookieName,createSessionToken({email,auth:'google'}),sessionCookieOptions());
   response.cookies.set(googleOauthStateCookieName,'',{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production',path:'/',maxAge:0});
   return response;
 }
