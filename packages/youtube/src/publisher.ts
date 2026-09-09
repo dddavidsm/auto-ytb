@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Publisher } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider } from './oauth.js';
 
@@ -9,9 +10,46 @@ function asRequestBody(body: Uint8Array | Blob): BodyInit {
   return body as BodyInit;
 }
 
+function markerFor(value: string): string {
+  return `auto_ytb_${createHash('sha256').update(value).digest('hex').slice(0, 24)}`;
+}
+
 export class YouTubePublisher implements Publisher {
   readonly name = 'youtube-data-api';
-  constructor(private readonly tokenProvider: GoogleOAuthTokenProvider, private readonly loader: UploadAssetLoader, private readonly fetchFn: typeof fetch = fetch) {}
+  constructor(
+    private readonly tokenProvider: GoogleOAuthTokenProvider,
+    private readonly loader: UploadAssetLoader,
+    private readonly fetchFn: typeof fetch = fetch,
+    private readonly options: { idempotencyKey?: string } = {},
+  ) {}
+
+  private async findExistingUpload(token: string, marker: string): Promise<string | null> {
+    const channels = await this.fetchFn('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true', { headers:{ authorization:`Bearer ${token}` } });
+    if (!channels.ok) return null;
+    const channelJson = await channels.json() as { items?: Array<{ contentDetails?: { relatedPlaylists?: { uploads?: string } } }> };
+    const uploadsPlaylist = channelJson.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+    if (!uploadsPlaylist) return null;
+
+    let pageToken: string | undefined;
+    for (let page = 0; page < 3; page += 1) {
+      const params = new URLSearchParams({ part:'contentDetails', playlistId:uploadsPlaylist, maxResults:'50' });
+      if (pageToken) params.set('pageToken', pageToken);
+      const playlist = await this.fetchFn(`https://www.googleapis.com/youtube/v3/playlistItems?${params.toString()}`, { headers:{ authorization:`Bearer ${token}` } });
+      if (!playlist.ok) return null;
+      const playlistJson = await playlist.json() as { items?: Array<{ contentDetails?: { videoId?: string } }>; nextPageToken?: string };
+      const ids = (playlistJson.items ?? []).map((item) => item.contentDetails?.videoId).filter((id): id is string => Boolean(id));
+      if (ids.length) {
+        const videos = await this.fetchFn(`https://www.googleapis.com/youtube/v3/videos?part=snippet,status&id=${encodeURIComponent(ids.join(','))}`, { headers:{ authorization:`Bearer ${token}` } });
+        if (!videos.ok) return null;
+        const videosJson = await videos.json() as { items?: Array<{ id?: string; snippet?: { tags?: string[] }; status?: { privacyStatus?: string } }> };
+        const matched = (videosJson.items ?? []).find((item) => item.id && item.snippet?.tags?.includes(marker));
+        if (matched?.id) return matched.id;
+      }
+      pageToken = playlistJson.nextPageToken;
+      if (!pageToken) break;
+    }
+    return null;
+  }
 
   async uploadPrivate(input: {
     fileUri: string;
@@ -24,12 +62,18 @@ export class YouTubePublisher implements Publisher {
     selfDeclaredMadeForKids?: boolean;
   }): Promise<{ externalId: string; url?: string; status: 'private' }> {
     const token = await this.tokenProvider.getAccessToken();
+    const stableSeed = String(this.options.idempotencyKey || input.fileUri);
+    const marker = markerFor(stableSeed);
+    const existing = await this.findExistingUpload(token, marker);
+    if (existing) return { externalId:existing, url:`https://www.youtube.com/watch?v=${existing}`, status:'private' };
+
     const asset = await this.loader.load(input.fileUri);
+    const tags = [...new Set([...input.tags.slice(0, 49), marker])];
     const metadata = {
       snippet: {
         title: input.title.slice(0, 100),
         description: input.description.slice(0, 5000),
-        ...(input.tags.length ? { tags: input.tags.slice(0, 50) } : {}),
+        tags,
         ...(input.categoryId ? { categoryId: input.categoryId } : {}),
         defaultLanguage: input.language,
       },
