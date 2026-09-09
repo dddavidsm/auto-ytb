@@ -81,9 +81,10 @@ const { buildYouTubeAuthorizationUrl, buildGoogleDriveAuthorizationUrl }=await i
 const authUrl=buildYouTubeAuthorizationUrl({clientId:'client',redirectUri:'http://localhost/callback',state:'abc'});
 assert.ok(authUrl.includes('youtube.upload'));
 assert.ok(!authUrl.includes('drive.file'));
+assert.ok(!decodeURIComponent(authUrl).includes('/auth/drive'));
 assert.ok(authUrl.includes('access_type=offline'));
 const driveAuthUrl=buildGoogleDriveAuthorizationUrl({clientId:'client',redirectUri:'http://localhost/drive-callback',state:'drive'});
-assert.ok(driveAuthUrl.includes('drive.file'));
+assert.ok(decodeURIComponent(driveAuthUrl).includes('https://www.googleapis.com/auth/drive'));
 assert.ok(!driveAuthUrl.includes('youtube.upload'));
 assert.ok(driveAuthUrl.includes('access_type=offline'));
 const { allocatePortfolioBudget,rankProviders,dedupeJobs }=await import('../packages/os/dist/index.js');
