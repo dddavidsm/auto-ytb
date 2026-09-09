@@ -4,6 +4,7 @@ export const YOUTUBE_SCOPES = {
   analytics: 'https://www.googleapis.com/auth/yt-analytics.readonly',
   analyticsMonetary: 'https://www.googleapis.com/auth/yt-analytics-monetary.readonly',
   driveFile: 'https://www.googleapis.com/auth/drive.file',
+  drive: 'https://www.googleapis.com/auth/drive',
 } as const;
 
 export type OAuthCredentials = {
@@ -41,7 +42,10 @@ export function buildYouTubeAuthorizationUrl(input: {
 }
 
 export function buildGoogleDriveAuthorizationUrl(input:{clientId:string;redirectUri:string;state?:string}):string{
-  return buildGoogleAuthorizationUrl({clientId:input.clientId,redirectUri:input.redirectUri,scopes:[YOUTUBE_SCOPES.driveFile],state:input.state});
+  // AUTO-YTB pins an existing Drive root that may have been created outside this OAuth client.
+  // drive.file cannot reliably access that pre-existing tree unless the user selected it through a Picker,
+  // so the private single-operator runtime requests full Drive access while the OAuth app is in Testing.
+  return buildGoogleAuthorizationUrl({clientId:input.clientId,redirectUri:input.redirectUri,scopes:[YOUTUBE_SCOPES.drive],state:input.state});
 }
 
 export class GoogleOAuthTokenProvider {
