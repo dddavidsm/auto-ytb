@@ -33,8 +33,14 @@ const bridge=createServer((req,res)=>{
 bridge.on('error',(error)=>{console.error(`Control OAuth bridge failed on ${bridgeHost}:${bridgePort}:`,error.message);process.exitCode=1;});
 bridge.listen(bridgePort,bridgeHost,()=>console.log(`Control OAuth bridge READY: ${redirectUri.toString()} -> http://localhost:${webPort}/api/auth/google/callback`));
 
-const npm=process.platform==='win32'?'npm.cmd':'npm';
-const child=spawn(npm,['--workspace','@auto-ytb/web','run',mode],{stdio:'inherit',env:{...process.env,PORT:String(webPort)}});
+const childEnv={...process.env,PORT:String(webPort)};
+let child;
+if(process.platform==='win32'){
+  const command=`npm --workspace @auto-ytb/web run ${mode}`;
+  child=spawn(process.env.ComSpec||'cmd.exe',['/d','/s','/c',command],{stdio:'inherit',env:childEnv});
+}else{
+  child=spawn('npm',['--workspace','@auto-ytb/web','run',mode],{stdio:'inherit',env:childEnv});
+}
 const shutdown=(signal)=>{try{bridge.close();}catch{}if(!child.killed)child.kill(signal);};
 process.on('SIGINT',()=>shutdown('SIGINT'));
 process.on('SIGTERM',()=>shutdown('SIGTERM'));
