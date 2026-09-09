@@ -18,6 +18,11 @@ function cliArg(name: string): string | undefined {
   return process.argv.find((value) => value.startsWith(`--${name}=`))?.slice(name.length + 3);
 }
 
+async function requireOk(response: Response, operation: string): Promise<Response> {
+  if (response.ok) return response;
+  throw new Error(`YouTube idempotency preflight failed during ${operation} (${response.status}): ${(await response.text()).slice(0, 500)}. Upload blocked to avoid creating a duplicate video.`);
+}
+
 export class YouTubePublisher implements Publisher {
   readonly name = 'youtube-data-api';
   constructor(
@@ -28,23 +33,20 @@ export class YouTubePublisher implements Publisher {
   ) {}
 
   private async findExistingUpload(token: string, marker: string): Promise<string | null> {
-    const channels = await this.fetchFn('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true', { headers:{ authorization:`Bearer ${token}` } });
-    if (!channels.ok) return null;
+    const channels = await requireOk(await this.fetchFn('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true', { headers:{ authorization:`Bearer ${token}` } }), 'owned-channel lookup');
     const channelJson = await channels.json() as { items?: Array<{ contentDetails?: { relatedPlaylists?: { uploads?: string } } }> };
     const uploadsPlaylist = channelJson.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
-    if (!uploadsPlaylist) return null;
+    if (!uploadsPlaylist) throw new Error('YouTube idempotency preflight could not resolve the channel uploads playlist. Upload blocked to avoid creating a duplicate video.');
 
     let pageToken: string | undefined;
     for (let page = 0; page < 3; page += 1) {
       const params = new URLSearchParams({ part:'contentDetails', playlistId:uploadsPlaylist, maxResults:'50' });
       if (pageToken) params.set('pageToken', pageToken);
-      const playlist = await this.fetchFn(`https://www.googleapis.com/youtube/v3/playlistItems?${params.toString()}`, { headers:{ authorization:`Bearer ${token}` } });
-      if (!playlist.ok) return null;
+      const playlist = await requireOk(await this.fetchFn(`https://www.googleapis.com/youtube/v3/playlistItems?${params.toString()}`, { headers:{ authorization:`Bearer ${token}` } }), 'recent-upload lookup');
       const playlistJson = await playlist.json() as { items?: Array<{ contentDetails?: { videoId?: string } }>; nextPageToken?: string };
       const ids = (playlistJson.items ?? []).map((item) => item.contentDetails?.videoId).filter((id): id is string => Boolean(id));
       if (ids.length) {
-        const videos = await this.fetchFn(`https://www.googleapis.com/youtube/v3/videos?part=snippet,status&id=${encodeURIComponent(ids.join(','))}`, { headers:{ authorization:`Bearer ${token}` } });
-        if (!videos.ok) return null;
+        const videos = await requireOk(await this.fetchFn(`https://www.googleapis.com/youtube/v3/videos?part=snippet,status&id=${encodeURIComponent(ids.join(','))}`, { headers:{ authorization:`Bearer ${token}` } }), 'upload-marker lookup');
         const videosJson = await videos.json() as { items?: Array<{ id?: string; snippet?: { tags?: string[] }; status?: { privacyStatus?: string } }> };
         const matched = (videosJson.items ?? []).find((item) => item.id && item.snippet?.tags?.includes(marker));
         if (matched?.id) return matched.id;
