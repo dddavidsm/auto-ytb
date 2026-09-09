@@ -31,6 +31,7 @@ export function createSessionToken(options:{email?:string;auth?:'google'|'token'
   const body=Buffer.from(JSON.stringify(payload)).toString('base64url');
   return `${body}.${sign(body)}`;
 }
+export function sessionCookieOptions(){return{httpOnly:true as const,sameSite:'strict' as const,secure:process.env.NODE_ENV==='production',path:'/',maxAge:MAX_AGE_SECONDS};}
 export function readSessionToken(token:string|undefined|null):SessionPayload|null{
   if(!token)return null;const [body,signature]=token.split('.');if(!body||!signature||!safeEqual(sign(body),signature))return null;
   try{const payload=JSON.parse(Buffer.from(body,'base64url').toString('utf8')) as SessionPayload;return payload.scope==='control-plane'&&payload.exp>Math.floor(Date.now()/1000)?payload:null;}catch{return null;}
@@ -39,6 +40,6 @@ export function verifySessionToken(token:string|undefined|null){return Boolean(r
 export async function currentSession(){const store=await cookies();return readSessionToken(store.get(COOKIE)?.value);}
 export async function hasSession(){return Boolean(await currentSession());}
 export async function requireSession(){if(!(await hasSession()))redirect('/login');}
-export async function setSessionCookie(options:{email?:string;auth?:'google'|'token'}={}){const store=await cookies();store.set(COOKIE,createSessionToken(options),{httpOnly:true,sameSite:'strict',secure:process.env.NODE_ENV==='production',path:'/',maxAge:MAX_AGE_SECONDS});}
-export async function clearSessionCookie(){const store=await cookies();store.set(COOKIE,'',{httpOnly:true,sameSite:'strict',secure:process.env.NODE_ENV==='production',path:'/',maxAge:0});}
+export async function setSessionCookie(options:{email?:string;auth?:'google'|'token'}={}){const store=await cookies();store.set(COOKIE,createSessionToken(options),sessionCookieOptions());}
+export async function clearSessionCookie(){const store=await cookies();store.set(COOKIE,'',{...sessionCookieOptions(),maxAge:0});}
 export const sessionCookieName=COOKIE;
