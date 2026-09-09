@@ -17,12 +17,14 @@ function loadRootEnv(path=resolve('.env.local')){
   }catch(error){throw new Error(`Cannot load ${path}: ${error instanceof Error?error.message:String(error)}`);}
 }
 
+const webHost='127.0.0.1';
+
 async function portAvailable(port){
   return await new Promise((resolvePort)=>{
     const probe=net.createServer();
     probe.unref();
     probe.once('error',()=>resolvePort(false));
-    probe.listen({port,host:'127.0.0.1',exclusive:true},()=>probe.close(()=>resolvePort(true)));
+    probe.listen({port,host:webHost,exclusive:true},()=>probe.close(()=>resolvePort(true)));
   });
 }
 
@@ -30,7 +32,7 @@ async function resolveWebPort(){
   const explicit=Number(process.env.CONTROL_PLANE_PORT||0);
   if(explicit){
     if(await portAvailable(explicit))return explicit;
-    throw new Error(`CONTROL_PLANE_PORT ${explicit} is already in use. Stop that process or remove CONTROL_PLANE_PORT so AUTO-YTB can choose a free port automatically.`);
+    throw new Error(`CONTROL_PLANE_PORT ${explicit} is already in use on ${webHost}. Stop that process or remove CONTROL_PLANE_PORT so AUTO-YTB can choose a free port automatically.`);
   }
   for(let port=3000;port<=3010;port++)if(await portAvailable(port))return port;
   throw new Error('No free control-plane port found in range 3000-3010.');
@@ -58,10 +60,10 @@ bridge.listen(bridgePort,bridgeHost,()=>console.log(`Control OAuth bridge READY:
 const childEnv={...process.env,PORT:String(webPort),CONTROL_PLANE_PORT:String(webPort)};
 let child;
 if(process.platform==='win32'){
-  const command=`npm --workspace @auto-ytb/web run ${mode}`;
+  const command=`npm --workspace @auto-ytb/web run ${mode} -- --hostname ${webHost} --port ${webPort}`;
   child=spawn(process.env.ComSpec||'cmd.exe',['/d','/s','/c',command],{stdio:'inherit',env:childEnv});
 }else{
-  child=spawn('npm',['--workspace','@auto-ytb/web','run',mode],{stdio:'inherit',env:childEnv});
+  child=spawn('npm',['--workspace','@auto-ytb/web','run',mode,'--','--hostname',webHost,'--port',String(webPort)],{stdio:'inherit',env:childEnv});
 }
 const shutdown=(signal)=>{try{bridge.close();}catch{}if(!child.killed)child.kill(signal);};
 process.on('SIGINT',()=>shutdown('SIGINT'));
