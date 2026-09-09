@@ -144,6 +144,10 @@ Set-DotEnvValue $envPath 'VOICE_PROVIDER' 'gemini'
 Set-DotEnvValue $envPath 'VOICE_ID' 'Kore'
 Set-DotEnvValue $envPath 'VOICE_MODEL' 'gemini-3.1-flash-tts-preview'
 Set-DotEnvValue $envPath 'GEMINI_TTS_MODEL' 'gemini-3.1-flash-tts-preview'
+Set-DotEnvValue $envPath 'GEMINI_TRANSCRIBE_MODEL' 'gemini-3.5-transcribe'
+Set-DotEnvValue $envPath 'VOICE_ALIGNMENT_STRICT' 'true'
+Set-DotEnvValue $envPath 'VOICE_ALIGNMENT_MIN_COVERAGE' '0.88'
+Set-DotEnvValue $envPath 'GEMINI_TRANSCRIBE_USD_PER_MINUTE' '0.005'
 Set-DotEnvValue $envPath 'IMAGE_PROVIDER' 'gemini'
 Set-DotEnvValue $envPath 'IMAGE_MODEL' 'gemini-2.5-flash-image'
 Set-DotEnvValue $envPath 'GEMINI_IMAGE_MODEL' 'gemini-2.5-flash-image'
@@ -171,14 +175,15 @@ npm install --no-audit --no-fund | Out-Host
 npm run build | Out-Host
 node --env-file=.env.local scripts/migrate.mjs | Out-Host
 
-Write-Host "`nConnection readiness:" -ForegroundColor Yellow
-node --env-file=.env.local scripts/connections-doctor.mjs --strict | Out-Host
-if ($LASTEXITCODE -ne 0) { throw 'connections:doctor still reports a core blocker.' }
+Write-Host "`nProduction connection readiness:" -ForegroundColor Yellow
+node --env-file=.env.local scripts/connections-doctor.mjs --strict --production | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'Production preflight still reports a blocker.' }
 
-Write-Host "`nAUTO-YTB local foundation is READY." -ForegroundColor Green
+Write-Host "`nAUTO-YTB local foundation is PRODUCTION READY." -ForegroundColor Green
 Write-Host 'PostgreSQL: READY (isolated Docker container)'
 Write-Host 'Drive: READY'
 Write-Host 'YouTube: READY'
-Write-Host 'Gemini text/search/TTS/image/video: configured'
+Write-Host 'Gemini text/search/TTS/exact-alignment/image/video: configured'
+Write-Host 'FFmpeg/FFprobe: READY'
 Write-Host 'Control plane: Google login READY for davidsanchezmora17@gmail.com (Drive and YouTube OAuth identities remain independent)'
 Write-Host 'No external media generation call was made, so this step incurred no video/image/TTS generation cost.'
