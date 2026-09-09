@@ -31,7 +31,10 @@ export function createSessionToken(options:{email?:string;auth?:'google'|'token'
   const body=Buffer.from(JSON.stringify(payload)).toString('base64url');
   return `${body}.${sign(body)}`;
 }
-export function sessionCookieOptions(){return{httpOnly:true as const,sameSite:'strict' as const,secure:process.env.NODE_ENV==='production',path:'/',maxAge:MAX_AGE_SECONDS};}
+// OAuth returns from accounts.google.com. SameSite=Strict can suppress the freshly-set
+// session cookie on the immediate callback -> dashboard redirect in some browsers.
+// Lax still protects ordinary cross-site subrequests while allowing this top-level OAuth flow.
+export function sessionCookieOptions(){return{httpOnly:true as const,sameSite:'lax' as const,secure:process.env.NODE_ENV==='production',path:'/',maxAge:MAX_AGE_SECONDS};}
 export function readSessionToken(token:string|undefined|null):SessionPayload|null{
   if(!token)return null;const [body,signature]=token.split('.');if(!body||!signature||!safeEqual(sign(body),signature))return null;
   try{const payload=JSON.parse(Buffer.from(body,'base64url').toString('utf8')) as SessionPayload;return payload.scope==='control-plane'&&payload.exp>Math.floor(Date.now()/1000)?payload:null;}catch{return null;}
