@@ -7,7 +7,10 @@ Set-StrictMode -Version Latest
 
 function Set-DotEnvValue {
   param([string]$Path,[string]$Key,[string]$Value)
-  $lines = if (Test-Path $Path) { [System.Collections.Generic.List[string]](Get-Content $Path) } else { [System.Collections.Generic.List[string]]::new() }
+  $lines = [System.Collections.Generic.List[string]]::new()
+  if (Test-Path $Path) {
+    foreach ($line in Get-Content $Path) { [void]$lines.Add([string]$line) }
+  }
   $found = $false
   for ($i = 0; $i -lt $lines.Count; $i++) {
     if ($lines[$i] -match "^$([Regex]::Escape($Key))=") {
@@ -16,8 +19,8 @@ function Set-DotEnvValue {
       break
     }
   }
-  if (-not $found) { $lines.Add("$Key=$Value") }
-  [IO.File]::WriteAllLines($Path, $lines, (New-Object Text.UTF8Encoding($false)))
+  if (-not $found) { [void]$lines.Add("$Key=$Value") }
+  [IO.File]::WriteAllLines($Path, $lines.ToArray(), (New-Object Text.UTF8Encoding($false)))
 }
 
 function Resolve-DockerCommand {
@@ -39,24 +42,10 @@ function Resolve-DockerCommand {
 
 function Test-DockerDaemon {
   param([string]$DockerExe)
-  $process = New-Object System.Diagnostics.Process
-  $process.StartInfo = New-Object System.Diagnostics.ProcessStartInfo
-  $process.StartInfo.FileName = $DockerExe
-  $process.StartInfo.Arguments = 'info'
-  $process.StartInfo.UseShellExecute = $false
-  $process.StartInfo.RedirectStandardOutput = $true
-  $process.StartInfo.RedirectStandardError = $true
-  $process.StartInfo.CreateNoWindow = $true
   try {
-    if (-not $process.Start()) { return $false }
-    if (-not $process.WaitForExit(15000)) {
-      try { $process.Kill() } catch {}
-      return $false
-    }
+    $process = Start-Process -FilePath $DockerExe -ArgumentList @('info') -NoNewWindow -PassThru -Wait -RedirectStandardOutput "$env:TEMP\auto-ytb-docker-out.txt" -RedirectStandardError "$env:TEMP\auto-ytb-docker-err.txt"
     return ($process.ExitCode -eq 0)
-  }
-  catch { return $false }
-  finally { $process.Dispose() }
+  } catch { return $false }
 }
 
 function Ensure-DockerDesktop {
@@ -85,11 +74,8 @@ function Ensure-DockerDesktop {
   if (-not (Test-Path $dockerDesktop)) {
     throw 'Docker CLI is present but Docker Desktop executable was not found.'
   }
-
   Write-Host 'Docker daemon is not ready. Starting Docker Desktop...' -ForegroundColor Yellow
-  $existingDesktop = Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue
-  if (-not $existingDesktop) { Start-Process $dockerDesktop | Out-Null }
-
+  Start-Process $dockerDesktop
   Write-Host 'Waiting for Docker Desktop engine...' -ForegroundColor Yellow
   $ready = $false
   for ($i=0; $i -lt 150; $i++) {
@@ -97,7 +83,7 @@ function Ensure-DockerDesktop {
     if (Test-DockerDaemon -DockerExe $docker) { $ready = $true; break }
   }
   if (-not $ready) {
-    throw 'Docker Desktop is installed but its engine did not become ready in 5 minutes. Open Docker Desktop and complete any first-run terms, WSL update, restart, or engine-start prompt; then rerun this same AUTO-YTB command.'
+    throw 'Docker Desktop did not become ready in 5 minutes. Open Docker Desktop once and complete any first-run/WSL prompt, then rerun the same AUTO-YTB command.'
   }
   Write-Host 'Docker Desktop engine READY.' -ForegroundColor Green
   return $docker
@@ -140,7 +126,6 @@ $dbUrl = "postgresql://auto_ytb:$password@127.0.0.1:55432/auto_ytb"
 Set-DotEnvValue $envPath 'DATABASE_URL' $dbUrl
 Set-DotEnvValue $envPath 'DATABASE_SSL' 'false'
 
-# Reuse the single Gemini API key for the complete Google-first provider stack.
 Set-DotEnvValue $envPath 'SEARCH_PROVIDER' 'gemini'
 Set-DotEnvValue $envPath 'GEMINI_SEARCH_MODEL' 'gemini-3.7-flash'
 Set-DotEnvValue $envPath 'VOICE_PROVIDER' 'gemini'
