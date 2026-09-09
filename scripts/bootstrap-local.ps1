@@ -103,6 +103,9 @@ function Get-AccessToken {
 if (-not (Test-Path $RepoPath)) {
   Write-Host "Cloning AUTO-YTB into $RepoPath..." -ForegroundColor Cyan
   git clone $RepoUrl $RepoPath
+} else {
+  Write-Host "Updating AUTO-YTB in $RepoPath..." -ForegroundColor Cyan
+  git -C $RepoPath pull --ff-only origin main
 }
 Set-Location $RepoPath
 
@@ -116,10 +119,12 @@ $driveToken = Invoke-OAuthFlow -ClientId $clientId -ClientSecret $clientSecret -
 if (-not $driveToken.refresh_token) { throw 'Drive authorization did not return a refresh token.' }
 $driveAccess = Get-AccessToken -ClientId $clientId -ClientSecret $clientSecret -RefreshToken $driveToken.refresh_token
 $driveHeaders = @{ Authorization = "Bearer $driveAccess" }
-$root = Invoke-RestMethod -Uri "https://www.googleapis.com/drive/v3/files/$DriveRootId?fields=id,name,mimeType" -Headers $driveHeaders
+$rootUrl = "https://www.googleapis.com/drive/v3/files/${DriveRootId}?fields=id,name,mimeType"
+$root = Invoke-RestMethod -Uri $rootUrl -Headers $driveHeaders
 if ($root.id -ne $DriveRootId) { throw 'Drive root verification failed.' }
 $q = [Uri]::EscapeDataString("name='00_SYSTEM' and mimeType='application/vnd.google-apps.folder' and trashed=false and '$DriveRootId' in parents")
-$systemFolders = Invoke-RestMethod -Uri "https://www.googleapis.com/drive/v3/files?q=$q&fields=files(id,name)&pageSize=10" -Headers $driveHeaders
+$systemFoldersUrl = "https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=10"
+$systemFolders = Invoke-RestMethod -Uri $systemFoldersUrl -Headers $driveHeaders
 if (-not $systemFolders.files -or $systemFolders.files.Count -lt 1) { throw '00_SYSTEM was not found under the pinned AUTO-YTB Drive root.' }
 $systemId = $systemFolders.files[0].id
 $canaryName = "_connection-canary-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).txt"
@@ -129,7 +134,8 @@ $canary = Invoke-RestMethod -Method Post -Uri 'https://www.googleapis.com/drive/
   mimeType = 'text/plain'
   description = 'AUTO-YTB OAuth write canary; safe to delete.'
 } | ConvertTo-Json -Depth 5)
-Invoke-RestMethod -Method Delete -Uri "https://www.googleapis.com/drive/v3/files/$($canary.id)" -Headers $driveHeaders | Out-Null
+$canaryDeleteUrl = "https://www.googleapis.com/drive/v3/files/$($canary.id)"
+Invoke-RestMethod -Method Delete -Uri $canaryDeleteUrl -Headers $driveHeaders | Out-Null
 Write-Host "Drive OK: $($root.name) / 00_SYSTEM (write + delete verified)" -ForegroundColor Green
 
 Write-Host "`n2/4 YouTube authorization — sign in as the YouTube channel account." -ForegroundColor Yellow
