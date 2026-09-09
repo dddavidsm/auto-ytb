@@ -4,118 +4,43 @@ import { dirname, resolve } from 'node:path';
 const n=(value,fallback)=>{const parsed=Number(value);return Number.isFinite(parsed)?parsed:fallback;};
 const round=(value)=>Math.round(Number(value||0)*1_000_000)/1_000_000;
 const safe=(value)=>String(value??'unknown').replace(/[^a-zA-Z0-9_.-]+/g,'-').slice(0,96)||'unknown';
-
-const OPENAI_RATES={
-  'gpt-5':{input:1.25,output:10},
-  'gpt-5-mini':{input:0.25,output:2},
-  'gpt-5-nano':{input:0.05,output:0.40},
-};
+const OPENAI_RATES={'gpt-5':{input:1.25,output:10},'gpt-5-mini':{input:0.25,output:2},'gpt-5-nano':{input:0.05,output:0.40}};
 const RUNWAY_VIDEO_CREDITS_PER_SECOND={'gen4.5':12,'gen4_turbo':5};
 const RUNWAY_IMAGE_CREDITS={'gen4_image':8,'gen4_image_turbo':2};
 
-function pricing(env){
-  return {
-    tavilyCreditUsd:n(env.TAVILY_CREDIT_USD,0.008),
-    openaiInputPerMillion:n(env.TEXT_MODEL_INPUT_USD_PER_MILLION,NaN),
-    openaiOutputPerMillion:n(env.TEXT_MODEL_OUTPUT_USD_PER_MILLION,NaN),
-    elevenMultilingualPerThousand:n(env.ELEVENLABS_MULTILINGUAL_USD_PER_1K_CHARS,0.10),
-    elevenFlashPerThousand:n(env.ELEVENLABS_FLASH_USD_PER_1K_CHARS,0.05),
-    runwayCreditUsd:n(env.RUNWAY_CREDIT_USD,0.01),
-    runwayVideoCreditsPerSecond:n(env.RUNWAY_VIDEO_CREDITS_PER_SECOND,NaN),
-    runwayImageCreditsPerImage:n(env.RUNWAY_IMAGE_CREDITS_PER_IMAGE,NaN),
-  };
-}
+function pricing(env){return{
+  tavilyCreditUsd:n(env.TAVILY_CREDIT_USD,0.008),
+  genericTextInputPerMillion:n(env.TEXT_MODEL_INPUT_USD_PER_MILLION,NaN),genericTextOutputPerMillion:n(env.TEXT_MODEL_OUTPUT_USD_PER_MILLION,NaN),
+  geminiSearchUsdPerQuery:n(env.GEMINI_SEARCH_USD_PER_QUERY,0.014),geminiTtsInputPerMillion:n(env.GEMINI_TTS_INPUT_USD_PER_MILLION,1),geminiTtsOutputPerMillion:n(env.GEMINI_TTS_OUTPUT_USD_PER_MILLION,20),geminiImage1kUsd:n(env.GEMINI_IMAGE_1K_USD,0.067),geminiVeoFast720pPerSecond:n(env.GEMINI_VEO_FAST_720P_USD_PER_SECOND,0.10),
+  elevenMultilingualPerThousand:n(env.ELEVENLABS_MULTILINGUAL_USD_PER_1K_CHARS,0.10),elevenFlashPerThousand:n(env.ELEVENLABS_FLASH_USD_PER_1K_CHARS,0.05),
+  runwayCreditUsd:n(env.RUNWAY_CREDIT_USD,0.01),runwayVideoCreditsPerSecond:n(env.RUNWAY_VIDEO_CREDITS_PER_SECOND,NaN),runwayImageCreditsPerImage:n(env.RUNWAY_IMAGE_CREDITS_PER_IMAGE,NaN),
+};}
 
 export class ProviderUsageMeter{
-  constructor(env=process.env){
-    this.env=env;
-    this.rates=pricing(env);
-    this.events=[];
-    this.sequence=0;
-    const session=safe(env.AUTO_YTB_METER_SESSION_ID||`${Date.now()}-${process.pid}`);
-    this.sessionId=session;
-    this.journalPath=resolve(env.COST_METER_ROOT||'.data/cost-meter',`${session}.jsonl`);
-  }
-  async record(event){
-    const normalized={
-      eventKey:event.eventKey||`${String(++this.sequence).padStart(4,'0')}:${safe(event.provider)}:${safe(event.operation)}`,
-      stage:event.stage||'other',provider:event.provider||'unknown',model:event.model??null,operation:event.operation||'unknown',
-      inputUnits:event.inputUnits??null,outputUnits:event.outputUnits??null,unitName:event.unitName??null,durationSeconds:event.durationSeconds??null,quantity:event.quantity??null,
-      costUsd:event.costUsd==null?null:round(event.costUsd),estimated:event.estimated!==false,pricingSource:event.pricingSource??null,metadata:event.metadata??{},recordedAt:new Date().toISOString(),
-    };
-    this.events.push(normalized);
-    await mkdir(dirname(this.journalPath),{recursive:true});
-    await appendFile(this.journalPath,`${JSON.stringify(normalized)}\n`,'utf8');
-    return normalized;
-  }
+  constructor(env=process.env){this.env=env;this.rates=pricing(env);this.events=[];this.sequence=0;const session=safe(env.AUTO_YTB_METER_SESSION_ID||`${Date.now()}-${process.pid}`);this.sessionId=session;this.journalPath=resolve(env.COST_METER_ROOT||'.data/cost-meter',`${session}.jsonl`);}
+  async record(event){const normalized={eventKey:event.eventKey||`${String(++this.sequence).padStart(4,'0')}:${safe(event.provider)}:${safe(event.operation)}`,stage:event.stage||'other',provider:event.provider||'unknown',model:event.model??null,operation:event.operation||'unknown',inputUnits:event.inputUnits??null,outputUnits:event.outputUnits??null,unitName:event.unitName??null,durationSeconds:event.durationSeconds??null,quantity:event.quantity??null,costUsd:event.costUsd==null?null:round(event.costUsd),estimated:event.estimated!==false,pricingSource:event.pricingSource??null,metadata:event.metadata??{},recordedAt:new Date().toISOString()};this.events.push(normalized);await mkdir(dirname(this.journalPath),{recursive:true});await appendFile(this.journalPath,`${JSON.stringify(normalized)}\n`,'utf8');return normalized;}
   get nonAssetCostUsd(){return round(this.events.filter((event)=>['research','llm'].includes(event.stage)).reduce((sum,event)=>sum+Number(event.costUsd??0),0));}
   get totalCostUsd(){return round(this.events.reduce((sum,event)=>sum+Number(event.costUsd??0),0));}
-  snapshot(){return {sessionId:this.sessionId,journalPath:this.journalPath,nonAssetCostUsd:this.nonAssetCostUsd,totalCostUsd:this.totalCostUsd,events:[...this.events]};}
+  snapshot(){return{sessionId:this.sessionId,journalPath:this.journalPath,nonAssetCostUsd:this.nonAssetCostUsd,totalCostUsd:this.totalCostUsd,events:[...this.events]};}
 }
 
-function openAiRates(model,meter){
-  const builtIn=OPENAI_RATES[model]??null;
-  const input=Number.isFinite(meter.rates.openaiInputPerMillion)?meter.rates.openaiInputPerMillion:builtIn?.input;
-  const output=Number.isFinite(meter.rates.openaiOutputPerMillion)?meter.rates.openaiOutputPerMillion:builtIn?.output;
-  return input!=null&&output!=null?{input,output}:null;
-}
 function textStage(schemaName){return schemaName==='research_dossier'?'research':'llm';}
-function voiceRate(model,meter){return /flash|turbo|conversational/i.test(model)?meter.rates.elevenFlashPerThousand:meter.rates.elevenMultilingualPerThousand;}
+function modelIdentity(name){const raw=String(name||'unknown');const split=raw.indexOf(':');return split>0?{provider:raw.slice(0,split),model:raw.slice(split+1)}:{provider:'unknown',model:raw};}
+function textRates(provider,model,meter){
+  if(Number.isFinite(meter.rates.genericTextInputPerMillion)&&Number.isFinite(meter.rates.genericTextOutputPerMillion))return{input:meter.rates.genericTextInputPerMillion,output:meter.rates.genericTextOutputPerMillion,source:'env-text-model-rates'};
+  if(provider==='openai'){const builtIn=OPENAI_RATES[model];if(builtIn)return{...builtIn,source:'openai-api-pricing-2026-09-08'};}
+  return null;
+}
+function elevenVoiceRate(model,meter){return /flash|turbo|conversational/i.test(model)?meter.rates.elevenFlashPerThousand:meter.rates.elevenMultilingualPerThousand;}
 function runwayVideoRate(model,meter){const credits=Number.isFinite(meter.rates.runwayVideoCreditsPerSecond)?meter.rates.runwayVideoCreditsPerSecond:RUNWAY_VIDEO_CREDITS_PER_SECOND[model];return credits==null?null:credits*meter.rates.runwayCreditUsd;}
 function runwayImageRate(model,meter){const credits=Number.isFinite(meter.rates.runwayImageCreditsPerImage)?meter.rates.runwayImageCreditsPerImage:RUNWAY_IMAGE_CREDITS[model];return credits==null?null:credits*meter.rates.runwayCreditUsd;}
 
-export function meterSearchProvider(provider,meter){
-  return {name:provider.name||'tavily',async search(query,options){
-    const result=await provider.search(query,options);
-    const credits=1;
-    await meter.record({stage:'research',provider:provider.name||'tavily',model:'basic-search',operation:'search',inputUnits:credits,unitName:'credit',quantity:1,costUsd:credits*meter.rates.tavilyCreditUsd,estimated:true,pricingSource:'tavily-paygo-2026-09-08',metadata:{query,resultCount:result.length,searchDepth:'basic'}});
-    return result;
-  }};
-}
+export function meterSearchProvider(provider,meter){return{name:provider.name||'search',async search(query,options){const result=await provider.search(query,options);const isGemini=String(provider.name||'').startsWith('gemini');const cost=isGemini?meter.rates.geminiSearchUsdPerQuery:meter.rates.tavilyCreditUsd;await meter.record({stage:'research',provider:provider.name||'search',model:isGemini?'google-search-grounding':'basic-search',operation:'search',inputUnits:1,unitName:isGemini?'search-query':'credit',quantity:1,costUsd:cost,estimated:true,pricingSource:isGemini?'gemini-api-pricing-2026-09-09-conservative-after-free-quota':'tavily-paygo-2026-09-08',metadata:{query,resultCount:result.length,recencyDays:options?.recencyDays??null,domains:options?.domains??[]}});return result;}};}
 
-export function meterTextModel(model,meter){
-  return {name:model.name,getNonAssetCostUsd:()=>meter.nonAssetCostUsd,async generateJson(input){
-    const result=await model.generateJson(input);
-    const modelId=String(model.name||'').replace(/^openai:/,'');
-    const rates=openAiRates(modelId,meter);
-    const inputTokens=Number(result.usage?.inputTokens??0),outputTokens=Number(result.usage?.outputTokens??0);
-    const cost=rates?(inputTokens/1_000_000*rates.input+outputTokens/1_000_000*rates.output):null;
-    await meter.record({stage:textStage(input.schemaName),provider:'openai',model:modelId,operation:`responses:${input.schemaName}`,inputUnits:inputTokens,outputUnits:outputTokens,unitName:'token',quantity:1,costUsd:cost,estimated:true,pricingSource:rates?'openai-api-pricing-2026-09-08':'unpriced-model',metadata:{schemaName:input.schemaName,inputUsdPerMillion:rates?.input??null,outputUsdPerMillion:rates?.output??null}});
-    return {...result,usage:{...(result.usage??{}),costUsd:cost??result.usage?.costUsd}};
-  }};
-}
+export function meterTextModel(model,meter){return{name:model.name,getNonAssetCostUsd:()=>meter.nonAssetCostUsd,async generateJson(input){const result=await model.generateJson(input);const identity=modelIdentity(model.name);const rates=textRates(identity.provider,identity.model,meter);const inputTokens=Number(result.usage?.inputTokens??0),outputTokens=Number(result.usage?.outputTokens??0);const cost=rates?(inputTokens/1_000_000*rates.input+outputTokens/1_000_000*rates.output):result.usage?.costUsd??null;await meter.record({stage:textStage(input.schemaName),provider:identity.provider,model:identity.model,operation:`structured-json:${input.schemaName}`,inputUnits:inputTokens,outputUnits:outputTokens,unitName:'token',quantity:1,costUsd:cost,estimated:true,pricingSource:rates?.source??'provider-usage-unpriced',metadata:{schemaName:input.schemaName,inputUsdPerMillion:rates?.input??null,outputUsdPerMillion:rates?.output??null}});return{...result,usage:{...(result.usage??{}),costUsd:cost??result.usage?.costUsd}};}};}
 
-export function meterVoiceProvider(provider,meter,options={}){
-  return {name:provider.name||'elevenlabs',async synthesize(input){
-    const asset=await provider.synthesize(input);
-    const modelId=String(asset.model||options.model||'eleven_multilingual_v2');
-    const chars=[...String(input.text||'')].length;
-    const rate=voiceRate(modelId,meter);
-    const cost=chars/1000*rate;
-    await meter.record({stage:'voice',provider:provider.name||'elevenlabs',model:modelId,operation:'text-to-speech',inputUnits:chars,unitName:'character',durationSeconds:asset.durationSeconds??null,quantity:1,costUsd:cost,estimated:true,pricingSource:'elevenlabs-api-pricing-2026-09-08',metadata:{usdPerThousandCharacters:rate,language:input.language,voiceId:input.voice}});
-    return {...asset,costUsd:round(cost)};
-  }};
-}
+export function meterVoiceProvider(provider,meter,options={}){return{name:provider.name||'voice',async synthesize(input){const asset=await provider.synthesize(input);const providerName=String(provider.name||asset.provider||'voice');const modelId=String(asset.model||options.model||'unknown');const chars=[...String(input.text||'')].length;let cost=null;let source='unpriced-model';let metadata={language:input.language,voiceId:input.voice};if(providerName.startsWith('gemini')){const inputTokens=Math.ceil(chars/4);const outputTokens=Math.ceil(Number(asset.durationSeconds??0)*25);cost=inputTokens/1_000_000*meter.rates.geminiTtsInputPerMillion+outputTokens/1_000_000*meter.rates.geminiTtsOutputPerMillion;source='gemini-api-pricing-2026-09-09';metadata={...metadata,inputTokensEstimated:inputTokens,audioTokensEstimated:outputTokens};}else if(providerName.includes('elevenlabs')){const rate=elevenVoiceRate(modelId,meter);cost=chars/1000*rate;source='elevenlabs-api-pricing-2026-09-08';metadata={...metadata,usdPerThousandCharacters:rate};}await meter.record({stage:'voice',provider:providerName,model:modelId,operation:'text-to-speech',inputUnits:chars,unitName:'character',durationSeconds:asset.durationSeconds??null,quantity:1,costUsd:cost,estimated:true,pricingSource:source,metadata});return{...asset,costUsd:cost==null?asset.costUsd:round(cost)};}};}
 
-export function meterImageProvider(provider,meter,options={}){
-  return {name:provider.name||'runway',async generate(input){
-    const asset=await provider.generate(input);
-    const modelId=String(asset.model||options.model||'gen4_image');
-    const cost=runwayImageRate(modelId,meter);
-    const isThumbnail=/thumbnail/i.test(String(input.prompt||''));
-    await meter.record({stage:isThumbnail?'thumbnail':'image',provider:provider.name||'runway',model:modelId,operation:'image-generation',inputUnits:1,unitName:'image',quantity:1,costUsd:cost,estimated:true,pricingSource:cost==null?'unpriced-model':'runway-dev-pricing-2026-09-08',metadata:{aspectRatio:input.aspectRatio,referenceCount:input.referenceUris?.length??0,usdPerImage:cost}});
-    return {...asset,costUsd:cost==null?asset.costUsd:round(cost)};
-  }};
-}
+export function meterImageProvider(provider,meter,options={}){return{name:provider.name||'image',async generate(input){const asset=await provider.generate(input);const providerName=String(provider.name||asset.provider||'image');const modelId=String(asset.model||options.model||'unknown');let cost=null;let source='unpriced-model';if(providerName.startsWith('gemini')){const size=String(asset.metadata?.imageSize||'1K').toUpperCase();cost=size==='1K'?meter.rates.geminiImage1kUsd:null;source=cost==null?'gemini-image-resolution-unpriced':'gemini-api-pricing-2026-09-09';}else if(providerName.includes('runway')){cost=runwayImageRate(modelId,meter);source=cost==null?'unpriced-model':'runway-dev-pricing-2026-09-08';}const isThumbnail=/thumbnail/i.test(String(input.prompt||''));await meter.record({stage:isThumbnail?'thumbnail':'image',provider:providerName,model:modelId,operation:'image-generation',inputUnits:1,unitName:'image',quantity:1,costUsd:cost,estimated:true,pricingSource:source,metadata:{aspectRatio:input.aspectRatio,referenceCount:input.referenceUris?.length??0,usdPerImage:cost}});return{...asset,costUsd:cost==null?asset.costUsd:round(cost)};}};}
 
-export function meterVideoProvider(provider,meter,options={}){
-  return {name:provider.name||'runway',async generate(input){
-    const asset=await provider.generate(input);
-    const modelId=String(asset.model||options.model||'gen4.5');
-    const seconds=Math.max(0,Number(input.durationSeconds||0));
-    const perSecond=runwayVideoRate(modelId,meter);
-    const cost=perSecond==null?null:seconds*perSecond;
-    await meter.record({stage:'video',provider:provider.name||'runway',model:modelId,operation:'video-generation',durationSeconds:seconds,inputUnits:seconds,unitName:'second',quantity:1,costUsd:cost,estimated:true,pricingSource:cost==null?'unpriced-model':'runway-dev-pricing-2026-09-08',metadata:{aspectRatio:input.aspectRatio,referenceCount:input.referenceUris?.length??0,usdPerSecond:perSecond}});
-    return {...asset,costUsd:cost==null?asset.costUsd:round(cost)};
-  }};
-}
+export function meterVideoProvider(provider,meter,options={}){return{name:provider.name||'video',async generate(input){const asset=await provider.generate(input);const providerName=String(provider.name||asset.provider||'video');const modelId=String(asset.model||options.model||'unknown');const generatedSeconds=Math.max(0,Number(asset.metadata?.generatedDurationSeconds??input.durationSeconds??0));let perSecond=null;let source='unpriced-model';if(providerName.startsWith('gemini')&&/veo-3\.1-fast/i.test(modelId)){const resolution=String(asset.metadata?.resolution||'720p');if(resolution==='720p')perSecond=meter.rates.geminiVeoFast720pPerSecond;source=perSecond==null?'unpriced-model':'gemini-api-pricing-2026-09-09';}else if(providerName.includes('runway')){perSecond=runwayVideoRate(modelId,meter);source=perSecond==null?'unpriced-model':'runway-dev-pricing-2026-09-08';}const cost=perSecond==null?null:generatedSeconds*perSecond;await meter.record({stage:'video',provider:providerName,model:modelId,operation:'video-generation',durationSeconds:generatedSeconds,inputUnits:generatedSeconds,unitName:'second',quantity:1,costUsd:cost,estimated:true,pricingSource:source,metadata:{aspectRatio:input.aspectRatio,referenceCount:input.referenceUris?.length??0,usdPerSecond:perSecond,requestedDurationSeconds:input.durationSeconds}});return{...asset,costUsd:cost==null?asset.costUsd:round(cost)};}};}
