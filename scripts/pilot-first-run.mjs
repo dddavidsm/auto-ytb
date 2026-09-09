@@ -28,6 +28,14 @@ async function loadOpportunity(db){
   return rows.rows[0]??null;
 }
 
+async function loadLatestRunForOpportunity(opportunityId){
+  const db=new NodePostgresSqlClient(req('DATABASE_URL'),{ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined});
+  try{
+    const rows=await db.query(`select pr.id,pr.state,pr.total_cost_usd::float,pr.metadata,pr.created_at,pr.updated_at from production_runs pr join content_ideas ci on ci.id=pr.content_idea_id where ci.opportunity_id=$1 order by pr.created_at desc limit 1`,[opportunityId]);
+    return rows.rows[0]??null;
+  } finally {await db.close();}
+}
+
 console.log('AUTO-YTB FIRST PILOT');
 console.log(`Mode: ${execute?'EXECUTE (real generation, private upload)':'PLAN ONLY (no media generation)'}`);
 console.log(`Primary channel profile: ${primary}`);
@@ -76,7 +84,15 @@ if(!execute){
 }
 
 console.log('\nREAL PILOT STARTING. Media generation can incur charges, but MAX_PRODUCTION_COST_USD is capped for this run and upload is forced private.');
-const env={...process.env,PRIMARY_CHANNEL_KEY:primary,MAX_PRODUCTION_COST_USD:String(budget),AUTO_UPLOAD_PRIVATE:'true',AUTO_PRODUCTION_MAX_PER_DAY:'1',PORTFOLIO_MAX_VIDEOS_PER_DAY:'1'};
+// Production default remains stricter (86/2). The first integration pilot uses 85/3 so a
+// near-pass can continue far enough to validate voice, visuals, render, QA and private upload.
+const env={...process.env,PRIMARY_CHANNEL_KEY:primary,MAX_PRODUCTION_COST_USD:String(budget),AUTO_UPLOAD_PRIVATE:'true',AUTO_PRODUCTION_MAX_PER_DAY:'1',PORTFOLIO_MAX_VIDEOS_PER_DAY:'1',MIN_ATTENTION_SCORE:process.env.PILOT_MIN_ATTENTION_SCORE||'85',MAX_ATTENTION_REVISION_PASSES:process.env.PILOT_MAX_ATTENTION_REVISION_PASSES||'3'};
 run(process.execPath,['scripts/live-pipeline.mjs',`--topic=${opportunity.angle||opportunity.canonical_name}`,`--opportunity-id=${opportunity.id}`,'--format=SHORT_VERTICAL',`--channel-config=${channelConfig}`],{env,label:'Research -> script -> voice -> visuals -> captions -> render -> QA -> private YouTube'});
+
+const latestRun=await loadLatestRunForOpportunity(opportunity.id);
+console.log('\n=== Pilot result ===');
+console.log(JSON.stringify(latestRun?{productionRunId:latestRun.id,state:latestRun.state,totalCostUsd:latestRun.total_cost_usd,updatedAt:latestRun.updated_at}:null,null,2));
+if(!latestRun)throw new Error('Pilot pipeline exited without persisting a production run.');
+if(String(latestRun.state).toUpperCase()==='BLOCKED')throw new Error(`Pilot production ${latestRun.id} is BLOCKED. Inspect its dashboard details before retrying.`);
 
 console.log('\nFIRST PILOT FINISHED. Refresh the AUTO-YTB dashboard to inspect the production, QA, costs and publication state.');
