@@ -9,7 +9,7 @@ async function request(fetchFn,url,apiKey,init={},attempts=4){
   let last;
   for(let attempt=0;attempt<attempts;attempt+=1){
     try{
-      const response=await fetchFn(url,{...init,headers:{'x-goog-api-key':apiKey,...(init.headers??{})}});
+      const response=await fetchFn(url,{...init,headers:{...(apiKey?{'x-goog-api-key':apiKey}:{}),...(init.headers??{})}});
       if(response.ok)return response;
       const body=(await response.text()).slice(0,800);
       last=new Error(`Gemini alignment request failed ${response.status}: ${body}`);
@@ -34,11 +34,17 @@ function sourceTokens(text){
 
 function extractWords(interaction){
   const words=[];
-  for(const step of interaction?.steps??[])for(const content of step?.content??[])for(const annotation of content?.annotations??[]){
-    if(annotation?.type!=='word_info')continue;
-    const start=parseOffset(annotation.start_offset??annotation.startOffset),end=parseOffset(annotation.end_offset??annotation.endOffset),text=String(annotation.text??'').trim();
-    if(text&&start!=null&&end!=null&&end>start)words.push({text,normalized:normalizeWord(text),start,end});
-  }
+  const visit=(value)=>{
+    if(!value||typeof value!=='object')return;
+    if(Array.isArray(value)){for(const item of value)visit(item);return;}
+    if(value.type==='word_info'){
+      const start=parseOffset(value.start_offset??value.startOffset),end=parseOffset(value.end_offset??value.endOffset),text=String(value.text??value.word??'').trim();
+      if(text&&start!=null&&end!=null&&end>start)words.push({text,normalized:normalizeWord(text),start,end});
+    }
+    for(const child of Object.values(value))visit(child);
+  };
+  visit(interaction);
+  words.sort((a,b)=>a.start-b.start||a.end-b.end);
   return words;
 }
 
@@ -80,7 +86,8 @@ export function withGeminiWordAlignment(provider,options={}){
     try{
       const start=await request(fetchFn,'https://generativelanguage.googleapis.com/upload/v1beta/files',apiKey,{method:'POST',headers:{'X-Goog-Upload-Protocol':'resumable','X-Goog-Upload-Command':'start','X-Goog-Upload-Header-Content-Length':String(bytes.byteLength),'X-Goog-Upload-Header-Content-Type':mimeType,'Content-Type':'application/json'},body:JSON.stringify({file:{display_name:`auto-ytb-voice-${Date.now()}`}})});
       const uploadUrl=start.headers.get('x-goog-upload-url');if(!uploadUrl)throw new Error('Gemini Files API did not return x-goog-upload-url');
-      const uploaded=await request(fetchFn,uploadUrl,apiKey,{method:'POST',headers:{'Content-Length':String(bytes.byteLength),'X-Goog-Upload-Offset':'0','X-Goog-Upload-Command':'upload, finalize','Content-Type':mimeType},body:bytes});
+      // The resumable URL is already authorized by Google. Do not leak/re-attach the API key to it.
+      const uploaded=await request(fetchFn,uploadUrl,'',{method:'POST',headers:{'Content-Length':String(bytes.byteLength),'X-Goog-Upload-Offset':'0','X-Goog-Upload-Command':'upload, finalize','Content-Type':mimeType},body:bytes});
       const fileInfo=await uploaded.json();const fileUri=fileInfo?.file?.uri;fileName=fileInfo?.file?.name??null;if(!fileUri)throw new Error('Gemini Files API finalized without file.uri');
       const interaction=await request(fetchFn,'https://generativelanguage.googleapis.com/v1beta/interactions',apiKey,{method:'POST',headers:{'Content-Type':'application/json','Api-Revision':'2026-05-20'},body:JSON.stringify({model,input:[{type:'audio',uri:fileUri,mime_type:mimeType}],generation_config:{transcription_config:{language_codes:input.language?[input.language]:[],mode:{type:'verbatim',timestamp_granularities:['word']}}}})});
       const json=await interaction.json();const words=extractWords(json);if(!words.length)throw new Error('Gemini Transcribe returned no word_info timestamps');
