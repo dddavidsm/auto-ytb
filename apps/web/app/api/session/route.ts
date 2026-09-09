@@ -9,7 +9,7 @@ export async function POST(request:Request){
   if(contentType.includes('application/json')){const body=await request.json().catch(()=>({}));token=String(body?.token??'');}
   else{const form=await request.formData();token=String(form.get('token')??'');}
   if(!verifyControlToken(token))return NextResponse.json({ok:false,error:'Invalid credentials'},{status:401,headers:{'Cache-Control':'no-store'}});
-  await setSessionCookie();
+  await setSessionCookie({auth:'token'});
   return NextResponse.json({ok:true},{headers:{'Cache-Control':'no-store'}});
 }
 
