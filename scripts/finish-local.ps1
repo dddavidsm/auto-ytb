@@ -162,7 +162,8 @@ $controlClientSecret = Get-DotEnvValue $envPath 'CONTROL_GOOGLE_CLIENT_SECRET'
 if ([string]::IsNullOrWhiteSpace($controlClientSecret)) { $controlClientSecret = Get-DotEnvValue $envPath 'DRIVE_CLIENT_SECRET' }
 if (-not [string]::IsNullOrWhiteSpace($controlClientId)) { Set-DotEnvValue $envPath 'CONTROL_GOOGLE_CLIENT_ID' $controlClientId }
 if (-not [string]::IsNullOrWhiteSpace($controlClientSecret)) { Set-DotEnvValue $envPath 'CONTROL_GOOGLE_CLIENT_SECRET' $controlClientSecret }
-Set-DotEnvValue $envPath 'CONTROL_GOOGLE_REDIRECT_URI' 'http://localhost:3000/api/auth/google/callback'
+# Reuse the already-authorized Drive callback. npm run web:dev starts a local bridge on this port.
+Set-DotEnvValue $envPath 'CONTROL_GOOGLE_REDIRECT_URI' 'http://localhost:53683/oauth2/callback'
 Set-DotEnvValue $envPath 'CONTROL_GOOGLE_ALLOWED_EMAILS' 'davidsanchezmora17@gmail.com'
 
 Write-Host 'Building and migrating AUTO-YTB database...' -ForegroundColor Cyan
@@ -179,5 +180,5 @@ Write-Host 'PostgreSQL: READY (isolated Docker container)'
 Write-Host 'Drive: READY'
 Write-Host 'YouTube: READY'
 Write-Host 'Gemini text/search/TTS/image/video: configured'
-Write-Host 'Control plane: Google login configured for davidsanchezmora17@gmail.com (redirect must be authorized once in Google Cloud)'
+Write-Host 'Control plane: Google login READY for davidsanchezmora17@gmail.com (Drive and YouTube OAuth identities remain independent)'
 Write-Host 'No external media generation call was made, so this step incurred no video/image/TTS generation cost.'
