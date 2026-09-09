@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { calculateOpportunityScore, clusterTopics } from '@auto-ytb/core';
-import { YouTubeClient } from '@auto-ytb/youtube';
+import { GoogleOAuthTokenProvider, YouTubeClient } from '@auto-ytb/youtube';
 import { NodePostgresSqlClient } from '../packages/runtime-node/index.mjs';
 
 const req=(name)=>{const value=process.env[name]?.trim();if(!value)throw new Error(`${name} is required`);return value;};
@@ -8,6 +8,12 @@ const num=(name,fallback)=>{const value=Number(process.env[name]??fallback);if(!
 const clamp=(value,min=0,max=100)=>Math.max(min,Math.min(max,value));
 const median=(values)=>{const sorted=values.filter(Number.isFinite).sort((a,b)=>a-b);if(!sorted.length)return 0;const middle=Math.floor(sorted.length/2);return sorted.length%2?sorted[middle]:(sorted[middle-1]+sorted[middle])/2;};
 const durationSeconds=(iso)=>{const match=/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(iso||'');return match?(Number(match[1]||0)*3600+Number(match[2]||0)*60+Number(match[3]||0)):null;};
+async function createYouTubeClient(){
+  const apiKey=process.env.YOUTUBE_API_KEY?.trim();
+  if(apiKey)return new YouTubeClient(apiKey);
+  const provider=new GoogleOAuthTokenProvider({clientId:req('YOUTUBE_CLIENT_ID'),clientSecret:req('YOUTUBE_CLIENT_SECRET'),refreshToken:req('YOUTUBE_REFRESH_TOKEN')});
+  return new YouTubeClient({accessToken:await provider.getAccessToken()});
+}
 const niche=process.env.PRIMARY_CHANNEL_KEY||'future-tech-business';
 const maxQueries=Math.max(1,Math.min(12,Math.floor(num('MARKET_CYCLE_MAX_QUERIES',5))));
 const recentDays=Math.max(1,Math.min(30,Math.floor(num('MARKET_CYCLE_RECENT_DAYS',7))));
@@ -15,7 +21,7 @@ const maxResults=Math.max(10,Math.min(50,Math.floor(num('MARKET_CYCLE_RESULTS_PE
 const minClusterSize=Math.max(2,Math.floor(num('MARKET_CYCLE_MIN_CLUSTER_SIZE',2)));
 const clusterThreshold=clamp(num('MARKET_CYCLE_CLUSTER_THRESHOLD',45),20,90);
 const db=new NodePostgresSqlClient(req('DATABASE_URL'),{ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined});
-const client=new YouTubeClient(req('YOUTUBE_API_KEY'));
+const client=await createYouTubeClient();
 const seeds=JSON.parse(await readFile(`${process.cwd()}/config/niche-seeds.json`,'utf8'));
 const priors=JSON.parse(await readFile(`${process.cwd()}/config/niche-priors.json`,'utf8'));
 const prior=priors.find((item)=>item.id===niche);
