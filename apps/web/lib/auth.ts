@@ -22,7 +22,7 @@ export function isAllowedControlEmail(email:string){const allowed=allowedControl
 export function controlGoogleConfig(){
   const clientId=(process.env.CONTROL_GOOGLE_CLIENT_ID||process.env.DRIVE_CLIENT_ID||process.env.YOUTUBE_CLIENT_ID||'').trim();
   const clientSecret=(process.env.CONTROL_GOOGLE_CLIENT_SECRET||process.env.DRIVE_CLIENT_SECRET||process.env.YOUTUBE_CLIENT_SECRET||'').trim();
-  const redirectUri=(process.env.CONTROL_GOOGLE_REDIRECT_URI||'http://localhost:3000/api/auth/google/callback').trim();
+  const redirectUri=(process.env.CONTROL_GOOGLE_REDIRECT_URI||'http://localhost:53683/oauth2/callback').trim();
   return {clientId,clientSecret,redirectUri};
 }
 export function createSessionToken(options:{email?:string;auth?:'google'|'token';now?:number}={}){
