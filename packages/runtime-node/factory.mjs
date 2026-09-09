@@ -6,6 +6,7 @@ import { bindMediaProviderToBrand, parseBrandContinuityContext } from './brand-c
 import { bindTextModelToSeries, parseSeriesContinuityContext } from './series-continuity.mjs';
 import { bindDialogueVoiceProviderToSeries } from './series-dialogue-voice.mjs';
 import { withElevenLabsVoiceControls } from './elevenlabs-voice-controls.mjs';
+import { withGeminiWordAlignment, withGeminiAlignmentMeter } from './gemini-word-alignment.mjs';
 import { bindImageProviderToContentArchetype, bindTextModelToContentArchetype, bindVideoProviderToContentArchetype, normalizeContentArchetypeProfile } from './content-archetype.mjs';
 import { withCaptureAesthetic } from './capture-aesthetic.mjs';
 import { withContinuityBridgeVideo } from './continuity-video.mjs';
@@ -61,7 +62,8 @@ export function createLiveRuntime(env=process.env){
     if(provider==='gemini'){
       const voiceModel=env.VOICE_MODEL||'gemini-3.1-flash-tts-preview';
       const rawVoice=new GeminiVoiceProvider({apiKey:geminiKey||reqFrom(env,'GEMINI_API_KEY'),store,model:voiceModel,defaultVoice:env.VOICE_ID||'Kore',endpoint:geminiEndpoint});
-      const metered=meterVoiceProvider(rawVoice,meter,{model:voiceModel});voice=bindDialogueVoiceProviderToSeries(metered,seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
+      const aligned=withGeminiWordAlignment(rawVoice,{apiKey:geminiKey||reqFrom(env,'GEMINI_API_KEY'),model:env.GEMINI_TRANSCRIBE_MODEL||'gemini-3.5-transcribe',strict:env.VOICE_ALIGNMENT_STRICT!=='false',minCoverage:numFrom(env,'VOICE_ALIGNMENT_MIN_COVERAGE',0.88)});
+      const metered=withGeminiAlignmentMeter(meterVoiceProvider(aligned,meter,{model:voiceModel}),meter);voice=bindDialogueVoiceProviderToSeries(metered,seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
     }else if(provider==='elevenlabs'){
       const voiceModel=env.VOICE_MODEL||'eleven_multilingual_v2';const voiceApiKey=reqFrom(env,'VOICE_API_KEY');const rawVoice=new ElevenLabsVoiceProvider({apiKey:voiceApiKey,store,modelId:voiceModel,useTimestamps:env.VOICE_TIMESTAMPS!=='false'});const controlled=withElevenLabsVoiceControls(rawVoice,{apiKey:voiceApiKey,store,modelId:voiceModel});voice=bindDialogueVoiceProviderToSeries(meterVoiceProvider(controlled,meter,{model:voiceModel}),seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
     }else throw new Error(`Unsupported VOICE_PROVIDER: ${provider}`);
