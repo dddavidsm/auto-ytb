@@ -1,10 +1,19 @@
 import { randomBytes } from 'node:crypto';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { controlGoogleConfig, googleOauthStateCookieName } from '../../../../lib/auth';
 
 export const runtime='nodejs';
 
-export async function GET(){
+export async function GET(request:NextRequest){
+  // OAuth state is stored in a host-only cookie. Force one canonical loopback host so
+  // opening the panel through localhost cannot create a cookie that later disappears
+  // when the authorized OAuth bridge returns to 127.0.0.1.
+  if(request.nextUrl.hostname==='localhost'){
+    const canonical=request.nextUrl.clone();
+    canonical.hostname='127.0.0.1';
+    return NextResponse.redirect(canonical);
+  }
+
   const {clientId,redirectUri}=controlGoogleConfig();
   if(!clientId)return NextResponse.json({ok:false,error:'Google control-plane login is not configured'},{status:503});
   const state=randomBytes(32).toString('base64url');
