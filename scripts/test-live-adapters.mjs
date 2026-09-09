@@ -1,49 +1,24 @@
 import assert from 'node:assert/strict';
-import { TavilySearchProvider, OpenAIResponsesTextModel, GeminiGenerateContentTextModel } from '@auto-ytb/providers';
+import { TavilySearchProvider, OpenAIResponsesTextModel, GeminiGenerateContentTextModel, GeminiGoogleSearchProvider, GeminiVoiceProvider, GeminiImageProvider, GeminiVideoProvider } from '@auto-ytb/providers';
 
-const tavilyFetch = async (_url, init) => {
-  const body = JSON.parse(init.body);
-  assert.equal(body.query, 'AI agents');
-  return new Response(JSON.stringify({results:[{title:'Official release',url:'https://example.gov/release',content:'Primary source'}]}),{status:200,headers:{'content-type':'application/json'}});
-};
-const search = new TavilySearchProvider({apiKey:'test',fetchFn:tavilyFetch});
-const results = await search.search('AI agents',{limit:3,recencyDays:7});
-assert.equal(results.length,1);
-assert.equal(results[0].sourceType,'official');
-console.log('✓ Tavily adapter contract');
+const tavilyFetch=async(_url,init)=>{const body=JSON.parse(init.body);assert.equal(body.query,'AI agents');return new Response(JSON.stringify({results:[{title:'Official release',url:'https://example.gov/release',content:'Primary source'}]}),{status:200,headers:{'content-type':'application/json'}});};
+const search=new TavilySearchProvider({apiKey:'test',fetchFn:tavilyFetch});const results=await search.search('AI agents',{limit:3,recencyDays:7});assert.equal(results.length,1);assert.equal(results[0].sourceType,'official');console.log('✓ Tavily adapter contract');
 
-const llmFetch = async (_url, init) => {
-  const body = JSON.parse(init.body);
-  assert.equal(body.text.format.type,'json_schema');
-  const value={executiveSummary:'summary',claims:[],timeline:[],angles:[
-    {id:'a',title:'A',thesis:'t',viewerPromise:'p',hook:'h',novelty:80,emotionalPull:80,retentionPotential:80,monetizationFit:80,evidenceFit:80,productionFit:80,risk:10},
-    {id:'b',title:'B',thesis:'t',viewerPromise:'p',hook:'h',novelty:70,emotionalPull:70,retentionPotential:70,monetizationFit:70,evidenceFit:70,productionFit:70,risk:10}
-  ]};
-  return new Response(JSON.stringify({output_text:JSON.stringify(value),usage:{input_tokens:100,output_tokens:50}}),{status:200,headers:{'content-type':'application/json'}});
-};
-const model = new OpenAIResponsesTextModel({apiKey:'test',model:'test-model',fetchFn:llmFetch});
-const generated=await model.generateJson({system:'system',prompt:'prompt',schemaName:'research_dossier'});
-assert.equal(generated.value.executiveSummary,'summary');
-assert.equal(generated.usage.inputTokens,100);
-console.log('✓ OpenAI Responses adapter contract');
+const llmFetch=async(_url,init)=>{const body=JSON.parse(init.body);assert.equal(body.text.format.type,'json_schema');const value={executiveSummary:'summary',claims:[],timeline:[],angles:[{id:'a',title:'A',thesis:'t',viewerPromise:'p',hook:'h',novelty:80,emotionalPull:80,retentionPotential:80,monetizationFit:80,evidenceFit:80,productionFit:80,risk:10},{id:'b',title:'B',thesis:'t',viewerPromise:'p',hook:'h',novelty:70,emotionalPull:70,retentionPotential:70,monetizationFit:70,evidenceFit:70,productionFit:70,risk:10}]};return new Response(JSON.stringify({output_text:JSON.stringify(value),usage:{input_tokens:100,output_tokens:50}}),{status:200,headers:{'content-type':'application/json'}});};
+const model=new OpenAIResponsesTextModel({apiKey:'test',model:'test-model',fetchFn:llmFetch});const generated=await model.generateJson({system:'system',prompt:'prompt',schemaName:'research_dossier'});assert.equal(generated.value.executiveSummary,'summary');assert.equal(generated.usage.inputTokens,100);console.log('✓ OpenAI Responses adapter contract');
 
-const geminiFetch=async(url,init)=>{
-  assert.match(String(url),/models\/gemini-test%3A?generateContent|models\/gemini-test:generateContent/);
-  assert.equal(init.headers['x-goog-api-key'],'gemini-key');
-  const body=JSON.parse(init.body);
-  assert.equal(body.systemInstruction.parts[0].text,'system');
-  assert.equal(body.contents[0].parts[0].text,'prompt');
-  assert.equal(body.generationConfig.responseMimeType,'application/json');
-  assert.equal(body.generationConfig.responseJsonSchema.type,'object');
-  const value={executiveSummary:'gemini summary',claims:[],timeline:[],angles:[
-    {id:'a',title:'A',thesis:'t',viewerPromise:'p',hook:'h',novelty:80,emotionalPull:80,retentionPotential:80,monetizationFit:80,evidenceFit:80,productionFit:80,risk:10},
-    {id:'b',title:'B',thesis:'t',viewerPromise:'p',hook:'h',novelty:70,emotionalPull:70,retentionPotential:70,monetizationFit:70,evidenceFit:70,productionFit:70,risk:10}
-  ]};
-  return new Response(JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify(value)}]}}],usageMetadata:{promptTokenCount:120,candidatesTokenCount:55}}),{status:200,headers:{'content-type':'application/json'}});
-};
-const gemini=new GeminiGenerateContentTextModel({apiKey:'gemini-key',model:'gemini-test',fetchFn:geminiFetch});
-const geminiGenerated=await gemini.generateJson({system:'system',prompt:'prompt',schemaName:'research_dossier'});
-assert.equal(geminiGenerated.value.executiveSummary,'gemini summary');
-assert.equal(geminiGenerated.usage.inputTokens,120);
-assert.equal(geminiGenerated.usage.outputTokens,55);
-console.log('✓ Gemini structured output adapter contract');
+const geminiFetch=async(url,init)=>{assert.match(String(url),/models\/gemini-test%3A?generateContent|models\/gemini-test:generateContent/);assert.equal(init.headers['x-goog-api-key'],'gemini-key');const body=JSON.parse(init.body);assert.equal(body.systemInstruction.parts[0].text,'system');assert.equal(body.contents[0].parts[0].text,'prompt');assert.equal(body.generationConfig.responseMimeType,'application/json');assert.equal(body.generationConfig.responseJsonSchema.type,'object');const value={executiveSummary:'gemini summary',claims:[],timeline:[],angles:[{id:'a',title:'A',thesis:'t',viewerPromise:'p',hook:'h',novelty:80,emotionalPull:80,retentionPotential:80,monetizationFit:80,evidenceFit:80,productionFit:80,risk:10},{id:'b',title:'B',thesis:'t',viewerPromise:'p',hook:'h',novelty:70,emotionalPull:70,retentionPotential:70,monetizationFit:70,evidenceFit:70,productionFit:70,risk:10}]};return new Response(JSON.stringify({candidates:[{content:{parts:[{text:JSON.stringify(value)}]}}],usageMetadata:{promptTokenCount:120,candidatesTokenCount:55}}),{status:200,headers:{'content-type':'application/json'}});};
+const gemini=new GeminiGenerateContentTextModel({apiKey:'gemini-key',model:'gemini-test',fetchFn:geminiFetch});const geminiGenerated=await gemini.generateJson({system:'system',prompt:'prompt',schemaName:'research_dossier'});assert.equal(geminiGenerated.value.executiveSummary,'gemini summary');assert.equal(geminiGenerated.usage.inputTokens,120);assert.equal(geminiGenerated.usage.outputTokens,55);console.log('✓ Gemini structured output adapter contract');
+
+const stored=[];const store={name:'test-store',async put(input){stored.push(input);return{uri:`file:///tmp/${input.key}`,bytes:typeof input.data==='string'?input.data.length:input.data.byteLength};}};
+const unifiedSearchFetch=async(url,init)=>{assert.match(String(url),/\/interactions$/);assert.equal(init.headers['Api-Revision'],'2026-05-20');const body=JSON.parse(init.body);assert.deepEqual(body.tools,[{type:'google_search'}]);return new Response(JSON.stringify({steps:[{type:'model_output',content:[{type:'text',text:'Official source confirms the result.',annotations:[{type:'url_citation',url:'https://example.gov/fact',title:'Official fact',start_index:0,end_index:15}]}]}]}),{status:200});};
+const unifiedSearch=new GeminiGoogleSearchProvider({apiKey:'key',fetchFn:unifiedSearchFetch});const grounded=await unifiedSearch.search('fact',{limit:5});assert.equal(grounded.length,1);assert.equal(grounded[0].sourceType,'official');console.log('✓ Gemini Google Search grounding adapter contract');
+
+const pcm=Buffer.alloc(4800);const ttsFetch=async(_url,init)=>{const body=JSON.parse(init.body);assert.equal(body.model,'gemini-3.1-flash-tts-preview');assert.equal(body.response_format.type,'audio');assert.equal(body.generation_config.speech_config[0].voice,'Kore');return new Response(JSON.stringify({output_audio:{data:pcm.toString('base64')}}),{status:200});};
+const tts=new GeminiVoiceProvider({apiKey:'key',store,fetchFn:ttsFetch});const speech=await tts.synthesize({text:'Hello world',voice:'narrator',language:'en-US'});assert.equal(speech.mimeType,'audio/wav');assert.equal(speech.voiceId,'Kore');assert.ok(speech.alignment.characters.length>0);console.log('✓ Gemini TTS adapter contract');
+
+const imageBytes=Buffer.from([137,80,78,71]);const imageFetch=async(_url,init)=>{const body=JSON.parse(init.body);assert.equal(body.model,'gemini-3.1-flash-image');assert.equal(body.response_format.aspect_ratio,'9:16');return new Response(JSON.stringify({output_image:{data:imageBytes.toString('base64')}}),{status:200});};
+const image=new GeminiImageProvider({apiKey:'key',store,fetchFn:imageFetch});const imageAsset=await image.generate({prompt:'clean image',aspectRatio:'9:16'});assert.equal(imageAsset.mimeType,'image/png');assert.equal(imageAsset.provider,'gemini-image');console.log('✓ Gemini image adapter contract');
+
+let videoCalls=0;const videoFetch=async(url,init={})=>{videoCalls+=1;if(String(url).includes(':predictLongRunning')){const body=JSON.parse(init.body);assert.equal(body.parameters.durationSeconds,'6');assert.equal(body.parameters.resolution,'720p');return new Response(JSON.stringify({name:'operations/video-1',done:false}),{status:200});}if(String(url).includes('operations/video-1'))return new Response(JSON.stringify({name:'operations/video-1',done:true,response:{generateVideoResponse:{generatedSamples:[{video:{uri:'https://download.example/video.mp4'}}]}}}),{status:200});if(String(url).includes('download.example'))return new Response(new Uint8Array([0,0,0,24]),{status:200});throw new Error(`unexpected ${url}`);};
+const video=new GeminiVideoProvider({apiKey:'key',store,fetchFn:videoFetch,pollMs:0});const videoAsset=await video.generate({prompt:'clip',durationSeconds:6.4,aspectRatio:'16:9'});assert.equal(videoAsset.mimeType,'video/mp4');assert.equal(videoAsset.metadata.generatedDurationSeconds,6);assert.ok(videoCalls>=3);console.log('✓ Gemini Veo adapter contract');
