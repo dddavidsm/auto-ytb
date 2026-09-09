@@ -37,6 +37,12 @@ function Resolve-DockerCommand {
   return $null
 }
 
+function Test-DockerDaemon {
+  param([string]$DockerExe)
+  & $DockerExe info *> $null
+  return ($LASTEXITCODE -eq 0)
+}
+
 function Ensure-DockerDesktop {
   $docker = Resolve-DockerCommand
   if (-not $docker) {
@@ -57,21 +63,21 @@ function Ensure-DockerDesktop {
     }
   }
 
-  try { & $docker info | Out-Null; return $docker } catch {}
+  if (Test-DockerDaemon -DockerExe $docker) { return $docker }
 
   $dockerDesktop = "$Env:ProgramFiles\Docker\Docker\Docker Desktop.exe"
   if (-not (Test-Path $dockerDesktop)) {
     throw 'Docker CLI is present but Docker Desktop executable was not found.'
   }
-  Write-Host 'Starting Docker Desktop...' -ForegroundColor Yellow
+  Write-Host 'Docker CLI found but daemon is not running. Starting Docker Desktop...' -ForegroundColor Yellow
   Start-Process $dockerDesktop
   $ready = $false
   for ($i=0; $i -lt 120; $i++) {
     Start-Sleep -Seconds 2
-    try { & $docker info | Out-Null; $ready = $true; break } catch {}
+    if (Test-DockerDaemon -DockerExe $docker) { $ready = $true; break }
   }
   if (-not $ready) {
-    throw 'Docker Desktop did not become ready in 4 minutes. If Windows requested a restart or WSL update, complete it and rerun the same AUTO-YTB command.'
+    throw 'Docker Desktop did not become ready in 4 minutes. Open Docker Desktop once and complete any first-run/WSL prompt, then rerun the same AUTO-YTB command.'
   }
   return $docker
 }
@@ -104,10 +110,8 @@ if ($LASTEXITCODE -ne 0) { throw 'docker compose failed to start PostgreSQL.' }
 $healthy = $false
 for ($i=0; $i -lt 60; $i++) {
   Start-Sleep -Seconds 2
-  try {
-    & $dockerExe exec auto-ytb-postgres pg_isready -U auto_ytb -d auto_ytb | Out-Null
-    if ($LASTEXITCODE -eq 0) { $healthy = $true; break }
-  } catch {}
+  & $dockerExe exec auto-ytb-postgres pg_isready -U auto_ytb -d auto_ytb *> $null
+  if ($LASTEXITCODE -eq 0) { $healthy = $true; break }
 }
 if (-not $healthy) { throw 'Local PostgreSQL did not become healthy.' }
 
