@@ -37,10 +37,22 @@ assert.equal(second.externalId,'video-1');
 assert.equal(loaderCalls,1,'recovered upload must not load/re-upload video bytes');
 assert.equal(calls.filter((call)=>call.url.includes('uploadType=resumable')).length,1,'retry must not create a second YouTube upload session');
 
+const beforeFailureLoaderCalls=loaderCalls;
+const failingPublisher=new YouTubePublisher(token,loader,async(url)=>{
+  if(String(url).includes('/youtube/v3/channels?'))return new Response('temporary outage',{status:503});
+  throw new Error(`no upload call should happen after failed idempotency lookup: ${url}`);
+},{idempotencyKey:'must-not-duplicate'});
+await assert.rejects(
+  ()=>failingPublisher.uploadPrivate({...kidsInput,fileUri:'mock://never-upload.mp4'}),
+  /Upload blocked to avoid creating a duplicate video/,
+);
+assert.equal(loaderCalls,beforeFailureLoaderCalls,'failed recovery verification must block before loading upload bytes');
+
 const generalCalls=[];
 const generalFetch=async(url,init={})=>{
   const target=String(url);generalCalls.push({url:target,init});
-  if(target.includes('/youtube/v3/channels?'))return new Response(JSON.stringify({items:[]}),{status:200,headers:{'content-type':'application/json'}});
+  if(target.includes('/youtube/v3/channels?'))return new Response(JSON.stringify({items:[{contentDetails:{relatedPlaylists:{uploads:'general-uploads'}}}]}),{status:200,headers:{'content-type':'application/json'}});
+  if(target.includes('/youtube/v3/playlistItems?'))return new Response(JSON.stringify({items:[]}),{status:200,headers:{'content-type':'application/json'}});
   if(target.includes('uploadType=resumable'))return new Response('',{status:200,headers:{location:'https://upload.example/general'}});
   if(target==='https://upload.example/general')return new Response(JSON.stringify({id:'video-2'}),{status:200,headers:{'content-type':'application/json'}});
   throw new Error(`unexpected URL ${url}`);
@@ -54,3 +66,4 @@ assert.equal(generalMetadata.status.containsSyntheticMedia,false);
 console.log('✓ YouTube upload explicitly declares MADE_FOR_KIDS for child-directed series');
 console.log('✓ general-audience upload explicitly remains not made for kids');
 console.log('✓ YouTube private upload retries recover the prior video without duplicate bytes/session');
+console.log('✓ YouTube retry verification fails closed before bytes are loaded when recovery lookup is unavailable');
