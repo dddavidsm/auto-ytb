@@ -5,8 +5,10 @@ import { redirect } from 'next/navigation';
 const COOKIE='auto_ytb_session';
 export const googleOauthStateCookieName='auto_ytb_google_oauth_state';
 const MAX_AGE_SECONDS=60*60*24*7;
+const GOOGLE_COMPLETION_MAX_AGE_SECONDS=60*5;
 
 type SessionPayload={exp:number;scope:'control-plane';email?:string;auth?:'google'|'token'};
+type GoogleCompletionPayload={exp:number;scope:'control-plane-google-complete';email:string};
 
 function secret(){
   const value=(process.env.SESSION_SECRET||process.env.CONTROL_PLANE_TOKEN||'').trim();
@@ -16,6 +18,11 @@ function secret(){
 }
 function sign(body:string){return createHmac('sha256',secret()).update(body).digest('base64url');}
 function safeEqual(a:string,b:string){const left=Buffer.from(a),right=Buffer.from(b);return left.length===right.length&&timingSafeEqual(left,right);}
+function signPayload(payload:object){const body=Buffer.from(JSON.stringify(payload)).toString('base64url');return `${body}.${sign(body)}`;}
+function readSignedPayload<T>(token:string|undefined|null):T|null{
+  if(!token)return null;const [body,signature]=token.split('.');if(!body||!signature||!safeEqual(sign(body),signature))return null;
+  try{return JSON.parse(Buffer.from(body,'base64url').toString('utf8')) as T;}catch{return null;}
+}
 export function verifyControlToken(value:string){const expected=(process.env.CONTROL_PLANE_TOKEN||'').trim();return Boolean(expected)&&safeEqual(value,expected);}
 export function allowedControlEmails(){return String(process.env.CONTROL_GOOGLE_ALLOWED_EMAILS||'').split(',').map((value)=>value.trim().toLowerCase()).filter(Boolean);}
 export function isAllowedControlEmail(email:string){const allowed=allowedControlEmails();return allowed.length>0&&allowed.includes(String(email||'').trim().toLowerCase());}
@@ -28,16 +35,20 @@ export function controlGoogleConfig(){
 export function createSessionToken(options:{email?:string;auth?:'google'|'token';now?:number}={}){
   const now=options.now??Date.now();
   const payload:SessionPayload={exp:Math.floor(now/1000)+MAX_AGE_SECONDS,scope:'control-plane',...(options.email?{email:options.email.toLowerCase()}:{}),...(options.auth?{auth:options.auth}:{})};
-  const body=Buffer.from(JSON.stringify(payload)).toString('base64url');
-  return `${body}.${sign(body)}`;
+  return signPayload(payload);
 }
-// OAuth returns from accounts.google.com. SameSite=Strict can suppress the freshly-set
-// session cookie on the immediate callback -> dashboard redirect in some browsers.
-// Lax still protects ordinary cross-site subrequests while allowing this top-level OAuth flow.
+export function createGoogleCompletionTicket(email:string,now=Date.now()){
+  return signPayload({exp:Math.floor(now/1000)+GOOGLE_COMPLETION_MAX_AGE_SECONDS,scope:'control-plane-google-complete',email:email.trim().toLowerCase()} satisfies GoogleCompletionPayload);
+}
+export function readGoogleCompletionTicket(token:string|undefined|null){
+  const payload=readSignedPayload<GoogleCompletionPayload>(token);
+  if(!payload||payload.scope!=='control-plane-google-complete'||payload.exp<=Math.floor(Date.now()/1000)||!payload.email)return null;
+  return payload;
+}
 export function sessionCookieOptions(){return{httpOnly:true as const,sameSite:'lax' as const,secure:process.env.NODE_ENV==='production',path:'/',maxAge:MAX_AGE_SECONDS};}
 export function readSessionToken(token:string|undefined|null):SessionPayload|null{
-  if(!token)return null;const [body,signature]=token.split('.');if(!body||!signature||!safeEqual(sign(body),signature))return null;
-  try{const payload=JSON.parse(Buffer.from(body,'base64url').toString('utf8')) as SessionPayload;return payload.scope==='control-plane'&&payload.exp>Math.floor(Date.now()/1000)?payload:null;}catch{return null;}
+  const payload=readSignedPayload<SessionPayload>(token);
+  return payload&&payload.scope==='control-plane'&&payload.exp>Math.floor(Date.now()/1000)?payload:null;
 }
 export function verifySessionToken(token:string|undefined|null){return Boolean(readSessionToken(token));}
 export async function currentSession(){const store=await cookies();return readSessionToken(store.get(COOKIE)?.value);}
