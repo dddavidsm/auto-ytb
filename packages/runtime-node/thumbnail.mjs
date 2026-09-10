@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
-import { pathFromUri } from './file-path.mjs';
+import { escapeFfmpegFilterPath, ffmpegFontOption, pathFromUri } from './file-path.mjs';
 
 async function run(command,args){await new Promise((res,rej)=>{const c=spawn(command,args,{stdio:['ignore','pipe','pipe']});let e='';c.stderr.on('data',d=>e+=d.toString());c.on('error',rej);c.on('close',code=>code===0?res():rej(new Error(`${command} exited ${code}: ${e.slice(-1500)}`)));});}
 export class FfmpegThumbnailComposer {
@@ -16,8 +16,9 @@ export class FfmpegThumbnailComposer {
     const filters=[`scale=1280:720:force_original_aspect_ratio=increase`,`crop=1280:720`,`eq=contrast=1.08:saturation=1.08`];
     if(text){
       const textFile=`${out}.txt`;await writeFile(textFile,text);
-      const escaped=textFile.replaceAll("'","\\'");
-      filters.push(`drawbox=x=0:y=500:w=1280:h=220:color=black@0.42:t=fill`,`drawtext=textfile='${escaped}':fontcolor=white:fontsize=76:line_spacing=8:borderw=3:bordercolor=black:x=70:y=545`);
+      const escaped=escapeFfmpegFilterPath(textFile);
+      const font=ffmpegFontOption();
+      filters.push(`drawbox=x=0:y=500:w=1280:h=220:color=black@0.42:t=fill`,`drawtext=${font?`${font}:`:''}textfile='${escaped}':fontcolor=white:fontsize=76:line_spacing=8:borderw=3:bordercolor=black:x=70:y=545`);
     }
     await run(this.ffmpeg,['-y','-i',source,'-vf',filters.join(','),'-frames:v','1','-q:v','3',out]);
     const bytes=(await readFile(out)).byteLength;

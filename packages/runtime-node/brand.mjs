@@ -1,11 +1,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
-import { pathFromUri } from './file-path.mjs';
+import { escapeFfmpegFilterPath, ffmpegFontOption, pathFromUri } from './file-path.mjs';
 
 async function run(command,args){await new Promise((res,rej)=>{const child=spawn(command,args,{stdio:['ignore','pipe','pipe']});let stderr='';child.stderr.on('data',(d)=>stderr+=d.toString());child.on('error',rej);child.on('close',(code)=>code===0?res():rej(new Error(`${command} exited ${code}: ${stderr.slice(-1800)}`)));});}
-function esc(path){return path.replaceAll("'","\\'");}
-
 export class FfmpegBrandComposer{
   name='ffmpeg-brand';
   constructor(options={}){this.ffmpeg=options.ffmpeg??'ffmpeg';this.outputRoot=resolve(options.outputRoot??'.data/brand');}
@@ -28,9 +26,10 @@ export class FfmpegBrandComposer{
       const titleFile=`${out}.title.txt`,taglineFile=`${out}.tagline.txt`;await writeFile(titleFile,title.toUpperCase());await writeFile(taglineFile,tagline);
       const titleSize=variant==='banner'?92:56,tagSize=variant==='banner'?38:26;
       const boxY=variant==='banner'?560:160,boxH=variant==='banner'?330:210;
+      const font=ffmpegFontOption(),fontPrefix=font?`${font}:`:'';
       filter+=`,drawbox=x=${Math.round(width*0.18)}:y=${boxY}:w=${Math.round(width*0.64)}:h=${boxH}:color=black@0.38:t=fill`;
-      if(title)filter+=`,drawtext=textfile='${esc(titleFile)}':fontcolor=white:fontsize=${titleSize}:borderw=2:bordercolor=black:x=(w-text_w)/2:y=${boxY+55}`;
-      if(tagline)filter+=`,drawtext=textfile='${esc(taglineFile)}':fontcolor=white@0.9:fontsize=${tagSize}:borderw=1:bordercolor=black:x=(w-text_w)/2:y=${boxY+175}`;
+      if(title)filter+=`,drawtext=${fontPrefix}textfile='${escapeFfmpegFilterPath(titleFile)}':fontcolor=white:fontsize=${titleSize}:borderw=2:bordercolor=black:x=(w-text_w)/2:y=${boxY+55}`;
+      if(tagline)filter+=`,drawtext=${fontPrefix}textfile='${escapeFfmpegFilterPath(taglineFile)}':fontcolor=white@0.9:fontsize=${tagSize}:borderw=1:bordercolor=black:x=(w-text_w)/2:y=${boxY+175}`;
     }
     const mimeType=variant==='watermark'?'image/png':'image/jpeg';
     const args=['-y','-i',source,'-vf',filter,'-frames:v','1'];

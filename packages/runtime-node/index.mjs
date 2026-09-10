@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
-import { pathFromUri } from './file-path.mjs';
+import { escapeFfmpegFilterPath, ffmpegFontOption, pathFromUri } from './file-path.mjs';
 
 function fileUri(path) { return `file://${resolve(path)}`; }
 async function run(command, args) {
@@ -110,8 +110,6 @@ function mimeFor(path) {
   return 'application/octet-stream';
 }
 
-function escapeFilterPath(path) { return path.replaceAll("'", "\\'"); }
-
 export class FfmpegRenderer {
   name = 'ffmpeg-local';
   constructor(options = {}) {
@@ -147,12 +145,13 @@ export class FfmpegRenderer {
     const fontSize = Math.max(28, Math.round(Math.min(width,height) * 0.034));
     const margin = Math.round(Math.min(width,height) * 0.07);
     const boxHeight = Math.round(height * 0.42);
-    const textFilter = `drawtext=textfile='${escapeFilterPath(textFile)}':fontcolor=white:fontsize=${fontSize}:line_spacing=10:x=${margin}:y=h*0.16:box=1:boxcolor=0x0b0d12cc:boxborderw=20`;
-    const progress = `drawbox=x=${margin}:y=h-${margin}:w=(w-${margin*2})*t/${Math.max(0.2,duration)}:h=${Math.max(8,Math.round(height*0.008))}:color=white@0.85:t=fill`;
-    const baseBoxes = `drawbox=x=${margin}:y=h*0.62:w=w-${margin*2}:h=${boxHeight}:color=0x171a22@0.72:t=fill`;
+    const font=ffmpegFontOption();
+    const textFilter = `drawtext=${font?`${font}:`:''}textfile='${escapeFfmpegFilterPath(textFile)}':fontcolor=white:fontsize=${fontSize}:line_spacing=10:x=${margin}:y=h*0.16:box=1:boxcolor=0x0b0d12cc:boxborderw=20`;
+    const progress = `drawbox=x=${margin}:y=ih-${margin}:w=(iw-${margin*2})*t/${Math.max(0.2,duration)}:h=${Math.max(8,Math.round(height*0.008))}:color=white@0.85:t=fill`;
+    const baseBoxes = `drawbox=x=${margin}:y=ih*0.62:w=iw-${margin*2}:h=${boxHeight}:color=0x171a22@0.72:t=fill`;
     const chartBars = scene.kind === 'chart'
-      ? [0.18,0.34,0.52,0.70].map((x,i)=>`drawbox=x=w*${x}:y=h*${0.80-i*0.06}:w=w*0.08:h=h*${0.12+i*0.06}:color=white@${0.42+i*0.12}:t=fill`).join(',')
-      : `drawbox=x=w*0.16:y=h*0.72:w=w*0.22:h=h*0.035:color=white@0.45:t=fill,drawbox=x=w*0.16:y=h*0.78:w=w*0.42:h=h*0.022:color=white@0.28:t=fill,drawbox=x=w*0.16:y=h*0.83:w=w*0.31:h=h*0.022:color=white@0.22:t=fill`;
+      ? [0.18,0.34,0.52,0.70].map((x,i)=>`drawbox=x=iw*${x}:y=ih*${0.80-i*0.06}:w=iw*0.08:h=ih*${0.12+i*0.06}:color=white@${0.42+i*0.12}:t=fill`).join(',')
+      : `drawbox=x=iw*0.16:y=ih*0.72:w=iw*0.22:h=ih*0.035:color=white@0.45:t=fill,drawbox=x=iw*0.16:y=ih*0.78:w=iw*0.42:h=ih*0.022:color=white@0.28:t=fill,drawbox=x=iw*0.16:y=ih*0.83:w=iw*0.31:h=ih*0.022:color=white@0.22:t=fill`;
     const filter = `${baseBoxes},${chartBars},${textFilter},${progress},format=yuv420p`;
     await run(this.ffmpeg, ['-y','-f','lavfi','-i',`color=c=0x0b0d12:s=${width}x${height}:r=${this.fps}:d=${duration}`,'-vf',filter,'-an','-c:v','libx264','-preset','veryfast',clip]);
   }
