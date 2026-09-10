@@ -2,8 +2,19 @@ import type { BinaryAsset, ImageProvider, ObjectStore, SearchProvider, SearchRes
 
 function sleep(ms:number){return new Promise((resolve)=>setTimeout(resolve,ms));}
 function baseUrl(value?:string){return String(value||'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/,'');}
-function inferSourceType(url:string):SearchResult['sourceType']{
-  try{const host=new URL(url).hostname.replace(/^www\./,'');if(/\.gov$|\.gov\.|\.edu$|\.edu\./.test(host))return 'official';if(/reuters\.com$|apnews\.com$|bbc\.|nytimes\.com$|ft\.com$|wsj\.com$|theguardian\.com$/.test(host))return 'news';if(/reddit\.com$|news\.ycombinator\.com$/.test(host))return 'community';return 'reference';}catch{return 'unknown';}
+const OFFICIAL_HOSTS=['cursor.com','openai.com','cloudflare.com','anthropic.com','google.com','github.com','microsoft.com','meta.com','apple.com','nvidia.com','samsung.com','intel.com','amd.com','mozilla.org','w3.org','ietf.org'];
+function titleHost(value:string){const match=String(value).match(/(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?:[/:\s]|$)/i);return match?.[1]?.toLowerCase()??'';}
+function officialHost(host:string){return /\.gov$|\.gov\.|\.edu$|\.edu\./.test(host)||OFFICIAL_HOSTS.some((domain)=>host===domain||host.endsWith(`.${domain}`));}
+function inferSourceType(url:string,title=''):SearchResult['sourceType']{
+  try{
+    const urlHost=new URL(url).hostname.replace(/^www\./,'').toLowerCase();
+    const redirect=urlHost==='vertexaisearch.cloud.google.com'||urlHost.endsWith('.vertexaisearch.cloud.google.com');
+    const host=redirect?titleHost(title):urlHost;
+    if(officialHost(host))return 'official';
+    if(/reuters\.com$|apnews\.com$|bbc\.|nytimes\.com$|ft\.com$|wsj\.com$|theguardian\.com$/.test(host))return 'news';
+    if(/reddit\.com$|news\.ycombinator\.com$/.test(host))return 'community';
+    return 'reference';
+  }catch{return 'unknown';}
 }
 async function request(fetchFn:typeof fetch,url:string,apiKey:string,init:RequestInit={},attempts=4){
   let last='';for(let i=0;i<attempts;i+=1){const response=await fetchFn(url,{...init,headers:{'x-goog-api-key':apiKey,...(init.headers??{})}});if(response.ok)return response;last=`${response.status}: ${(await response.text()).slice(0,800)}`;if(![429,500,502,503,504].includes(response.status))break;await sleep(Math.min(8000,500*2**i));}throw new Error(`Gemini API request failed ${last}`);
@@ -19,7 +30,7 @@ export class GeminiGoogleSearchProvider implements SearchProvider{
     const fetchFn=this.options.fetchFn??fetch;const limit=Math.max(1,Math.min(20,options?.limit??8));const constraints=[options?.recencyDays?`Prefer sources published in the last ${options.recencyDays} days.`:'',options?.domains?.length?`Prefer these domains: ${options.domains.join(', ')}.`:''].filter(Boolean).join(' ');
     const response=await request(fetchFn,`${baseUrl(this.options.endpoint)}/interactions`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json','Api-Revision':'2026-05-20'},body:JSON.stringify({model:this.options.model??'gemini-3.7-flash',input:`Research this query for a factual video dossier: ${query}. ${constraints} Return a concise synthesis grounded in web sources.`,tools:[{type:'google_search'}]})});
     const json=await response.json() as any;const seen=new Set<string>();const results:SearchResult[]=[];
-    for(const block of findBlocks(json,'text')){const blockText=String(block.text??'');for(const annotation of block.annotations??[]){if(annotation?.type!=='url_citation'||!annotation.url||seen.has(annotation.url))continue;seen.add(annotation.url);const start=Number(annotation.start_index??annotation.startIndex??0),end=Number(annotation.end_index??annotation.endIndex??blockText.length);results.push({id:`gemini-${results.length}-${encodeURIComponent(annotation.url).slice(-36)}`,title:String(annotation.title||new URL(annotation.url).hostname),url:String(annotation.url),snippet:blockText.slice(Math.max(0,start),Math.max(start,end)).trim()||blockText.slice(0,500),sourceType:inferSourceType(String(annotation.url))});if(results.length>=limit)return results;}}
+    for(const block of findBlocks(json,'text')){const blockText=String(block.text??'');for(const annotation of block.annotations??[]){if(annotation?.type!=='url_citation'||!annotation.url||seen.has(annotation.url))continue;seen.add(annotation.url);const title=String(annotation.title||new URL(annotation.url).hostname);const start=Number(annotation.start_index??annotation.startIndex??0),end=Number(annotation.end_index??annotation.endIndex??blockText.length);results.push({id:`gemini-${results.length}-${encodeURIComponent(annotation.url).slice(-36)}`,title,url:String(annotation.url),snippet:blockText.slice(Math.max(0,start),Math.max(start,end)).trim()||blockText.slice(0,500),sourceType:inferSourceType(String(annotation.url),title)});if(results.length>=limit)return results;}}
     return results;
   }
 }
