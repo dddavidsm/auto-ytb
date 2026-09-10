@@ -12,6 +12,29 @@ export type PipelineEvent = { at: string; state: PipelineState; message: string 
 type ArchetypeAwareTextModel=TextModel&{contentArchetypeProfile?:ContentArchetypeRuntimeProfile;contentArchetypeDecision?:ContentArchetypeRuntimeDecision};
 type BudgetFit={scenes:Scene[];projectedCostUsd:number;changed:boolean;downgrades:string[]};
 
+function promiseWords(value:string){return String(value??'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(Boolean);}
+export function ensureOpeningPromise(input:{script:VideoScript;packaging:PackagingVariant[];selectedPackagingId:string;contentFormat:ProductionContentFormat;visualAction?:boolean}):VideoScript{
+  const selected=input.packaging.find((variant)=>variant.id===input.selectedPackagingId)??input.packaging[0];
+  const first=input.script.beats[0];
+  if(!selected||!first)return input.script;
+  const promiseText=[selected.title,selected.promise,selected.thumbnailText].filter(Boolean).join(' ');
+  const source=new Set(promiseWords(promiseText));
+  const opening=input.script.beats.slice(0,input.contentFormat==='SHORT_VERTICAL'?1:2).map((beat)=>input.visualAction?[beat.onScreenText,beat.visualIntent].filter(Boolean).join(' '):beat.narration).join(' ');
+  const target=new Set(promiseWords(`${input.script.thesis} ${opening}`));
+  const coverage=source.size?[...source].filter((word)=>target.has(word)).length/source.size:1;
+  if(coverage>=0.45||!selected.promise?.trim())return input.script;
+  const promise=selected.promise.trim();
+  const sentence=/[.!?]$/.test(promise)?promise:`${promise}.`;
+  const beats=input.script.beats.map((beat,index)=>index===0
+    ?{...beat,
+      narration:input.visualAction?beat.narration:`${sentence} ${beat.narration}`.trim(),
+      visualIntent:`${sentence} ${beat.visualIntent}`.trim(),
+      ...(input.visualAction&&!beat.onScreenText&&selected.thumbnailText?{onScreenText:selected.thumbnailText}:{}),
+    }
+    :beat);
+  return{...input.script,beats};
+}
+
 const roundMoney=(value:number)=>Math.round(value*10000)/10000;
 function conservativePlanCost(input:{scenes:Scene[];narrationSeconds:number;voiceRequired:boolean;voiceCostUsd?:number;fixedCostUsd:number;isShort:boolean;packagingCount:number}){
   const voiceCost=input.voiceCostUsd??(input.voiceRequired?Math.max(0.015,input.narrationSeconds/60*0.08):0);
@@ -122,12 +145,6 @@ export async function runContentPipeline(input: {
   for(let attempt=0;attempt<=maxRepairs;attempt+=1){
     const repairLabel=attempt===0?'initial attention draft':`attention repair ${attempt}/${maxRepairs}`;
     event('SCRIPT', `Writing ${repairLabel} in native ${input.language} for ${angle.title} as ${executionPlan.scriptMode}`);
-    const lockedPromise=attempt>0&&packagingChoice?.selected
-      ?`LOCKED PACKAGING CONTRACT — do not change the viewer promise. Title: "${packagingChoice.selected.title}". Promise: "${packagingChoice.selected.promise}". The first beat must immediately pay into this promise and the final payoff must resolve it.`
-      :'';
-    const guidance=[baseScriptGuidance,lockedPromise,...revisionGuidance].filter(Boolean).join('\n');
-    draftScript=await generateScript({ dossier, angle, model: input.model, language: input.language, targetDurationSec: input.targetDurationSec, guidance, factClaimMode:executionPlan.factClaimMode,scriptMode:executionPlan.scriptMode });
-
     if(attempt===0||!packaging?.length||!packagingChoice){
       event('PACKAGING', input.packagingGuidance ? 'Generating packaging hypotheses with bounded owned-channel learning guidance' : 'Generating packaging hypotheses');
       packaging=await generatePackaging({ angle, model: input.model, count: 3, guidance:[input.packagingGuidance,'The title/thumbnail promise must be paid into immediately by the opening and fully resolved by the payoff.'].filter(Boolean).join('\n') });
@@ -136,6 +153,13 @@ export async function runContentPipeline(input: {
     }else{
       event('PACKAGING', `Keeping locked packaging ${packagingChoice.selected.id} during repair ${attempt}/${maxRepairs}`);
     }
+
+    const lockedPromise=packagingChoice?.selected
+      ?`LOCKED PACKAGING CONTRACT — do not change the viewer promise. Title: "${packagingChoice.selected.title}". Promise: "${packagingChoice.selected.promise}". The first beat must immediately pay into this promise and the final payoff must resolve it.`
+      :'';
+    const guidance=[baseScriptGuidance,lockedPromise,...revisionGuidance].filter(Boolean).join('\n');
+    draftScript=await generateScript({ dossier, angle, model: input.model, language: input.language, targetDurationSec: input.targetDurationSec, guidance, factClaimMode:executionPlan.factClaimMode,scriptMode:executionPlan.scriptMode });
+    draftScript=ensureOpeningPromise({script:draftScript,packaging,selectedPackagingId:packagingChoice.selected.id,contentFormat,visualAction:executionPlan.scriptMode==='VISUAL_ACTION'});
 
     event('PLAN', `Planning ${aspectRatio} ${executionPlan.visualMode} timeline for attention pass ${attempt+1}`);
     draftScenes=planScenes(draftScript,{targetSceneDurationSec:adaptiveSceneDuration,sources:dossier.sources,visualMode:executionPlan.visualMode,generativeSpendBias:executionPlan.generativeSpendBias,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile});

@@ -3,6 +3,7 @@ import { assessSource, rankAngles } from '../packages/editorial/dist/index.js';
 import { scorePackaging, planScenes, estimateProductionCost, explorationRateForSample, selectPackagingWithExploration, structuralExplorationRate, selectStructuralExperiment } from '../packages/production/dist/index.js';
 import { runQa, reviewAttentionBlueprint } from '../packages/qa/dist/index.js';
 import { analyzeRetention, calculateEconomics } from '../packages/analytics/dist/index.js';
+import { ensureOpeningPromise } from '../packages/orchestrator/dist/index.js';
 
 const source=assessSource({id:'s1',title:'Official',url:'https://example.com',snippet:'x',publishedAt:'2026-09-06T00:00:00Z',sourceType:'official'},new Date('2026-09-07T00:00:00Z'));
 assert.ok(source.qualityScore>90);
@@ -61,6 +62,9 @@ const shortScript={...script,title:'The Hidden Constraint That Changed Everythin
   {id:'s5',startSec:30,targetDurationSec:8,purpose:'reveal',narration:'The new feature was not the cause. The hidden constraint was.',visualIntent:'Reveal connection',sourceIds:['s1'],retentionDevice:'reveal'},
   {id:'s6',startSec:38,targetDurationSec:7,purpose:'payoff',narration:'Once that moved, changing the system became safer than keeping it.',visualIntent:'Resolve before and after',sourceIds:['s1'],retentionDevice:'reveal'},
 ]};
+const weakShortScript={...shortScript,thesis:'The system changed.',beats:[{...shortScript.beats[0],narration:'The system changed.'},...shortScript.beats.slice(1)]};
+const enforcedShortScript=ensureOpeningPromise({script:weakShortScript,packaging:[shortPackaging],selectedPackagingId:'sp',contentFormat:'SHORT_VERTICAL'});
+assert.match(enforcedShortScript.beats[0].narration,/hidden constraint/i);
 const shortScenes=planScenes(shortScript,{targetSceneDurationSec:4});
 const shortAlignment={characters:['h','e','l','l','o'],characterStartTimesSeconds:[0,9,18,27,36],characterEndTimesSeconds:[9,18,27,36,45]};
 const shortVoice={...voice,durationSeconds:45,alignment:shortAlignment};
