@@ -121,6 +121,9 @@ assert.match(publisher,/Upload blocked to avoid creating a duplicate video/);
 const publicationMigration=await readFile('db/migrations/019_publication_idempotency.sql','utf8');
 assert.match(publicationMigration,/unique index/i);
 assert.match(publicationMigration,/production_run_id/);
+const scriptDurationMigration=await readFile('db/migrations/020_script_duration_precision.sql','utf8');
+assert.match(scriptDurationMigration,/target_duration_seconds/);
+assert.match(scriptDurationMigration,/numeric\(10,3\)/i);
 const persistence=await readFile('packages/persistence/src/workflow-repositories.ts','utf8');
 assert.match(persistence,/on conflict \(production_run_id\)/);
 
