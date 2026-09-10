@@ -16,6 +16,7 @@ function inferSourceType(url:string,title=''):SearchResult['sourceType']{
     return 'reference';
   }catch{return 'unknown';}
 }
+function geminiImageAspectRatio(value:string){const map:Record<string,string>={'1:1':'ASPECT_RATIO_ONE_BY_ONE','2:3':'ASPECT_RATIO_TWO_BY_THREE','3:2':'ASPECT_RATIO_THREE_BY_TWO','3:4':'ASPECT_RATIO_THREE_BY_FOUR','4:3':'ASPECT_RATIO_FOUR_BY_THREE','4:5':'ASPECT_RATIO_FOUR_BY_FIVE','5:4':'ASPECT_RATIO_FIVE_BY_FOUR','9:16':'ASPECT_RATIO_NINE_BY_SIXTEEN','16:9':'ASPECT_RATIO_SIXTEEN_BY_NINE','9:21':'ASPECT_RATIO_NINE_BY_TWENTY_ONE','21:9':'ASPECT_RATIO_TWENTY_ONE_BY_NINE'};return map[value]??value;}
 async function request(fetchFn:typeof fetch,url:string,apiKey:string,init:RequestInit={},attempts=4){
   let last='';for(let i=0;i<attempts;i+=1){const response=await fetchFn(url,{...init,headers:{'x-goog-api-key':apiKey,...(init.headers??{})}});if(response.ok)return response;last=`${response.status}: ${(await response.text()).slice(0,800)}`;if(![429,500,502,503,504].includes(response.status))break;await sleep(Math.min(8000,500*2**i));}throw new Error(`Gemini API request failed ${last}`);
 }
@@ -51,7 +52,7 @@ export class GeminiImageProvider implements ImageProvider{
   constructor(private readonly options:{apiKey:string;store:ObjectStore;model?:string;imageSize?:string;endpoint?:string;fetchFn?:typeof fetch}){}
   async generate(input:{prompt:string;aspectRatio:string;referenceUris?:string[]}):Promise<BinaryAsset>{
     const fetchFn=this.options.fetchFn??fetch;const model=this.options.model??'gemini-2.5-flash-image';const base=baseUrl(this.options.endpoint);
-    const imageConfig:any={aspectRatio:input.aspectRatio};if(model.startsWith('gemini-3.1-'))imageConfig.imageSize=this.options.imageSize??'1K';
+    const imageConfig:any={aspectRatio:geminiImageAspectRatio(input.aspectRatio)};if(model.startsWith('gemini-3.1-'))imageConfig.imageSize=this.options.imageSize??'1K';
     const response=await request(fetchFn,`${base}/models/${encodeURIComponent(model)}:generateContent`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:input.prompt}]}],generationConfig:{responseModalities:['IMAGE'],responseFormat:{image:imageConfig}}})});
     const json=await response.json() as any;let encoded:string|undefined;let mimeType='image/png';
     for(const candidate of json?.candidates??[])for(const part of candidate?.content?.parts??[]){const inline=part?.inlineData??part?.inline_data;if(inline?.data){encoded=String(inline.data);mimeType=String(inline.mimeType??inline.mime_type??'image/png');break;}if(part?.image?.data){encoded=String(part.image.data);mimeType=String(part.image.mimeType??part.image.mime_type??'image/png');break;}}
