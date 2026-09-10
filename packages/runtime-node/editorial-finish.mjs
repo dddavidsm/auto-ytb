@@ -1,10 +1,9 @@
 import { readFile, writeFile, rename } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { alignmentToSubtitleCues, subtitlesToSrt } from './index.mjs';
 import { buildCreativeRecipe } from '@auto-ytb/production';
+import { pathFromUri } from './file-path.mjs';
 
-function pathFromUri(uri){if(String(uri??'').startsWith('file://'))return new URL(uri).pathname;if(String(uri??'').startsWith('/')||String(uri??'').startsWith('.'))return resolve(String(uri));return null;}
 function run(command,args){return new Promise((res,rej)=>{const child=spawn(command,args,{stdio:['ignore','pipe','pipe']});let stderr='';child.stderr.on('data',(d)=>stderr+=d.toString());child.on('error',rej);child.on('close',(code)=>code===0?res():rej(new Error(`${command} exited ${code}: ${stderr.slice(-2200)}`)));});}
 const clean=(value)=>String(value??'').replace(/\s+/g,' ').trim();
 const escapeFilterPath=(path)=>String(path).replaceAll('\\','/').replaceAll(':','\\:').replaceAll("'","\\'");

@@ -12,13 +12,6 @@ function findBlocks(json:any,type:string):any[]{const out:any[]=[];const visit=(
 function wavFromPcm(pcm:Uint8Array,sampleRate=24000,channels=1,bits=16){const out=new Uint8Array(44+pcm.byteLength);const view=new DataView(out.buffer);const text=(offset:number,value:string)=>{for(let i=0;i<value.length;i+=1)out[offset+i]=value.charCodeAt(i);};text(0,'RIFF');view.setUint32(4,36+pcm.byteLength,true);text(8,'WAVE');text(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,channels,true);view.setUint32(24,sampleRate,true);view.setUint32(28,sampleRate*channels*bits/8,true);view.setUint16(32,channels*bits/8,true);view.setUint16(34,bits,true);text(36,'data');view.setUint32(40,pcm.byteLength,true);out.set(pcm,44);return out;}
 function approximateAlignment(text:string,duration:number){const characters=[...text];const step=duration/Math.max(1,characters.length);return{characters,characterStartTimesSeconds:characters.map((_,i)=>i*step),characterEndTimesSeconds:characters.map((_,i)=>(i+1)*step)};}
 function veoDuration(value:number,resolution:string,hasReferences:boolean){if(resolution!=='720p'||hasReferences)return 8;const n=Number(value);if(n<=5)return 4;if(n<=7)return 6;return 8;}
-function geminiImageAspectRatio(value:string){
-  const ratios:Record<string,string>={
-    '1:1':'ASPECT_RATIO_ONE_BY_ONE','2:3':'ASPECT_RATIO_TWO_BY_THREE','3:2':'ASPECT_RATIO_THREE_BY_TWO','3:4':'ASPECT_RATIO_THREE_BY_FOUR','4:3':'ASPECT_RATIO_FOUR_BY_THREE','4:5':'ASPECT_RATIO_FOUR_BY_FIVE','5:4':'ASPECT_RATIO_FIVE_BY_FOUR','9:16':'ASPECT_RATIO_NINE_BY_SIXTEEN','16:9':'ASPECT_RATIO_SIXTEEN_BY_NINE','21:9':'ASPECT_RATIO_TWENTY_ONE_BY_NINE','1:8':'ASPECT_RATIO_ONE_BY_EIGHT','8:1':'ASPECT_RATIO_EIGHT_BY_ONE','1:4':'ASPECT_RATIO_ONE_BY_FOUR','4:1':'ASPECT_RATIO_FOUR_BY_ONE'
-  };
-  return ratios[String(value||'').trim()]??'ASPECT_RATIO_ONE_BY_ONE';
-}
-
 export class GeminiGoogleSearchProvider implements SearchProvider{
   readonly name='gemini-search';
   constructor(private readonly options:{apiKey:string;model?:string;endpoint?:string;fetchFn?:typeof fetch}){}
@@ -47,9 +40,7 @@ export class GeminiImageProvider implements ImageProvider{
   constructor(private readonly options:{apiKey:string;store:ObjectStore;model?:string;imageSize?:string;endpoint?:string;fetchFn?:typeof fetch}){}
   async generate(input:{prompt:string;aspectRatio:string;referenceUris?:string[]}):Promise<BinaryAsset>{
     const fetchFn=this.options.fetchFn??fetch;const model=this.options.model??'gemini-2.5-flash-image';const base=baseUrl(this.options.endpoint);
-    // generateContent's responseFormat.image.aspectRatio is currently an enum at the REST boundary,
-    // even though higher-level SDK examples accept human-readable ratios such as "9:16".
-    const imageConfig:any={aspectRatio:geminiImageAspectRatio(input.aspectRatio)};if(model.startsWith('gemini-3.1-'))imageConfig.imageSize=this.options.imageSize??'1K';
+    const imageConfig:any={aspectRatio:input.aspectRatio};if(model.startsWith('gemini-3.1-'))imageConfig.imageSize=this.options.imageSize??'1K';
     const response=await request(fetchFn,`${base}/models/${encodeURIComponent(model)}:generateContent`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:input.prompt}]}],generationConfig:{responseModalities:['IMAGE'],responseFormat:{image:imageConfig}}})});
     const json=await response.json() as any;let encoded:string|undefined;let mimeType='image/png';
     for(const candidate of json?.candidates??[])for(const part of candidate?.content?.parts??[]){const inline=part?.inlineData??part?.inline_data;if(inline?.data){encoded=String(inline.data);mimeType=String(inline.mimeType??inline.mime_type??'image/png');break;}if(part?.image?.data){encoded=String(part.image.data);mimeType=String(part.image.mimeType??part.image.mime_type??'image/png');break;}}

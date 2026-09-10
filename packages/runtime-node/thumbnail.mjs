@@ -1,12 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { pathFromUri } from './file-path.mjs';
 
-function pathFromUri(uri) {
-  if (uri.startsWith('file://')) return new URL(uri).pathname;
-  if (uri.startsWith('/') || uri.startsWith('.')) return resolve(uri);
-  return null;
-}
 async function run(command,args){await new Promise((res,rej)=>{const c=spawn(command,args,{stdio:['ignore','pipe','pipe']});let e='';c.stderr.on('data',d=>e+=d.toString());c.on('error',rej);c.on('close',code=>code===0?res():rej(new Error(`${command} exited ${code}: ${e.slice(-1500)}`)));});}
 export class FfmpegThumbnailComposer {
   name='ffmpeg-thumbnail';

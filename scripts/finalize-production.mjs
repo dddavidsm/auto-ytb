@@ -3,6 +3,7 @@ import { resolve, extname } from 'node:path';
 import { GoogleDriveLibraryProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider } from '@auto-ytb/youtube';
 import { NodePostgresSqlClient, NodeUploadAssetLoader } from '../packages/runtime-node/index.mjs';
+import { pathFromUri } from '../packages/runtime-node/file-path.mjs';
 
 const arg=(name,fallback)=>process.argv.find((value)=>value.startsWith(`--${name}=`))?.slice(name.length+3)??fallback;
 const req=(name)=>{const value=process.env[name]?.trim();if(!value)throw new Error(`${name} is required`);return value;};
@@ -25,7 +26,6 @@ const stageFolders={opportunity:'01_OPPORTUNITIES',research:'02_RESEARCH',script
 const stageDb={opportunity:'research',research:'research',script:'script',audio:'audio',alignment:'alignment',visuals:'visuals',thumbnails:'thumbnails',render:'render',published:'published',analytics:'analytics',archive:'archive'};
 function safe(value,max=72){return String(value??'video').normalize('NFKD').replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-|-$/g,'').toLowerCase().slice(0,max)||'video';}
 function extension(mime,uri=''){const known={'audio/mpeg':'.mp3','audio/wav':'.wav','video/mp4':'.mp4','video/webm':'.webm','image/jpeg':'.jpg','image/png':'.png','application/json':'.json'};return known[mime]??extname(String(uri).split('?')[0])??'';}
-function pathFromUri(uri){if(String(uri).startsWith('file://'))return new URL(uri).pathname;if(String(uri).startsWith('/')||String(uri).startsWith('.'))return resolve(String(uri));return null;}
 
 let context;
 let videoKey;

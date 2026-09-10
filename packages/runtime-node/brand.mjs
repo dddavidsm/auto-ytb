@@ -1,8 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
+import { pathFromUri } from './file-path.mjs';
 
-function pathFromUri(uri){if(uri.startsWith('file://'))return new URL(uri).pathname;if(uri.startsWith('/')||uri.startsWith('.'))return resolve(uri);return null;}
 async function run(command,args){await new Promise((res,rej)=>{const child=spawn(command,args,{stdio:['ignore','pipe','pipe']});let stderr='';child.stderr.on('data',(d)=>stderr+=d.toString());child.on('error',rej);child.on('close',(code)=>code===0?res():rej(new Error(`${command} exited ${code}: ${stderr.slice(-1800)}`)));});}
 function esc(path){return path.replaceAll("'","\\'");}
 

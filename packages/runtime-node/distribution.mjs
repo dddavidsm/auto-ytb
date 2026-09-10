@@ -1,9 +1,9 @@
 import { readFile, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { pathFromUri } from './file-path.mjs';
 
 const text=(value)=>String(value??'').trim();
 const sleep=(ms)=>new Promise((resolvePromise)=>setTimeout(resolvePromise,ms));
-function localPath(uri){if(text(uri).startsWith('file://'))return new URL(uri).pathname;if(text(uri).startsWith('/')||text(uri).startsWith('.'))return resolve(uri);return null;}
+function localPath(uri){return pathFromUri(uri);}
 async function responseJson(response,label){const raw=await response.text();let json={};try{json=raw?JSON.parse(raw):{};}catch{}if(!response.ok)throw new Error(`${label} failed ${response.status}: ${raw.slice(0,800)}`);return json;}
 async function postJson(fetchFn,url,token,body,label){return responseJson(await fetchFn(url,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json; charset=UTF-8'},body:JSON.stringify(body)}),label);}
 async function loadMedia(uri){const path=localPath(uri);if(!path)throw new Error('Distribution adapter requires a local/file:// render for binary upload');const info=await stat(path);return{path,size:info.size,bytes:new Uint8Array(await readFile(path))};}

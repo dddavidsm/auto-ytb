@@ -1,15 +1,11 @@
 import { mkdir, readFile, writeFile, copyFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, extname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
+import { pathFromUri } from './file-path.mjs';
 
 function fileUri(path) { return `file://${resolve(path)}`; }
-function pathFromUri(uri) {
-  if (uri.startsWith('file://')) return new URL(uri).pathname;
-  if (isAbsolute(uri) || uri.startsWith('.')) return resolve(uri);
-  return null;
-}
 async function run(command, args) {
   await new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
