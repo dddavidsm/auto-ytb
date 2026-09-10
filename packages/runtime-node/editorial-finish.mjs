@@ -81,13 +81,15 @@ export function withArchetypeEditorialFinish(renderer,options={}){
       }
       const chain=[];
       if(editPlan?.filmLook){chain.push('eq=contrast=1.025:saturation=0.975:brightness=-0.004');const grain=Math.max(0,Math.min(6,Number(editPlan.filmGrain??0)));if(grain>0)chain.push(`noise=alls=${grain}:allf=t`);}
-      const fadeDuration=Math.max(0.05,Math.min(0.35,Number(editPlan?.transitionDurationSeconds??0.12)));
-      for(const boundary of boundaries){const outStart=Math.max(0,boundary-fadeDuration);chain.push(`fade=t=out:st=${outStart.toFixed(3)}:d=${fadeDuration.toFixed(3)}`,`fade=t=in:st=${boundary.toFixed(3)}:d=${fadeDuration.toFixed(3)}`);}
+      // A standalone fade-in is black before its start time. Chaining those filters
+      // against the whole timeline therefore blackens every preceding scene. Until
+      // transitions are rendered from separately trimmed segments, keep the
+      // documentary transition plan as hard cuts rather than producing invalid video.
       if(subtitlePath)chain.push(`subtitles=filename='${escapeFilterPath(subtitlePath)}':force_style='${styleFor(captionPlan,height)}'`);
       if(chain.length){filters.push(`${current}${chain.map((item,index)=>`${index?',':''}${item}`).join('')}[finished]`);current='[finished]';}
       const needsReencode=filters.length>0;
       if(needsReencode){const tmp=`${renderPath}.finish-${Date.now()}.mp4`;await run(ffmpeg,['-y','-i',renderPath,'-filter_complex',filters.join(';'),'-map',current,'-map','0:a?','-c:v','libx264','-preset','medium','-crf','18','-pix_fmt','yuv420p','-c:a','copy','-movflags','+faststart',tmp]);await rename(tmp,renderPath);}
-      const evidence={captionsBurned:Boolean(subtitlePath),captionCueCount:cues.length,captionPreset:captionPlan?.preset??'NONE',editPreset:editPlan?.preset??'NONE',transitionsApplied:boundaries.length,punchInsApplied:punches.length,filmLookApplied:Boolean(editPlan?.filmLook)};
+      const evidence={captionsBurned:Boolean(subtitlePath),captionCueCount:cues.length,captionPreset:captionPlan?.preset??'NONE',editPreset:editPlan?.preset??'NONE',transitionsApplied:0,transitionsSkipped:boundaries.length,transitionFallback:boundaries.length?'HARD_CUT':'NONE',punchInsApplied:punches.length,filmLookApplied:Boolean(editPlan?.filmLook)};
       manifest.renderExecution=evidence;await writeFile(manifestPath,JSON.stringify(manifest,null,2),'utf8');
       return{...rendered,metadata:{...(rendered.metadata??{}),renderExecution:evidence,captionPlan:captionPlan??null,editPlan:editPlan??null}};
     },
