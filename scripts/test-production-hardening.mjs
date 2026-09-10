@@ -118,7 +118,7 @@ assert.match(publisher,/findExistingUpload/);
 assert.match(publisher,/relatedPlaylists/);
 assert.match(publisher,/Upload blocked to avoid creating a duplicate video/);
 
-const publicationMigration=await readFile('db/migrations/018_publication_idempotency.sql','utf8');
+const publicationMigration=await readFile('db/migrations/019_publication_idempotency.sql','utf8');
 assert.match(publicationMigration,/unique index/i);
 assert.match(publicationMigration,/production_run_id/);
 const persistence=await readFile('packages/persistence/src/workflow-repositories.ts','utf8');
