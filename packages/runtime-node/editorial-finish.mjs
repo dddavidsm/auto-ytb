@@ -187,12 +187,10 @@ export function withArchetypeEditorialFinish(renderer,options={}){
       if(editPlan?.filmLook){chain.push('eq=contrast=1.025:saturation=0.975:brightness=-0.004');const grain=Math.max(0,Math.min(6,Number(editPlan.filmGrain??0)));if(grain>0)chain.push(`noise=alls=${grain}:allf=t`);}
       const firstBeat=manifest.script?.beats?.[0];
       if(firstBeat?.purpose==='hook'&&firstBeat.onScreenText){
-        const hookFile=join(captionWork,'hook.txt'),tagFile=join(captionWork,'hook-tag.txt');
+        const hookFile=join(captionWork,'hook.txt');
         await writeFile(hookFile,textFileSafe(wrapHook(firstBeat.onScreenText,22)),'utf8');
-        await writeFile(tagFile,textFileSafe('STOP SCROLLING  ·  REAL TEST'),'utf8');
         const hookStart=Number(firstBeat.startSec??0),hookEnd=hookStart+Math.min(3.6,Number(firstBeat.targetDurationSec??3.6));
         const hookEnable=`between(t\\,${hookStart.toFixed(3)}\\,${hookEnd.toFixed(3)})`;
-        chain.push(`drawtext=${ffmpegFontOption()?`${ffmpegFontOption()}:`:''}textfile='${escapeFilterPath(tagFile)}':fontcolor=0xffd34e:borderw=2:bordercolor=0x080b12@0.96:shadowcolor=black@0.72:shadowx=2:shadowy=3:fontsize=${Math.round(height*0.015)}:x=w*0.09:y=h*0.085:enable='${hookEnable}':alpha='if(lt(t\\,${(hookStart+0.16).toFixed(3)})\\,(t-${hookStart.toFixed(3)})/0.16\\,1)'`);
         chain.push(`drawtext=${ffmpegFontOption()?`${ffmpegFontOption()}:`:''}textfile='${escapeFilterPath(hookFile)}':fontcolor=white:borderw=3:bordercolor=0x080b12@0.96:shadowcolor=black@0.78:shadowx=2:shadowy=3:fontsize=${Math.round(height*0.034)}:line_spacing=8:x=w*0.09:y=h*0.12:enable='${hookEnable}':alpha='if(lt(t\\,${(hookStart+0.22).toFixed(3)})\\,(t-${hookStart.toFixed(3)})/0.22\\,1)':fix_bounds=1`);
       }
       // A standalone fade-in is black before its start time. Chaining those filters

@@ -154,6 +154,6 @@ const manifest = {
   renderExecution: { captionsBurned: true, captionPreset: 'EDITORIAL_CLEAN', editPreset: 'SOURCE_DOCUMENTARY', transitionsApplied: 0, transitionsSkipped: 0, transitionFallback: 'NONE', punchInsApplied: 0, filmLookApplied: false },
 };
 
-const manifestPath = resolve(storage, 'manifest-iss-sleep-v3.json');
+const manifestPath = resolve(storage, 'manifest-iss-sleep-v4.json');
 await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 console.log(JSON.stringify({ manifest: manifestPath, durationSeconds: duration, sceneCount: scenes.length, sourceOnly: true, voice: voice.uri }, null, 2));
