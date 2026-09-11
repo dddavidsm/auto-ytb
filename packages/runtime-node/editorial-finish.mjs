@@ -114,9 +114,8 @@ export function withArchetypeEditorialFinish(renderer,options={}){
         await writeFile(tagFile,textFileSafe('STOP SCROLLING  ·  REAL TEST'),'utf8');
         const hookStart=Number(firstBeat.startSec??0),hookEnd=hookStart+Math.min(3.6,Number(firstBeat.targetDurationSec??3.6));
         const hookEnable=`between(t\\,${hookStart.toFixed(3)}\\,${hookEnd.toFixed(3)})`;
-        chain.push(`drawbox=x=iw*0.055:y=ih*0.07:w=iw*0.89:h=ih*0.21:color=0x070b12@0.80:t=fill:enable='${hookEnable}'`);
-        chain.push(`drawtext=${ffmpegFontOption()?`${ffmpegFontOption()}:`:''}textfile='${escapeFilterPath(tagFile)}':fontcolor=0xffd34e:fontsize=${Math.round(height*0.015)}:x=w*0.09:y=h*0.085:enable='${hookEnable}':alpha='if(lt(t\\,${(hookStart+0.16).toFixed(3)})\\,(t-${hookStart.toFixed(3)})/0.16\\,1)'`);
-        chain.push(`drawtext=${ffmpegFontOption()?`${ffmpegFontOption()}:`:''}textfile='${escapeFilterPath(hookFile)}':fontcolor=white:fontsize=${Math.round(height*0.034)}:line_spacing=8:x=w*0.09:y=h*0.12:enable='${hookEnable}':alpha='if(lt(t\\,${(hookStart+0.22).toFixed(3)})\\,(t-${hookStart.toFixed(3)})/0.22\\,1)':fix_bounds=1`);
+        chain.push(`drawtext=${ffmpegFontOption()?`${ffmpegFontOption()}:`:''}textfile='${escapeFilterPath(tagFile)}':fontcolor=0xffd34e:borderw=2:bordercolor=0x080b12@0.96:shadowcolor=black@0.72:shadowx=2:shadowy=3:fontsize=${Math.round(height*0.015)}:x=w*0.09:y=h*0.085:enable='${hookEnable}':alpha='if(lt(t\\,${(hookStart+0.16).toFixed(3)})\\,(t-${hookStart.toFixed(3)})/0.16\\,1)'`);
+        chain.push(`drawtext=${ffmpegFontOption()?`${ffmpegFontOption()}:`:''}textfile='${escapeFilterPath(hookFile)}':fontcolor=white:borderw=3:bordercolor=0x080b12@0.96:shadowcolor=black@0.78:shadowx=2:shadowy=3:fontsize=${Math.round(height*0.034)}:line_spacing=8:x=w*0.09:y=h*0.12:enable='${hookEnable}':alpha='if(lt(t\\,${(hookStart+0.22).toFixed(3)})\\,(t-${hookStart.toFixed(3)})/0.22\\,1)':fix_bounds=1`);
       }
       // A standalone fade-in is black before its start time. Chaining those filters
       // against the whole timeline therefore blackens every preceding scene. Until

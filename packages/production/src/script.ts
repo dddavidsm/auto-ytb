@@ -48,9 +48,12 @@ export async function generateScript(input: {
   const sourceGuidance=factClaimMode==='CREATIVE_ORIGINAL'
     ? 'Do not fabricate source IDs. Creative beats should normally use an empty sourceIds array unless the dossier actually supplies a source for a factual statement.'
     : `Use source IDs from the dossier for factual beats.${claims?`\nClaims:\n${claims}`:''}`;
+  const hardVisualLock=input.guidance?.includes('HARD VISUAL SOURCE LOCK')
+    ? 'FINAL HARD VISUAL CHECK: before returning the JSON, remove every sentence and visualIntent that cannot be directly seen in the supplied footage. Describe only visible subjects, actions, objects and consequences. Do not preserve a research fact if the current footage cannot show it; omit it or replace it with a visible fact.'
+    : '';
   const response = await input.model.generateJson<VideoScript>({
     system,
-    prompt: `Angle: ${input.angle.title}\nThesis: ${input.angle.thesis}\nViewer promise: ${input.angle.viewerPromise}\nTarget duration: ${targetDurationSec}s\n${scriptMode === 'VISUAL_ACTION' ? '' : `HARD LENGTH CONTRACT: keep all spoken narration between ${Math.max(45, Math.round(spokenWordBudget * 0.82))} and ${Math.round(spokenWordBudget * 1.08)} words total (about ${targetDurationSec}s at a natural short-form pace). Do not exceed this budget; remove setup and repeated explanations before adding detail.`}\nScript mode: ${scriptMode}\nFact mode: ${factClaimMode}\n${modeGuidance}\n${sourceGuidance}\n${guidance}\nCreate a beat-by-beat script with a concrete hook and payoff.`,
+    prompt: `Angle: ${input.angle.title}\nThesis: ${input.angle.thesis}\nViewer promise: ${input.angle.viewerPromise}\nTarget duration: ${targetDurationSec}s\n${scriptMode === 'VISUAL_ACTION' ? '' : `HARD LENGTH CONTRACT: keep all spoken narration between ${Math.max(45, Math.round(spokenWordBudget * 0.82))} and ${Math.round(spokenWordBudget * 1.08)} words total (about ${targetDurationSec}s at a natural short-form pace). Do not exceed this budget; remove setup and repeated explanations before adding detail.`}\nScript mode: ${scriptMode}\nFact mode: ${factClaimMode}\n${modeGuidance}\n${sourceGuidance}\n${guidance}\n${hardVisualLock}\nCreate a beat-by-beat script with a concrete hook and payoff.`,
     schemaName: 'video_script',
     temperature: factClaimMode==='CREATIVE_ORIGINAL'?0.62:0.45,
   });

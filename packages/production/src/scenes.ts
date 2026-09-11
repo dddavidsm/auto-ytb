@@ -47,7 +47,7 @@ function chooseGenerativeFirst(beat:ScriptBeat,index:number,visualValue:number,b
   return{kind:'motion_graphic',generated:false,costTier:'free',selectionReason:'Low-value supporting beat stays procedural to control marginal cost.'};
 }
 
-function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, hasSourceRefs: boolean, options:ScenePlanningOptions): Pick<Scene,'kind'|'generated'|'costTier'|'selectionReason'> {
+function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, hasSourceRefs: boolean, options:ScenePlanningOptions): Pick<Scene,'kind'|'generated'|'costTier'|'selectionReason'|'sourceFootageId'> {
   const visualMode=options.visualMode??'EVIDENCE_FIRST';
   const bias=clamp01(Number(options.generativeSpendBias??0.65));
   // Shorts need a visual refresh before the viewer has time to swipe. Once a beat
@@ -59,13 +59,13 @@ function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, h
     && index>0
     && index<=2
     && ['hook','escalation','reveal','payoff'].includes(beat.purpose);
-  const sourceClip=options.sourceFootage?.find((item)=>
+  const sourceCandidates=options.sourceFootage?.filter((item)=>
     item.rightsStatus!=='BLOCKED'
-    && (!item.beatIds?.length || item.beatIds.includes(beat.id))
-    && index===0
-  );
+    && (!item.beatIds?.length || item.beatIds.includes(beat.id) || item.beatIds.includes(beat.purpose))
+  ) ?? [];
+  const sourceClip=sourceCandidates[Math.min(index,Math.max(0,sourceCandidates.length-1))];
   if(sourceClip){
-    return {kind:'broll',generated:false,costTier:'free',selectionReason:`Licensed/user-supplied footage ${sourceClip.id} is the primary visual proof for ${beat.purpose}; preserve the observable action and attribution.`};
+    return {kind:'broll',generated:false,costTier:'free',sourceFootageId:sourceClip.id,selectionReason:`Licensed/user-supplied footage ${sourceClip.id} is the primary visual proof for ${beat.purpose}; preserve the observable action and attribution.`};
   }
   if(visualMode==='GENERATIVE_FIRST'||visualMode==='CHARACTER_CONTINUITY')return chooseGenerativeFirst(beat,index,visualValue,bias,visualMode);
   // A vertical explainer needs real motion at the narrative anchors. Procedural

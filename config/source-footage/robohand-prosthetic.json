@@ -1,0 +1,83 @@
+{
+  "editorialGuidance": "HARD VISUAL SOURCE LOCK. Produce a short vertical explainer about the 3D-printed Robohand shown in the supplied footage. Every spoken sentence must be directly supported by the visible action in the selected clip; never invent a mechanism, price, medical outcome, battery, motor, electronics, patient identity, or performance claim. Use this exact causal arc: hook with the finished hand/prosthesis; show that the object is being made with a 3D printer; show the separate plastic parts and manual assembly; show the user trying the hand with an everyday object; pay off that the visible movement comes from the linked mechanical parts transferring motion to the fingers. The footage is from the Creative Commons source listed in each clip. Do not mention the original interview audio, names, logos, or any fact that is not visible. Do not use abstract charts, fake interfaces, generic statistics, AI-generated replacement scenes, or unrelated stock footage. Keep cuts motivated by the narration and use clean CapCut-like captions: white sentence captions with dark outline, one highlighted keyword in warm yellow only when it clarifies the current action. End with a precise, modest takeaway rather than a promise of medical results.",
+  "clips": [
+    {
+      "id": "robohand-finished-hook",
+      "uri": "C:/Users/david/auto-ytb/assets/source-footage/robohand-ccby25-480p.webm",
+      "title": "Robohand -- 3D Printing Mechanical Hands",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Robohand_--_3D_Printing_Mechanical_Hands.webm",
+      "sourceId": "robohand-ccby25",
+      "beatIds": ["hook"],
+      "startSec": 230,
+      "endSec": 238,
+      "license": "CC BY 2.5",
+      "rightsStatus": "CLEARED",
+      "cropMode": "SMART_CENTER"
+    },
+    {
+      "id": "robohand-3d-printer",
+      "uri": "C:/Users/david/auto-ytb/assets/source-footage/robohand-ccby25-480p.webm",
+      "title": "Robohand -- 3D Printing Mechanical Hands",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Robohand_--_3D_Printing_Mechanical_Hands.webm",
+      "sourceId": "robohand-ccby25",
+      "beatIds": ["setup"],
+      "startSec": 128,
+      "endSec": 136,
+      "license": "CC BY 2.5",
+      "rightsStatus": "CLEARED",
+      "cropMode": "SMART_CENTER"
+    },
+    {
+      "id": "robohand-parts-assembly",
+      "uri": "C:/Users/david/auto-ytb/assets/source-footage/robohand-ccby25-480p.webm",
+      "title": "Robohand -- 3D Printing Mechanical Hands",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Robohand_--_3D_Printing_Mechanical_Hands.webm",
+      "sourceId": "robohand-ccby25",
+      "beatIds": ["evidence"],
+      "startSec": 140,
+      "endSec": 148,
+      "license": "CC BY 2.5",
+      "rightsStatus": "CLEARED",
+      "cropMode": "SMART_CENTER"
+    },
+    {
+      "id": "robohand-user-test",
+      "uri": "C:/Users/david/auto-ytb/assets/source-footage/robohand-ccby25-480p.webm",
+      "title": "Robohand -- 3D Printing Mechanical Hands",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Robohand_--_3D_Printing_Mechanical_Hands.webm",
+      "sourceId": "robohand-ccby25",
+      "beatIds": ["hook", "escalation", "payoff"],
+      "startSec": 234,
+      "endSec": 242,
+      "license": "CC BY 2.5",
+      "rightsStatus": "CLEARED",
+      "cropMode": "SMART_CENTER"
+    },
+    {
+      "id": "robohand-mechanical-motion",
+      "uri": "C:/Users/david/auto-ytb/assets/source-footage/robohand-ccby25-480p.webm",
+      "title": "Robohand -- 3D Printing Mechanical Hands",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Robohand_--_3D_Printing_Mechanical_Hands.webm",
+      "sourceId": "robohand-ccby25",
+      "beatIds": ["hook", "escalation", "reveal"],
+      "startSec": 250,
+      "endSec": 258,
+      "license": "CC BY 2.5",
+      "rightsStatus": "CLEARED",
+      "cropMode": "SMART_CENTER"
+    },
+    {
+      "id": "robohand-final-build",
+      "uri": "C:/Users/david/auto-ytb/assets/source-footage/robohand-ccby25-480p.webm",
+      "title": "Robohand -- 3D Printing Mechanical Hands",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Robohand_--_3D_Printing_Mechanical_Hands.webm",
+      "sourceId": "robohand-ccby25",
+      "beatIds": ["reveal", "payoff"],
+      "startSec": 230,
+      "endSec": 238,
+      "license": "CC BY 2.5",
+      "rightsStatus": "CLEARED",
+      "cropMode": "SMART_CENTER"
+    }
+  ]
+}

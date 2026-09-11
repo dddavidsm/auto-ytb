@@ -114,11 +114,14 @@ export function reviewAttentionBlueprint(input:{
 
   const sceneDurations=input.scenes.map((scene)=>Math.max(0,Number(scene.durationSec??0))).filter(Boolean);
   const totalSceneSeconds=sceneDurations.reduce((a,b)=>a+b,0);
-  const visualKindCount=new Set(input.scenes.map((scene)=>scene.kind)).size;
+  const visualVariantKeys=input.scenes.map((scene)=>scene.kind==='broll'
+    ?'broll:'+(scene.sourceFootageId??scene.id)
+    :'kind:'+scene.kind);
+  const visualKindCount=new Set(visualVariantKeys).size;
   const longestSceneSeconds=Math.max(0,...sceneDurations);
   const visualChangeRatePerMinute=totalSceneSeconds>0?input.scenes.length/(totalSceneSeconds/60):0;
   const sceneDurationCv=coefficientOfVariation(sceneDurations);
-  const repeatedKindRun=maxRun(input.scenes.map((scene)=>scene.kind));
+  const repeatedKindRun=maxRun(visualVariantKeys);
   const sceneCap=isShort?9:24;
   let visualCommunicationScore=55;
   if(visualKindCount>=(isShort?2:3))visualCommunicationScore+=15;

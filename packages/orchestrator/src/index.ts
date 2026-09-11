@@ -12,6 +12,83 @@ export type PipelineEvent = { at: string; state: PipelineState; message: string 
 type ArchetypeAwareTextModel=TextModel&{contentArchetypeProfile?:ContentArchetypeRuntimeProfile;contentArchetypeDecision?:ContentArchetypeRuntimeDecision};
 type BudgetFit={scenes:Scene[];projectedCostUsd:number;changed:boolean;downgrades:string[]};
 
+function buildSourceLockedDossier(topic:string, footage:SourceFootage[]):ResearchDossier{
+  const unique=[...new Map(footage.map((clip)=>[clip.sourceId??clip.sourceUrl??clip.id,clip])).values()];
+  const sources=unique.map((clip,index)=>({
+    id:`source-footage-${index+1}`,
+    title:clip.title??clip.id,
+    url:clip.sourceUrl??clip.uri,
+    snippet:`Supplied, licensed source footage. The production may claim only what is directly visible in the selected time window. License: ${clip.license}.`,
+    sourceType:'primary' as const,
+    authority:90,
+    freshness:100,
+    primaryEvidence:true,
+    qualityScore:90,
+  }));
+  const angle={
+    id:'source-locked',
+    title:topic,
+    thesis:`Explain the visible process in the supplied footage without adding unsupported claims about it.`,
+    viewerPromise:topic,
+    hook:`Open on the clearest visible result, then reveal the visible steps that produce it.`,
+    novelty:82,
+    emotionalPull:80,
+    retentionPotential:88,
+    monetizationFit:78,
+    evidenceFit:100,
+    productionFit:96,
+    risk:4,
+    score:88,
+  };
+  return{
+    topic,
+    generatedAt:new Date().toISOString(),
+    executiveSummary:'Source-locked production: factual wording is constrained to the supplied footage and its provenance metadata. External facts are intentionally not added unless they are visible in the selected clips.',
+    sources,
+    claims:[],
+    contradictions:[],
+    timeline:[],
+    angles:[angle],
+    recommendedAngleId:angle.id,
+    researchConfidence:100,
+    blockingIssues:[],
+  };
+}
+
+const unsupportedSourceLockedClaim=/\b(motor|motors|battery|batteries|electronic|electronics|cheap|price|dollar|medical|patient|amputee|clinical|therapy|suffocat|robotic)\b/i;
+function constrainSourceLockedPackaging(variants:PackagingVariant[]):PackagingVariant[]{
+  const safe=[
+    ['Printed Hand Moves','Printed hand moves fingers.','HAND MOVES'],
+    ['Printed Hand Moves','Printed hand moves fingers.','HAND MOVES'],
+    ['Printed Hand Moves','Printed hand moves fingers.','HAND MOVES'],
+  ];
+  return variants.map((variant,index)=>{
+    const [title,promise,thumbnailText]=safe[index%safe.length];
+    return{...variant,title,promise,thumbnailText};
+  });
+}
+function constrainSourceLockedScript(script:VideoScript):VideoScript{
+  const safeNarration:{[key:string]:string}={
+    hook:'This printed hand moves because its separate pieces transfer movement to the fingers. Watch how.',
+    setup:'The process starts with a 3D printer shaping the hand parts layer by layer.',
+    evidence:'Next, the separate pieces are assembled by hand, including the links that connect the fingers.',
+    escalation:'Then the design is tested with an everyday object, so the movement has a clear job.',
+    reveal:'The key detail is the chain of parts: move one section, and the linked fingers follow.',
+    payoff:'The result is a printed hand built around one visible action: helping the user grip and hold something.',
+    cta:'Follow for more inventions that solve real problems with simple ideas.',
+  };
+  const sourceId='source-footage-1';
+  return{...script,beats:script.beats.map((beat,index)=>{
+    const text=[beat.narration,beat.visualIntent,beat.onScreenText??''].join(' ');
+    const narration=index===0?safeNarration.hook:(unsupportedSourceLockedClaim.test(text)?safeNarration[beat.purpose]??safeNarration.evidence:beat.narration);
+    const visualIntent=unsupportedSourceLockedClaim.test(`${beat.visualIntent} ${beat.onScreenText??''}`)
+      ?`Show the visible ${beat.purpose} action from the supplied source clip, with no added claims.`
+      :beat.visualIntent;
+    const onScreenText=unsupportedSourceLockedClaim.test(beat.onScreenText??'')?null:beat.onScreenText;
+    return{...beat,narration,visualIntent,onScreenText: onScreenText??undefined,sourceIds:[sourceId]};
+  })};
+}
+
 function promiseWords(value:string){return String(value??'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(Boolean);}
 export function ensureOpeningPromise(input:{script:VideoScript;packaging:PackagingVariant[];selectedPackagingId:string;contentFormat:ProductionContentFormat;visualAction?:boolean}):VideoScript{
   const selected=input.packaging.find((variant)=>variant.id===input.selectedPackagingId)??input.packaging[0];
@@ -111,7 +188,8 @@ export async function runContentPipeline(input: {
   event('PLAN', `Content Archetype ${executionPlan.archetypeId} → research=${executionPlan.researchMode} script=${executionPlan.scriptMode} voice=${executionPlan.voiceMode} visuals=${executionPlan.visualMode}`);
 
   let dossier:ResearchDossier;
-  if(executionPlan.researchRequired){
+  const sourceLocked=Boolean(input.sourceFootage?.length)&&String(input.scriptGuidance??'').includes('HARD VISUAL SOURCE LOCK');
+  if(executionPlan.researchRequired&&!sourceLocked){
     if(!input.search){event('BLOCKED','Research is required by the Content Archetype but no search provider is configured');return{state:'BLOCKED',events};}
     event('RESEARCH', `Researching ${input.topic} for ${contentFormat}`);
     dossier = await buildResearchDossier({ topic: input.topic, search: input.search, model: input.model });
@@ -119,6 +197,9 @@ export async function runContentPipeline(input: {
       event('BLOCKED', `Research blocked: ${dossier.blockingIssues.join('; ')}`);
       return { state: 'BLOCKED', events, dossier };
     }
+  }else if(sourceLocked){
+    dossier=buildSourceLockedDossier(input.topic,input.sourceFootage!);
+    event('RESEARCH', `Research locked to ${input.sourceFootage!.length} supplied source clip(s); unsupported external claims disabled`);
   }else{
     dossier=buildCreativeDossier(input.topic,contentArchetype);
     event('RESEARCH', `Research skipped by ${executionPlan.archetypeId}; creative-original safety contract active`);
@@ -149,6 +230,7 @@ export async function runContentPipeline(input: {
     if(attempt===0||!packaging?.length||!packagingChoice){
       event('PACKAGING', input.packagingGuidance ? 'Generating packaging hypotheses with bounded owned-channel learning guidance' : 'Generating packaging hypotheses');
       packaging=await generatePackaging({ angle, model: input.model, count: 3, guidance:[input.packagingGuidance,'The title/thumbnail promise must be paid into immediately by the opening and fully resolved by the payoff.'].filter(Boolean).join('\n') });
+      if(sourceLocked)packaging=constrainSourceLockedPackaging(packaging);
       packagingChoice=selectPackagingWithExploration({ variants: packaging, profile: input.packagingLearning, experimentSeed: `${input.projectId}:${contentFormat}:locked` });
       event('PACKAGING', `Locked packaging ${packagingChoice.selected.id} for autonomous attention repairs so the script does not chase a moving promise.`);
     }else{
@@ -160,6 +242,7 @@ export async function runContentPipeline(input: {
       :'';
     const guidance=[baseScriptGuidance,lockedPromise,...revisionGuidance].filter(Boolean).join('\n');
     draftScript=await generateScript({ dossier, angle, model: input.model, language: input.language, targetDurationSec: input.targetDurationSec, guidance, factClaimMode:executionPlan.factClaimMode,scriptMode:executionPlan.scriptMode });
+    if(sourceLocked)draftScript=constrainSourceLockedScript(draftScript);
     draftScript=ensureOpeningPromise({script:draftScript,packaging,selectedPackagingId:packagingChoice.selected.id,contentFormat,visualAction:executionPlan.scriptMode==='VISUAL_ACTION'});
 
     event('PLAN', `Planning ${aspectRatio} ${executionPlan.visualMode} timeline for attention pass ${attempt+1}`);
@@ -244,7 +327,13 @@ export async function runContentPipeline(input: {
   for (const scene of scenes.filter((candidate) => !candidate.generated && ['broll','chart','motion_graphic','text','source_card'].includes(candidate.kind))) {
     if(scene.kind==='broll'){
       const beat=beatForScene(scene);
-      const footage=input.sourceFootage?.find((item)=>item.rightsStatus!=='BLOCKED'&&(!item.beatIds?.length||item.beatIds.includes(beat?.id??'')));
+      const sceneIndex=Math.max(0,Number(scene.id.match(/-s(\d+)$/)?.[1]??1)-1);
+      const footageCandidates=input.sourceFootage?.filter((item)=>item.rightsStatus!=='BLOCKED'&&(
+        !item.beatIds?.length
+        || item.beatIds.includes(beat?.id??'')
+        || item.beatIds.includes(beat?.purpose??'')
+      )) ?? [];
+      const footage=footageCandidates[Math.min(sceneIndex,Math.max(0,footageCandidates.length-1))];
       if(!footage)throw new Error(`Scene ${scene.id} selected source footage but no matching sourceFootage asset was supplied`);
       assets.push({id:`footage-${scene.id}`,uri:footage.uri,mimeType:'video/mp4',provider:'user-source-footage',model:'source-clip-v1',costUsd:0,sceneId:scene.id,generated:false,sourceIds:scene.sourceIds,sourceUrl:footage.sourceUrl,license:footage.rightsStatus==='CLEARED'?footage.license:'verify-before-public',metadata:{kind:'broll',sourceFootageId:footage.id,title:footage.title??null,rightsStatus:footage.rightsStatus,clipStartSec:Math.max(0,Number(footage.startSec??0)),clipEndSec:footage.endSec==null?null:Math.max(0,Number(footage.endSec)),cropMode:footage.cropMode??'SMART_CENTER',sourceId:footage.sourceId??null,sourceRefs:scene.sourceRefs??[],instruction:scene.instruction}});
       continue;

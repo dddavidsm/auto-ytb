@@ -57,6 +57,7 @@ export type Scene = {
   visualValue?: number;
   costTier?: 'free' | 'low' | 'premium';
   selectionReason?: string;
+  sourceFootageId?: string;
   sourceRefs?: VisualSourceRef[];
 };
 
