@@ -438,10 +438,14 @@ export class FfmpegRenderer {
         // shot creates the dizzying effect viewers experience as motion sickness.
         const crop = `crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2`;
         const videoFilter = `scale=${width}:${height}:force_original_aspect_ratio=increase,${crop},format=yuv420p`;
-        const inputArgs = ['-y'];
-        if (clipEnd == null) inputArgs.push('-stream_loop','-1');
+        // Accurate seeking is required for long WebM masters whose keyframes
+        // do not align with curated edit points. Fast seeking can land on a
+        // later keyframe and silently shift the visual into an unrelated shot.
+        // Decode from the requested timestamp, reset timestamps, and force one
+        // stable CFR output so every clip starts on the intended motion.
+        const inputArgs = ['-y','-i',source];
         if (clipStart > 0) inputArgs.push('-ss',String(clipStart));
-        inputArgs.push('-i',source,'-t',String(duration),'-vf',videoFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip);
+        inputArgs.push('-t',String(duration),'-vf',`${videoFilter},setpts=PTS-STARTPTS`,'-fps_mode','cfr','-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast','-avoid_negative_ts','make_zero',clip);
         await run(this.ffmpeg, inputArgs);
       } else {
         throw new Error(`Scene ${scene.id} has no renderable visual asset`);
