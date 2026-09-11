@@ -23,6 +23,7 @@
     "test:ops": "npm run build && node scripts/test-ops.mjs",
     "doctor": "npm run build && node apps/cli/dist/doctor.js",
     "connections:doctor": "node scripts/connections-doctor.mjs",
+    "audit:render": "node scripts/audit-render.mjs",
     "dashboard:legacy": "node apps/dashboard/server.mjs",
     "web:dev": "node scripts/control-plane-web.mjs dev",
     "web:build": "npm --workspace @auto-ytb/web run build",

@@ -14,11 +14,13 @@ const channel=JSON.parse(await readFile(configPath,'utf8'));
 const requestedFormat=String(arg('format',channel.preferredFormat==='SHORT_VERTICAL'?'SHORT_VERTICAL':'LONG_HORIZONTAL')).toUpperCase();
 const contentFormat=requestedFormat==='SHORT_VERTICAL'?'SHORT_VERTICAL':'LONG_HORIZONTAL';
 const isShort=contentFormat==='SHORT_VERTICAL';
+console.log(`[live-pipeline] start format=${contentFormat} topic=${topic.slice(0,120)}`);
 // Content-archetype inference must see the selected channel domain. Without this context a
 // factual AI/business opportunity can fall through to GENERAL_STORY (creative fiction).
 const runtimeEnv={...process.env,AUTO_YTB_CONTENT_TOPIC:topic,AUTO_YTB_CONTENT_FORMAT:contentFormat,AUTO_YTB_CHANNEL_NICHE:[channel.id,channel.positioning,...(channel.themes??[])].filter(Boolean).join(' ')};
 const runtime=createLiveRuntime(runtimeEnv);
 if(!runtime.db)throw new Error('DATABASE_URL is required for live pipeline durability');
+console.log(`[live-pipeline] runtime ready archetype=${runtime.archetypeDecision?.archetype??'unknown'} db=ready`);
 const db=runtime.db;
 let productionRunId;
 
@@ -65,15 +67,17 @@ function structuralLearningFromRows(rows){
 }
 
 try{
+  console.log('[live-pipeline] opening durable channel state');
   const channelKey=String(channel.channelKey||channel.id);
   const channelRow=await db.query(`insert into channels (channel_key,youtube_channel_id,title,language,country,niche,is_owned,identity,voice_profile,autonomy_policy,library_policy,credentials_ref,config_path,lifecycle_state,automation_enabled)
     values ($1,$2,$3,$4,$5,$6,true,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,'ready',true)
     on conflict (channel_key) where channel_key is not null and is_owned=true do update set youtube_channel_id=coalesce(excluded.youtube_channel_id,channels.youtube_channel_id),title=excluded.title,language=excluded.language,country=excluded.country,niche=excluded.niche,identity=excluded.identity,voice_profile=excluded.voice_profile,autonomy_policy=excluded.autonomy_policy,library_policy=excluded.library_policy,credentials_ref=coalesce(excluded.credentials_ref,channels.credentials_ref),config_path=excluded.config_path,is_owned=true,updated_at=now() returning id`,[
       channelKey,process.env.YOUTUBE_CHANNEL_ID||null,channel.id,channel.language,channel.region,channel.id,JSON.stringify(channel.identity??{}),JSON.stringify(channel.voiceProfile??{}),JSON.stringify(channel.autonomyPolicy??{}),JSON.stringify(channel.libraryPolicy??{}),channel.credentialsRef??'PRIMARY',configPath
     ]);
-  const channelId=channelRow.rows[0].id;
-  const learningResult=await db.query(`select count(distinct ls.publication_id)::int as sample_size,
-      avg(case when ls.feature_key='strongHook' then case when ls.feature_value #>> '{}'='true' then 1.0 else 0.0 end end)::float as strong_hook_rate,
+const channelId=channelRow.rows[0].id;
+  console.log('[live-pipeline] channel state ready; reading learning signals');
+const learningResult=await db.query(`select count(distinct ls.publication_id)::int as sample_size,
+     avg(case when ls.feature_key='strongHook' then case when ls.feature_value #>> '{}'='true' then 1.0 else 0.0 end end)::float as strong_hook_rate,
       avg(case when ls.feature_key='averageViewPercentage' then nullif(ls.feature_value #>> '{}','')::numeric end)::float as average_view_percentage,
       avg(case when ls.feature_key='shareRate' then nullif(ls.feature_value #>> '{}','')::numeric end)::float as share_rate,
       avg(case when ls.feature_key='economics' then nullif(ls.feature_value->>'roi','')::numeric end)::float as average_roi

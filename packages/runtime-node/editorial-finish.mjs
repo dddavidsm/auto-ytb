@@ -125,10 +125,17 @@ export function withArchetypeEditorialFinish(renderer,options={}){
         const font=ffmpegFontOption();
         for(let index=0;index<cues.length;index+=1){const file=join(captionWork,`cue-${index}.txt`);await writeFile(file,String(cues[index].text??'').trim(),'utf8');chain.push(captionDrawtext(cues[index],file,captionPlan,height,font));}
       }
+      // Keep transitions motivated and deterministic: a short editorial flash
+      // marks a real beat change without introducing a black frame or hiding
+      // the incoming visual behind a generic fade.
+      for(let index=0;index<boundaries.length;index+=1){
+        const boundary=boundaries[index],color=index%2?'0xffc857':'0x6ea8fe';
+        chain.push(`drawbox=x=0:y=0:w=iw:h=ih:color=${color}@0.12:t=fill:enable='between(t\\,${Math.max(0,boundary-0.035).toFixed(3)}\\,${(boundary+0.085).toFixed(3)})'`);
+      }
       if(chain.length){filters.push(`${current}${chain.map((item,index)=>`${index?',':''}${item}`).join('')}[finished]`);current='[finished]';}
       const needsReencode=filters.length>0;
       if(needsReencode){const tmp=`${renderPath}.finish-${Date.now()}.mp4`;try{await run(ffmpeg,['-y','-i',renderPath,'-filter_complex',filters.join(';'),'-map',current,'-map','0:a?','-c:v','libx264','-preset','medium','-crf','18','-pix_fmt','yuv420p','-c:a','copy','-movflags','+faststart',tmp]);await rename(tmp,renderPath);}finally{await rm(captionWork,{recursive:true,force:true});}}else{await rm(captionWork,{recursive:true,force:true});}
-      const evidence={captionsBurned:Boolean(subtitlePath),captionCueCount:cues.length,captionPreset:captionPlan?.preset??'NONE',editPreset:editPlan?.preset??'NONE',transitionsApplied:0,transitionsSkipped:boundaries.length,transitionFallback:boundaries.length?'HARD_CUT':'NONE',punchInsApplied:punches.length,filmLookApplied:Boolean(editPlan?.filmLook)};
+      const evidence={captionsBurned:Boolean(subtitlePath),captionCueCount:cues.length,captionPreset:captionPlan?.preset??'NONE',editPreset:editPlan?.preset??'NONE',transitionsApplied:boundaries.length,transitionsSkipped:0,transitionFallback:'NONE',punchInsApplied:punches.length,filmLookApplied:Boolean(editPlan?.filmLook)};
       manifest.renderExecution=evidence;await writeFile(manifestPath,JSON.stringify(manifest,null,2),'utf8');
       return{...rendered,metadata:{...(rendered.metadata??{}),renderExecution:evidence,captionPlan:captionPlan??null,editPlan:editPlan??null}};
     },

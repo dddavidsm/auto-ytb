@@ -142,6 +142,7 @@ export class FfmpegRenderer {
     const titleFile = join(work, `procedural-title-${index}.txt`);
     const detailFile = join(work, `procedural-detail-${index}.txt`);
     const kindFile = join(work, `procedural-kind-${index}.txt`);
+    const metricFile = join(work, `procedural-metric-${index}.txt`);
     const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
     const wrap = (value, max) => {
       const words = clean(value).split(' ').filter(Boolean);
@@ -155,12 +156,23 @@ export class FfmpegRenderer {
       if (line) lines.push(line);
       return lines.slice(0, 3).join('\n');
     };
-    const title = clean(beat?.onScreenText) || clean(asset?.metadata?.instruction) || clean(scene.instruction);
-    const detail = clean(beat?.visualIntent) || clean(scene.instruction);
+    const shotInBeat = Number(String(scene.id ?? '').match(/-s(\d+)$/)?.[1] ?? 1);
+    const narrationWords = clean(beat?.narration).split(' ').filter(Boolean);
+    const chunkSize = Math.max(4, Math.ceil(narrationWords.length / 3));
+    const progression = narrationWords.slice(Math.min(narrationWords.length - 1, (shotInBeat - 1) * chunkSize), Math.min(narrationWords.length, shotInBeat * chunkSize)).join(' ');
+    const title = shotInBeat === 1
+      ? clean(beat?.onScreenText) || clean(asset?.metadata?.instruction) || clean(scene.instruction)
+      : progression || clean(beat?.onScreenText) || clean(scene.instruction);
+    const detail = shotInBeat === 1
+      ? clean(beat?.visualIntent) || clean(scene.instruction)
+      : `Progression ${shotInBeat} of 3: ${clean(beat?.visualIntent) || clean(scene.instruction)}`;
     const purpose = String(beat?.purpose ?? scene.kind).replaceAll('_', ' ').toUpperCase();
+    const variant = (index + shotInBeat - 1) % 4;
+    const metric = /million/i.test(`${beat?.narration} ${beat?.onScreenText}`) ? '3,000,000' : /thousand|1,000/i.test(`${beat?.narration} ${beat?.onScreenText}`) ? '1,000 / HR' : beat?.purpose === 'reveal' ? 'NOT READY' : beat?.purpose === 'payoff' ? 'NEXT\nHARNESS' : `${shotInBeat}/3`;
     await writeFile(titleFile, wrap(title, width >= 1000 ? 22 : 18));
     await writeFile(detailFile, wrap(detail, width >= 1000 ? 42 : 32));
-    await writeFile(kindFile, `${purpose}  //  SHOT ${String(index + 1).padStart(2, '0')}`);
+    await writeFile(kindFile, `${purpose}  //  SHOT ${String(index + 1).padStart(2, '0')}  //  ${shotInBeat}/3`);
+    await writeFile(metricFile, metric);
     const font = ffmpegFontOption();
     const fontPrefix = font ? `${font}:` : '';
     const fpath = (path) => escapeFfmpegFilterPath(path);
@@ -180,6 +192,14 @@ export class FfmpegRenderer {
       text(kindFile, `fontcolor=${accent}:fontsize=${Math.max(22, Math.round(height * 0.015))}:x=w*0.09:y=h*0.12`),
       text(titleFile, `fontcolor=white:fontsize=${titleSize}:line_spacing=12:x=w*0.09-min(w*0.035\\,w*0.035*t/0.35):y=h*0.17:shadowcolor=black@0.7:shadowx=3:shadowy=3`),
       text(detailFile, `fontcolor=0xdbe7f5@0.86:fontsize=${detailSize}:line_spacing=8:x=w*0.09:y=h*0.34`),
+      `drawbox=x=iw*(0.10+0.78*(0.5+0.5*sin(2*PI*t/2.8))):y=ih*0.43:w=iw*0.008:h=ih*0.34:color=${accent}@0.28:t=fill`,
+      `drawbox=x=iw*0.13:y=ih*(0.43+0.20*(0.5+0.5*sin(2*PI*t/3.6))):w=iw*0.74:h=ih*0.004:color=white@0.16:t=fill`,
+      `drawbox=x=iw*0.12:y=ih*0.405:w=iw*0.76:h=ih*0.038:color=${accent}@0.10:t=fill:enable='between(t\\,0\\,1.15)'`,
+      `drawbox=x=iw*0.12:y=ih*0.405:w=iw*0.76:h=ih*0.038:color=0xffc857@0.12:t=fill:enable='between(t\\,1.15\\,2.30)'`,
+      `drawbox=x=iw*0.12:y=ih*0.405:w=iw*0.76:h=ih*0.038:color=0x63e6be@0.13:t=fill:enable='between(t\\,2.30\\,${Math.max(2.31, duration)})'`,
+      `drawtext=${fontPrefix}text='01   SIGNAL':fontcolor=white@0.70:fontsize=${Math.max(20, Math.round(height * 0.013))}:x=w*0.16:y=h*0.414:enable='between(t\\,0\\,1.15)'`,
+      `drawtext=${fontPrefix}text='02   TENSION':fontcolor=white@0.78:fontsize=${Math.max(20, Math.round(height * 0.013))}:x=w*0.16:y=h*0.414:enable='between(t\\,1.15\\,2.30)'`,
+      `drawtext=${fontPrefix}text='03   RESULT':fontcolor=white@0.84:fontsize=${Math.max(20, Math.round(height * 0.013))}:x=w*0.16:y=h*0.414:enable='between(t\\,2.30\\,${Math.max(2.31, duration)})'`,
     ];
     if (scene.kind === 'chart') {
       filters.push(`drawbox=x=iw*0.12:y=ih*0.49:w=iw*0.76:h=ih*0.26:color=0x0b121e@0.92:t=fill`);
@@ -198,10 +218,39 @@ export class FfmpegRenderer {
       filters.push(`drawbox=x=iw*0.17:y=ih*0.67:w=iw*0.34:h=ih*0.012:color=${accent}@0.65:t=fill`);
       filters.push(`drawbox=x=iw*0.75:y=ih*0.55:w=iw*0.075:h=ih*0.075:color=${accent}@0.22:t=fill`);
       filters.push(`drawbox=x=iw*0.775:y=ih*0.575:w=iw*0.025:h=ih*0.025:color=${accent}:t=fill`);
+    } else if (variant === 1) {
+      // Comparison beat: two states and an explicit consequence make the
+      // narration understandable even with the sound off.
+      filters.push(`drawbox=x=iw*0.11:y=ih*0.48:w=iw*0.34:h=ih*0.22:color=0x12243a@0.96:t=fill`);
+      filters.push(`drawbox=x=iw*0.55:y=ih*0.48:w=iw*0.34:h=ih*0.22:color=0x261a1b@0.96:t=fill`);
+      filters.push(`drawbox=x=iw*0.11:y=ih*0.48:w=iw*0.34:h=ih*0.012:color=${accent}:t=fill`);
+      filters.push(`drawbox=x=iw*0.55:y=ih*0.48:w=iw*0.34:h=ih*0.012:color=0xff5964:t=fill`);
+      filters.push(`drawtext=${fontPrefix}text='BEFORE':fontcolor=0xb9d8ff:fontsize=${Math.max(22, Math.round(height * 0.016))}:x=w*0.15:y=h*0.53`);
+      filters.push(`drawtext=${fontPrefix}text='AFTER':fontcolor=0xffa7aa:fontsize=${Math.max(22, Math.round(height * 0.016))}:x=w*0.59:y=h*0.53`);
+      filters.push(`drawbox=x=iw*0.16:y=ih*0.60:w=iw*0.23:h=ih*0.018:color=0x9fc5f5@0.78:t=fill`);
+      filters.push(`drawbox=x=iw*0.16:y=ih*0.64:w=iw*0.17:h=ih*0.018:color=0x9fc5f5@0.48:t=fill`);
+      filters.push(`drawbox=x=iw*0.60:y=ih*0.60:w=iw*0.16:h=ih*0.018:color=0xff5964@0.88:t=fill`);
+      filters.push(`drawbox=x=iw*0.60:y=ih*0.64:w=iw*0.23:h=ih*0.018:color=0xff5964@0.46:t=fill`);
+      filters.push(`drawbox=x=iw*0.45:y=ih*0.57:w=iw*0.10:h=ih*0.012:color=0xffc857@0.72:t=fill`);
+      filters.push(`drawbox=x=iw*(0.46+0.035*sin(2*PI*t/${Math.max(0.2, duration)})):y=ih*0.565:w=iw*0.025:h=ih*0.025:color=0xffc857:t=fill`);
+      filters.push(`drawtext=${fontPrefix}text='RESULT':fontcolor=0xffc857:fontsize=${Math.max(22, Math.round(height * 0.015))}:x=w*0.44:y=h*0.77`);
+    } else if (variant === 2) {
+      // Metric beat: turn the spoken number or verdict into a moving focal
+      // point, then support it with a compact evidence strip.
+      filters.push(`drawbox=x=iw*0.12:y=ih*0.46:w=iw*0.76:h=ih*0.29:color=0x0b121e@0.96:t=fill`);
+      const metricSize = metric.includes('\n') ? Math.round(height * 0.050) : Math.max(72, Math.round(height * 0.070));
+      filters.push(text(metricFile, `fontcolor=${accent}:fontsize=${metricSize}:line_spacing=6:x=(w-text_w)/2:y=h*0.50:shadowcolor=${accent}@0.45:shadowx=0:shadowy=0`));
+      filters.push(`drawtext=${fontPrefix}text='LIVE SIGNAL':fontcolor=white@0.64:fontsize=${Math.max(20, Math.round(height * 0.014))}:x=w*0.17:y=h*0.48`);
+      for (let i = 0; i < 7; i += 1) {
+        const x = 0.16 + i * 0.095;
+        const bar = 0.035 + ((i + shotInBeat) % 4) * 0.025;
+        filters.push(`drawbox=x=iw*${x.toFixed(3)}:y=ih*0.69:h=ih*${bar.toFixed(3)}*min(1\\,t/0.5):w=iw*0.045:color=${i === 6 ? '0xffc857' : accent}@${(0.42 + i * 0.07).toFixed(2)}:t=fill`);
+      }
+      filters.push(`drawbox=x=iw*0.16:y=ih*0.76:w=iw*0.66:h=ih*0.006:color=white@0.24:t=fill`);
+      filters.push(`drawbox=x=iw*(0.16+0.66*min(1\\,t/${Math.max(0.2, duration)})):y=ih*0.748:w=iw*0.018:h=ih*0.03:color=0xffc857:t=fill`);
     } else {
-      // A procedural shot is a visual explanation, not a text card: connect
-      // the idea with a moving system diagram, comparison blocks and a clear
-      // visual focal point.
+      // Network beat: animated routes and a highlighted endpoint communicate
+      // causality. The phase shift makes adjacent network shots visibly move.
       const nodes = [[0.18,0.50],[0.39,0.58],[0.60,0.49],[0.78,0.61],[0.47,0.73]];
       for (const [from, to] of [[0, 1], [1, 2], [2, 3], [1, 4]]) {
         const [x1, y1] = nodes[from]; const [x2, y2] = nodes[to];
@@ -212,12 +261,13 @@ export class FfmpegRenderer {
         filters.push(`drawbox=x=iw*${x}-iw*0.025:y=ih*${y}-ih*0.025:w=iw*0.05:h=ih*0.05:color=0x0b121e:t=fill`);
         filters.push(`drawbox=x=iw*${x}-iw*0.014:y=ih*${y}-ih*0.014:w=iw*0.028:h=ih*0.028:color=${i === nodes.length - 1 ? '0xffc857' : accent}:t=fill`);
       }
-      filters.push(`drawbox=x=iw*0.14:y=ih*0.80:w=iw*0.22:h=ih*0.045:color=${accent}@0.18:t=fill`);
-      filters.push(`drawbox=x=iw*0.40:y=ih*0.80:w=iw*0.22:h=ih*0.045:color=0xffc857@0.18:t=fill`);
-      filters.push(`drawbox=x=iw*0.66:y=ih*0.80:w=iw*0.20:h=ih*0.045:color=0x63e6be@0.18:t=fill`);
-      filters.push(`drawtext=${fontPrefix}text='SIGNAL':fontcolor=white@0.78:fontsize=${Math.max(20, Math.round(height * 0.014))}:x=w*0.17:y=h*0.815`);
-      filters.push(`drawtext=${fontPrefix}text='CONFLICT':fontcolor=white@0.78:fontsize=${Math.max(20, Math.round(height * 0.014))}:x=w*0.43:y=h*0.815`);
-      filters.push(`drawtext=${fontPrefix}text='RESULT':fontcolor=white@0.78:fontsize=${Math.max(20, Math.round(height * 0.014))}:x=w*0.69:y=h*0.815`);
+      filters.push(`drawbox=x=iw*(0.18+0.60*min(1\\,t/${Math.max(0.2, duration)})):y=ih*(0.50+0.11*sin(PI*t/${Math.max(0.2, duration)})):w=iw*0.018:h=ih*0.018:color=white:t=fill`);
+      filters.push(`drawbox=x=iw*0.14:y=ih*0.76:w=iw*0.22:h=ih*0.045:color=${accent}@0.18:t=fill`);
+      filters.push(`drawbox=x=iw*0.40:y=ih*0.76:w=iw*0.22:h=ih*0.045:color=0xffc857@0.18:t=fill`);
+      filters.push(`drawbox=x=iw*0.66:y=ih*0.76:w=iw*0.20:h=ih*0.045:color=0x63e6be@0.18:t=fill`);
+      filters.push(`drawtext=${fontPrefix}text='SIGNAL':fontcolor=white@0.78:fontsize=${Math.max(20, Math.round(height * 0.014))}:x=w*0.17:y=h*0.775`);
+      filters.push(`drawtext=${fontPrefix}text='CONFLICT':fontcolor=white@0.78:fontsize=${Math.max(20, Math.round(height * 0.014))}:x=w*0.43:y=h*0.775`);
+      filters.push(`drawtext=${fontPrefix}text='RESULT':fontcolor=white@0.78:fontsize=${Math.max(20, Math.round(height * 0.014))}:x=w*0.69:y=h*0.775`);
     }
     filters.push(`drawbox=x=${margin}:y=ih-${margin}:w=(iw-${margin * 2})*min(1\\,t/${Math.max(0.2, duration)}):h=${barH}:color=${accent}:t=fill`);
     filters.push(`drawbox=x=${margin}:y=ih-${margin}:w=iw-${margin * 2}:h=${barH}:color=white@0.16:t=5`);
@@ -247,9 +297,18 @@ export class FfmpegRenderer {
       }
       const source = asset ? await this.materialize(asset.uri, join(work, `asset-${index}`)) : null;
       if (source && mimeFor(source).startsWith('image/')) {
-        await run(this.ffmpeg, ['-y','-loop','1','-i',source,'-t',String(duration),'-vf',`scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
+        const zoom = 1.08 + (index % 3) * 0.025;
+        const scaledWidth = Math.ceil(width * zoom / 2) * 2;
+        const scaledHeight = Math.ceil(height * zoom / 2) * 2;
+        const phase = (index % 5) * 0.7;
+        const motionX = `(in_w-out_w)*(0.5+0.22*sin(2*PI*t/${Math.max(0.2, duration)}+${phase.toFixed(2)}))`;
+        const motionY = `(in_h-out_h)*(0.5+0.16*cos(2*PI*t/${Math.max(0.2, duration)}+${phase.toFixed(2)}))`;
+        const accent = index % 3 === 0 ? '0x6ea8fe' : index % 3 === 1 ? '0xffc857' : '0x63e6be';
+        const imageFilter = `scale=${scaledWidth}:${scaledHeight}:force_original_aspect_ratio=increase,crop=${width}:${height}:x='${motionX}':y='${motionY}',drawbox=x=0:y=0:w=iw*0.014:h=ih:color=${accent}@0.88:t=fill,drawbox=x=iw*0.07:y=ih*0.91:w=iw*0.86:h=ih*0.004:color=white@0.22:t=fill,format=yuv420p`;
+        await run(this.ffmpeg, ['-y','-loop','1','-i',source,'-t',String(duration),'-vf',imageFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
       } else if (source && mimeFor(source).startsWith('video/')) {
-        await run(this.ffmpeg, ['-y','-stream_loop','-1','-i',source,'-t',String(duration),'-vf',`scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
+        const videoFilter = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2,format=yuv420p`;
+        await run(this.ffmpeg, ['-y','-stream_loop','-1','-i',source,'-t',String(duration),'-vf',videoFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
       } else {
         throw new Error(`Scene ${scene.id} has no renderable visual asset`);
       }
