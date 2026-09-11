@@ -15,7 +15,7 @@ const manifest = structuredClone(base);
 // allowed in this pilot.
 const clipStarts = [
   100.0, 102.5, 129.0, 141.0, 271.0, 274.0, 284.5, 287.5,
-  298.0, 299.3, 405.0, 407.0, 429.0, 590.0, 592.5, 594.5,
+  298.0, 299.3, 405.0, 407.0, 429.0, 590.0, 592.5, 594.0,
   595.5, 595.5,
 ];
 const sourceTitle = 'Robohand — 3D Printing Mechanical Hands (curated action footage)';
