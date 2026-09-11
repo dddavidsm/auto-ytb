@@ -49,6 +49,15 @@ function chooseGenerativeFirst(beat:ScriptBeat,index:number,visualValue:number,b
 function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, hasSourceRefs: boolean, options:ScenePlanningOptions): Pick<Scene,'kind'|'generated'|'costTier'|'selectionReason'> {
   const visualMode=options.visualMode??'EVIDENCE_FIRST';
   const bias=clamp01(Number(options.generativeSpendBias??0.65));
+  // Shorts need a visual refresh before the viewer has time to swipe. Once a beat
+  // is split into multiple shots, the supporting shots are still part of the same
+  // narrative promise and should not collapse into identical placeholder cards.
+  // Keep long-form conservative, but let vertical anchor beats earn a second/third
+  // specific visual when their visual value is still high.
+  const shortSupportingVisual=Number(options.targetSceneDurationSec??10)<=8
+    && index>0
+    && index<=2
+    && ['hook','escalation','reveal','payoff'].includes(beat.purpose);
   if(visualMode==='GENERATIVE_FIRST'||visualMode==='CHARACTER_CONTINUITY')return chooseGenerativeFirst(beat,index,visualValue,bias,visualMode);
   if (hasQuantitativeIntent(beat) && (beat.purpose === 'evidence' || beat.purpose === 'setup')) {
     return { kind:'chart', generated:false, costTier:'free', selectionReason:'Quantitative/evidence beat is clearer and cheaper as a procedural chart.' };
@@ -56,7 +65,7 @@ function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, h
   if (hasSourceRefs && (beat.purpose === 'evidence' || beat.purpose === 'setup') && index === 0) {
     return { kind:'source_card', generated:false, costTier:'free', selectionReason:'Evidence beat has traceable research sources; render an attributed transformed source card instead of generic AI media.' };
   }
-  if (index > 0 || beat.purpose === 'cta' || beat.purpose === 'setup') {
+  if (index > 0 && !shortSupportingVisual || beat.purpose === 'cta' || beat.purpose === 'setup') {
     return { kind:'motion_graphic', generated:false, costTier:'free', selectionReason:'Supporting beat does not justify generative-media spend; use deterministic motion graphics.' };
   }
   const videoThreshold=clamp(92-bias*10,80,92);
