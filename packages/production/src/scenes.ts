@@ -13,6 +13,7 @@ type ScenePlanningOptions = {
   cameraProfile?: string;
   sourceFootage?: SourceFootage[];
   selectedSourceClip?: SourceFootage | null;
+  visualMixPolicy?: 'MIXED_MEDIA' | 'SOURCE_FIRST' | 'PROCEDURAL_FIRST';
 };
 
 function scoreVisualValue(beat: ScriptBeat, index: number): number {
@@ -51,6 +52,11 @@ function chooseGenerativeFirst(beat:ScriptBeat,index:number,visualValue:number,b
 function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, hasSourceRefs: boolean, options:ScenePlanningOptions): Pick<Scene,'kind'|'generated'|'costTier'|'selectionReason'|'sourceFootageId'> {
   const visualMode=options.visualMode??'EVIDENCE_FIRST';
   const bias=clamp01(Number(options.generativeSpendBias??0.65));
+  const mixPolicy=options.visualMixPolicy??'MIXED_MEDIA';
+  const preferPhotorealisticInsert=mixPolicy==='MIXED_MEDIA'
+    && beat.purpose!=='cta'
+    && !hasQuantitativeIntent(beat)
+    && visualValue>=50;
   // Shorts need a visual refresh before the viewer has time to swipe. Once a beat
   // is split into multiple shots, the supporting shots are still part of the same
   // narrative promise and should not collapse into identical placeholder cards.
@@ -82,6 +88,9 @@ function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, h
     return { kind:'source_card', generated:false, costTier:'free', selectionReason:'Evidence beat has traceable research sources; render an attributed transformed source card instead of generic AI media.' };
   }
   if (index > 0 && !shortSupportingVisual || beat.purpose === 'cta' || beat.purpose === 'setup') {
+    if(preferPhotorealisticInsert&&index%2===0){
+      return {kind:'ai_image',generated:true,costTier:'low',selectionReason:'Mixed-media policy inserts a concrete photorealistic visual between source/action beats.'};
+    }
     return { kind:'motion_graphic', generated:false, costTier:'free', selectionReason:'Supporting beat does not justify generative-media spend; use deterministic motion graphics.' };
   }
   const videoThreshold=clamp(92-bias*10,80,92);
@@ -165,7 +174,14 @@ export function planScenes(script: VideoScript, options: ScenePlanningOptions = 
     const sourceRefs = buildVisualSourceRefs(beat.sourceIds, options.sources ?? []);
     for (let index = 0; index < sceneCount; index += 1) {
       const visualValue = scoreVisualValue(beat,index);
-      const sourceClip=pickDiverseSourceClip(eligibleSourceClips(beat,options.sourceFootage),sourceUsage,recentSourceIds,recentSourceUris,duration);
+      const sourceCandidates=eligibleSourceClips(beat,options.sourceFootage);
+      const sceneOrdinal=scenes.length;
+      const sourceCadence=(options.visualMixPolicy??'MIXED_MEDIA')==='MIXED_MEDIA'
+        ? sceneOrdinal%3===0 || (sceneOrdinal===0&&beat.purpose==='hook')
+        : true;
+      const sourceClip=sourceCadence
+        ? pickDiverseSourceClip(sourceCandidates,sourceUsage,recentSourceIds,recentSourceUris,duration)
+        : undefined;
       const choice = chooseSceneKind(beat,index,visualValue,sourceRefs.length>0,{...options,selectedSourceClip:sourceClip});
       if(sourceClip){
         sourceUsage.set(sourceClip.id,(sourceUsage.get(sourceClip.id)??0)+1);

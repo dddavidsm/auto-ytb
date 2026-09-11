@@ -246,7 +246,7 @@ export async function runContentPipeline(input: {
     draftScript=ensureOpeningPromise({script:draftScript,packaging,selectedPackagingId:packagingChoice.selected.id,contentFormat,visualAction:executionPlan.scriptMode==='VISUAL_ACTION'});
 
     event('PLAN', `Planning ${aspectRatio} ${executionPlan.visualMode} timeline for attention pass ${attempt+1}`);
-    draftScenes=planScenes(draftScript,{targetSceneDurationSec:adaptiveSceneDuration,sources:dossier.sources,sourceFootage:input.sourceFootage,visualMode:executionPlan.visualMode,generativeSpendBias:executionPlan.generativeSpendBias,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile});
+    draftScenes=planScenes(draftScript,{targetSceneDurationSec:adaptiveSceneDuration,sources:dossier.sources,sourceFootage:input.sourceFootage,visualMode:executionPlan.visualMode,generativeSpendBias:executionPlan.generativeSpendBias,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile,visualMixPolicy:'MIXED_MEDIA'});
     const spendSoFar=Math.max(0,Number(input.additionalCostUsd?.() ?? input.model.getNonAssetCostUsd?.() ?? 0));
     const budgetFit=fitScenePlanToBudget({scenes:draftScenes,maxCostUsd:input.maxCostUsd,narrationSeconds:executionPlan.voiceRequired?input.targetDurationSec:0,voiceRequired:executionPlan.voiceRequired,fixedCostUsd:spendSoFar,isShort,packagingCount:packaging.length,imageAvailable:Boolean(input.imageProvider)});
     draftScenes=budgetFit.scenes;projectedCostUsd=budgetFit.projectedCostUsd;

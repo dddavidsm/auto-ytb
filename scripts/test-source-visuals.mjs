@@ -21,6 +21,16 @@ const sourceFootage={id:'footage-1',uri:'file:///owned/fencing.mp4',sourceUrl:'h
 const footageScenes=planScenes(script,{targetSceneDurationSec:8,sources:[official,media,community],sourceFootage:[sourceFootage]});
 assert.equal(footageScenes[0].kind,'broll');
 assert.match(footageScenes[0].selectionReason,/footage-1/);
+const mixedScenes=planScenes(script,{targetSceneDurationSec:8,sources:[official,media,community],visualMixPolicy:'MIXED_MEDIA',sourceFootage:[
+  {...sourceFootage,id:'footage-a',uri:'file:///owned/a.mp4'},
+  {...sourceFootage,id:'footage-b',uri:'file:///owned/b.mp4'},
+  {...sourceFootage,id:'footage-c',uri:'file:///owned/c.mp4'},
+  {...sourceFootage,id:'footage-d',uri:'file:///owned/d.mp4'},
+]});
+const mixedBroll=mixedScenes.filter((scene)=>scene.kind==='broll');
+assert.ok(mixedBroll.length>0,'mixed-media planning should retain cleared source footage');
+assert.ok(mixedScenes.some((scene)=>scene.kind!=='broll'),'mixed-media planning should interleave a different visual treatment');
+for(let i=1;i<mixedScenes.length;i+=1)assert.ok(!(mixedScenes[i-1].kind==='broll'&&mixedScenes[i].kind==='broll'),'source footage should not be adjacent under the mixed-media cadence');
 const sourceScene=scenes.find((scene)=>scene.kind==='source_card');
 assert.ok(sourceScene,'non-quantitative evidence should produce a source card');
 assert.equal(sourceScene.sourceRefs?.[0]?.sourceId,'s1');
@@ -49,3 +59,4 @@ console.log('✓ conservative source visual classification');
 console.log('✓ attention-ready source-card provenance and visible attribution');
 console.log('✓ unresolved direct licenses warn without blocking private review');
 console.log('✓ missing source provenance blocks QA');
+console.log('✓ mixed-media cadence interleaves cleared source footage with other visual treatments');
