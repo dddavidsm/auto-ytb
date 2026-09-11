@@ -9,6 +9,16 @@ import { buildCreativeLearningGuidance } from './lib/creative-guidance.mjs';
 const arg=(name,fallback)=>process.argv.find((v)=>v.startsWith(`--${name}=`))?.slice(name.length+3)??fallback;
 const topic=arg('topic');
 if(!topic)throw new Error('Use --topic="..."');
+const sourceFootagePath=arg('source-footage',null);
+let sourceFootage;
+if(sourceFootagePath){
+  const parsed=JSON.parse(await readFile(resolve(sourceFootagePath),'utf8'));
+  sourceFootage=Array.isArray(parsed)?parsed:parsed?.clips;
+  if(!Array.isArray(sourceFootage))throw new Error('--source-footage must point to a JSON array or an object with a clips array');
+  for(const clip of sourceFootage){
+    if(!clip?.id||!clip?.uri||!clip?.license||!['CLEARED','VERIFY','BLOCKED'].includes(clip.rightsStatus))throw new Error(`Invalid source footage entry ${clip?.id??'(missing id)'}: id, uri, license and rightsStatus are required`);
+  }
+}
 const configPath=resolve(arg('channel-config','config/channels/future-tech-business.example.json'));
 const channel=JSON.parse(await readFile(configPath,'utf8'));
 const requestedFormat=String(arg('format',channel.preferredFormat==='SHORT_VERTICAL'?'SHORT_VERTICAL':'LONG_HORIZONTAL')).toUpperCase();
@@ -105,7 +115,7 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   const activeVoiceProvider=String(process.env.VOICE_PROVIDER||'gemini').toLowerCase();
   const configuredVoiceProvider=String(channel.voiceProfile?.provider||'').toLowerCase();
   const voiceId=process.env.VOICE_ID||(configuredVoiceProvider===activeVoiceProvider?channel.voiceProfile?.voiceId:null)||(activeVoiceProvider==='gemini'?'Kore':channel.voiceProfile?.voiceId||channel.voice);
-  const result=await runContentPipeline({projectId:productionRunId,topic,language:channel.language,contentFormat,targetDurationSec:productionProfile.targetDurationSec,targetSceneDurationSec:productionProfile.targetSceneDurationSec,voice:voiceId,maxCostUsd:productionProfile.maxCostUsd,search:runtime.search,model:runtime.model,voiceProvider:runtime.voice,imageProvider:runtime.image,videoProvider:runtime.video,thumbnailComposer:runtime.thumbnailComposer,store:runtime.store,renderer:runtime.renderer,publisher:runtime.publisher,contentArchetype:runtime.archetypeDecision,autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE==='true',packagingGuidance:[packagingGuidance,creativeLearning.guidance].filter(Boolean).join('\n')||undefined,scriptGuidance:productionProfile.scriptGuidance,packagingLearning,additionalCostUsd:()=>runtime.meter?.nonAssetCostUsd??0,minAttentionScore:Number(process.env.MIN_ATTENTION_SCORE||86),maxAttentionRevisionPasses:Number(process.env.MAX_ATTENTION_REVISION_PASSES||2)});
+  const result=await runContentPipeline({projectId:productionRunId,topic,language:channel.language,contentFormat,targetDurationSec:productionProfile.targetDurationSec,targetSceneDurationSec:productionProfile.targetSceneDurationSec,voice:voiceId,maxCostUsd:productionProfile.maxCostUsd,search:runtime.search,model:runtime.model,voiceProvider:runtime.voice,imageProvider:runtime.image,videoProvider:runtime.video,thumbnailComposer:runtime.thumbnailComposer,store:runtime.store,renderer:runtime.renderer,publisher:runtime.publisher,contentArchetype:runtime.archetypeDecision,autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE==='true',packagingGuidance:[packagingGuidance,creativeLearning.guidance].filter(Boolean).join('\n')||undefined,scriptGuidance:productionProfile.scriptGuidance,packagingLearning,sourceFootage,additionalCostUsd:()=>runtime.meter?.nonAssetCostUsd??0,minAttentionScore:Number(process.env.MIN_ATTENTION_SCORE||86),maxAttentionRevisionPasses:Number(process.env.MAX_ATTENTION_REVISION_PASSES||2)});
 
   const durableCost=Math.max(Number(result.manifest?.actualCostUsd??0),Number(runtime.meter?.totalCostUsd??0));
   await productionRepo.updateRun(productionRunId,{state:result.state,totalCostUsd:durableCost,metadata:{events:result.events,renderUri:result.renderUri,finalInspection:result.finalInspection??null,attention:result.attention??null,qaBlockers:result.qa?.blockers??[],opportunityId,contentFormat,contentArchetype:result.manifest?.contentArchetype??runtime.archetypeDecision??null,executionPlan:result.manifest?.executionPlan??null,packagingGuidance:packagingGuidance??null,productionProfile,packagingLearning,structuralLearning,creativeLearning,packagingSelection:result.manifest?.packagingSelection??null,structuralExperiment,meter:runtime.meter?.snapshot?.()??null}});

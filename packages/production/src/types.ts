@@ -61,6 +61,20 @@ export type Scene = {
 };
 
 export type AssetRecord = BinaryAsset & { sceneId: string; generated: boolean; sourceIds: string[]; metadata?: Record<string, unknown> };
+export type SourceFootage = {
+  id: string;
+  uri: string;
+  title?: string;
+  sourceUrl?: string;
+  /** Research/source id that explains what this footage demonstrates. */
+  sourceId?: string;
+  beatIds?: string[];
+  startSec?: number;
+  endSec?: number;
+  license: string;
+  rightsStatus: 'CLEARED' | 'VERIFY' | 'BLOCKED';
+  cropMode?: 'CENTER' | 'SMART_CENTER';
+};
 export type ProductionContentFormat = 'LONG_HORIZONTAL' | 'SHORT_VERTICAL';
 
 export type ContentExecutionPlan = {
@@ -202,6 +216,7 @@ export type ProductionManifest = {
   };
   scenes: Scene[];
   assets: AssetRecord[];
+  sourceFootage?: SourceFootage[];
   voice?: VoiceAsset;
   soundtrack?: SoundtrackPlan;
   music?: SoundtrackCue;

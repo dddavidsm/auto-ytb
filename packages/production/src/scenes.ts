@@ -1,4 +1,4 @@
-import type { ContentExecutionPlan, VideoScript, Scene, ScriptBeat } from './types.js';
+import type { ContentExecutionPlan, VideoScript, Scene, ScriptBeat, SourceFootage } from './types.js';
 import { buildVisualSourceRefs, type SourceLike } from './source-visuals.js';
 
 const clamp=(value:number,min=0,max=100)=>Math.max(min,Math.min(max,value));
@@ -11,6 +11,7 @@ type ScenePlanningOptions = {
   generativeSpendBias?: number;
   realityMode?: string;
   cameraProfile?: string;
+  sourceFootage?: SourceFootage[];
 };
 
 function scoreVisualValue(beat: ScriptBeat, index: number): number {
@@ -58,6 +59,14 @@ function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, h
     && index>0
     && index<=2
     && ['hook','escalation','reveal','payoff'].includes(beat.purpose);
+  const sourceClip=options.sourceFootage?.find((item)=>
+    item.rightsStatus!=='BLOCKED'
+    && (!item.beatIds?.length || item.beatIds.includes(beat.id))
+    && index===0
+  );
+  if(sourceClip){
+    return {kind:'broll',generated:false,costTier:'free',selectionReason:`Licensed/user-supplied footage ${sourceClip.id} is the primary visual proof for ${beat.purpose}; preserve the observable action and attribution.`};
+  }
   if(visualMode==='GENERATIVE_FIRST'||visualMode==='CHARACTER_CONTINUITY')return chooseGenerativeFirst(beat,index,visualValue,bias,visualMode);
   // A vertical explainer needs real motion at the narrative anchors. Procedural
   // cards remain useful for evidence, but the hook/escalation/payoff should

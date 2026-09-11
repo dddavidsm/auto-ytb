@@ -313,8 +313,18 @@ export class FfmpegRenderer {
         const imageFilter = `scale=${scaledWidth}:${scaledHeight}:force_original_aspect_ratio=increase,crop=${width}:${height}:x='${motionX}':y='${motionY}',drawbox=x=0:y=0:w=iw*0.014:h=ih:color=${accent}@0.88:t=fill,drawbox=x=iw*0.07:y=ih*0.91:w=iw*0.86:h=ih*0.004:color=white@0.22:t=fill,format=yuv420p`;
         await run(this.ffmpeg, ['-y','-loop','1','-i',source,'-t',String(duration),'-vf',imageFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
       } else if (source && mimeFor(source).startsWith('video/')) {
-        const videoFilter = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2,format=yuv420p`;
-        await run(this.ffmpeg, ['-y','-stream_loop','-1','-i',source,'-t',String(duration),'-vf',videoFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
+        const clipStart = Math.max(0, Number(asset?.metadata?.clipStartSec ?? 0));
+        const clipEnd = asset?.metadata?.clipEndSec == null ? null : Math.max(clipStart, Number(asset.metadata.clipEndSec));
+        const clipDuration = clipEnd == null ? duration : Math.max(0.2, Math.min(duration, clipEnd - clipStart));
+        const crop = String(asset?.metadata?.cropMode ?? 'CENTER') === 'SMART_CENTER'
+          ? `crop=${width}:${height}:(in_w-out_w)*(0.5+0.10*sin(2*PI*t/2.4)):(in_h-out_h)*(0.5+0.06*cos(2*PI*t/2.1))`
+          : `crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2`;
+        const clipWindow = clipEnd == null ? '' : `trim=duration=${clipDuration.toFixed(3)},tpad=stop_mode=clone:stop_duration=${Math.max(0,duration-clipDuration).toFixed(3)},setpts=PTS-STARTPTS,`;
+        const videoFilter = `${clipWindow}scale=${width}:${height}:force_original_aspect_ratio=increase,${crop},format=yuv420p`;
+        const inputArgs = ['-y','-stream_loop','-1'];
+        if (clipStart > 0) inputArgs.push('-ss',String(clipStart));
+        inputArgs.push('-i',source,'-t',String(duration),'-vf',videoFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip);
+        await run(this.ffmpeg, inputArgs);
       } else {
         throw new Error(`Scene ${scene.id} has no renderable visual asset`);
       }

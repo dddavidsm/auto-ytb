@@ -17,6 +17,10 @@ const script={title:'Why the Deployment Rule Suddenly Changed',language:'en',tar
   {id:'b5',startSec:65,targetDurationSec:15,purpose:'payoff',narration:'That is why the deployment rule changed: once the evidence changed the risk calculation, the old policy became the less defensible option.',visualIntent:'Resolve the opening policy contrast with the evidence-to-decision chain',sourceIds:['s1'],retentionDevice:'reveal'}
 ],outro:'The visible rule was only the final consequence.'};
 const scenes=planScenes(script,{targetSceneDurationSec:8,sources:[official,media,community]});
+const sourceFootage={id:'footage-1',uri:'file:///owned/fencing.mp4',sourceUrl:'https://creator.example/fencing',sourceId:'s1',beatIds:['b1'],startSec:4,endSec:9,license:'owned-or-licensed',rightsStatus:'CLEARED',cropMode:'SMART_CENTER'};
+const footageScenes=planScenes(script,{targetSceneDurationSec:8,sources:[official,media,community],sourceFootage:[sourceFootage]});
+assert.equal(footageScenes[0].kind,'broll');
+assert.match(footageScenes[0].selectionReason,/footage-1/);
 const sourceScene=scenes.find((scene)=>scene.kind==='source_card');
 assert.ok(sourceScene,'non-quantitative evidence should produce a source card');
 assert.equal(sourceScene.sourceRefs?.[0]?.sourceId,'s1');

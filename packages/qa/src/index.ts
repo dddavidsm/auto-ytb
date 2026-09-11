@@ -38,18 +38,22 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
   const audioSyncWarn=!audioSyncFail&&!hasAlignment;
   checks.push({id:'audio-visual-sync',status:audioSyncFail?'FAIL':audioSyncWarn?'WARN':'PASS',score:audioSyncFail?0:audioSyncWarn?78:100,message:audioSyncFail?`Narration/script duration mismatch ${(durationDelta*100).toFixed(1)}%`:hasAlignment?`Timestamped narration aligned to ${voiceDuration.toFixed(1)}s`:`Narration duration aligned but provider supplied no timestamp map`});
 
-  const sourceScenes = input.manifest.scenes.filter((scene) => scene.kind === 'source_card' || scene.kind === 'screenshot' || scene.kind === 'archive');
-  const sourceScenesWithoutRefs = sourceScenes.filter((scene) => !scene.sourceRefs?.length || scene.sourceRefs.some((ref) => !knownSourceIds.has(ref.sourceId)));
-  const directAssetsPendingLicense = input.manifest.assets.filter((asset) => asset.provider === 'source-backed-direct' && (!asset.license || asset.license === 'verify-before-public'));
+  const sourceScenes = input.manifest.scenes.filter((scene) => scene.kind === 'broll' || scene.kind === 'source_card' || scene.kind === 'screenshot' || scene.kind === 'archive');
+  const assetByScene = new Map(input.manifest.assets.map((asset) => [asset.sceneId, asset]));
+  const sourceScenesWithoutRefs = sourceScenes.filter((scene) => scene.kind === 'broll'
+    ? !assetByScene.get(scene.id)?.metadata?.sourceFootageId
+    : !scene.sourceRefs?.length || scene.sourceRefs.some((ref) => !knownSourceIds.has(ref.sourceId)));
+  const directAssetsPendingLicense = input.manifest.assets.filter((asset) => ['source-backed-direct','user-source-footage'].includes(asset.provider) && (!asset.license || asset.license === 'verify-before-public' || asset.metadata?.rightsStatus==='VERIFY'));
+  const blockedFootage = input.manifest.assets.filter((asset) => asset.provider === 'user-source-footage' && asset.metadata?.rightsStatus === 'BLOCKED');
   const copiedPageAssets = input.manifest.assets.filter((asset) => asset.provider === 'source-backed-direct' && asset.mimeType === 'text/html');
-  const sourceRightsFail = sourceScenesWithoutRefs.length > 0 || copiedPageAssets.length > 0;
+  const sourceRightsFail = sourceScenesWithoutRefs.length > 0 || copiedPageAssets.length > 0 || blockedFootage.length > 0;
   const sourceRightsWarn = directAssetsPendingLicense.length > 0;
   checks.push({
     id:'source-rights',
     status:sourceRightsFail?'FAIL':sourceRightsWarn?'WARN':'PASS',
     score:sourceRightsFail?0:clamp(100-directAssetsPendingLicense.length*12),
     message:sourceRightsFail
-      ? `${sourceScenesWithoutRefs.length} source-backed scenes lack valid provenance; ${copiedPageAssets.length} copied-page assets are not allowed`
+      ? `${sourceScenesWithoutRefs.length} source-backed scenes lack valid provenance; ${copiedPageAssets.length} copied-page assets are not allowed; ${blockedFootage.length} blocked footage assets`
       : sourceRightsWarn
         ? `${directAssetsPendingLicense.length} direct source assets require license verification before public release`
         : sourceScenes.length ? `${sourceScenes.length} source-backed scenes have traceable transformed provenance` : 'No external source-backed visual assets require rights review',

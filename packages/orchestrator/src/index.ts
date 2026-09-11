@@ -1,6 +1,6 @@
 import type { FinalMediaInspection, ImageProvider, ObjectStore, Publisher, SearchProvider, TextModel, ThumbnailComposer, VideoProvider, VideoRenderer, VoiceProvider } from '@auto-ytb/providers';
 import { buildResearchDossier, type ResearchDossier } from '@auto-ytb/editorial';
-import { generatePackaging, generateScript, planScenes, selectPackagingWithExploration, synchronizeTimelineToVoice, type AssetRecord, type PackagingLearningProfile, type ProductionContentFormat, type ProductionManifest, type ThumbnailAsset, type VideoScript, type PackagingVariant, type Scene } from '@auto-ytb/production';
+import { generatePackaging, generateScript, planScenes, selectPackagingWithExploration, synchronizeTimelineToVoice, type AssetRecord, type PackagingLearningProfile, type ProductionContentFormat, type ProductionManifest, type ThumbnailAsset, type VideoScript, type PackagingVariant, type Scene, type SourceFootage } from '@auto-ytb/production';
 import { reviewAttentionBlueprint, runQa, type AttentionReview, type QaReport } from '@auto-ytb/qa';
 import { buildArchetypeExecutionPlan, buildCreativeDossier, reconcileQaForExecutionPlan, type ContentArchetypeRuntimeDecision, type ContentArchetypeRuntimeProfile } from './archetype-execution.js';
 
@@ -97,6 +97,7 @@ export async function runContentPipeline(input: {
   additionalCostUsd?: () => number;
   minAttentionScore?: number;
   maxAttentionRevisionPasses?: number;
+  sourceFootage?: SourceFootage[];
 }): Promise<{ state: PipelineState; events: PipelineEvent[]; dossier?: ResearchDossier; manifest?: ProductionManifest; qa?: QaReport; attention?: AttentionReview; finalInspection?: FinalMediaInspection; renderUri?: string; externalId?: string }> {
   const events: PipelineEvent[] = [];
   const event = (state: PipelineState, message: string) => events.push({ at: new Date().toISOString(), state, message });
@@ -162,7 +163,7 @@ export async function runContentPipeline(input: {
     draftScript=ensureOpeningPromise({script:draftScript,packaging,selectedPackagingId:packagingChoice.selected.id,contentFormat,visualAction:executionPlan.scriptMode==='VISUAL_ACTION'});
 
     event('PLAN', `Planning ${aspectRatio} ${executionPlan.visualMode} timeline for attention pass ${attempt+1}`);
-    draftScenes=planScenes(draftScript,{targetSceneDurationSec:adaptiveSceneDuration,sources:dossier.sources,visualMode:executionPlan.visualMode,generativeSpendBias:executionPlan.generativeSpendBias,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile});
+    draftScenes=planScenes(draftScript,{targetSceneDurationSec:adaptiveSceneDuration,sources:dossier.sources,sourceFootage:input.sourceFootage,visualMode:executionPlan.visualMode,generativeSpendBias:executionPlan.generativeSpendBias,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile});
     const spendSoFar=Math.max(0,Number(input.additionalCostUsd?.() ?? input.model.getNonAssetCostUsd?.() ?? 0));
     const budgetFit=fitScenePlanToBudget({scenes:draftScenes,maxCostUsd:input.maxCostUsd,narrationSeconds:executionPlan.voiceRequired?input.targetDurationSec:0,voiceRequired:executionPlan.voiceRequired,fixedCostUsd:spendSoFar,isShort,packagingCount:packaging.length,imageAvailable:Boolean(input.imageProvider)});
     draftScenes=budgetFit.scenes;projectedCostUsd=budgetFit.projectedCostUsd;
@@ -231,7 +232,7 @@ export async function runContentPipeline(input: {
   if(needsVideo&&!input.videoProvider){event('BLOCKED',`${executionPlan.visualMode} scene plan requires a video provider but none is configured`);return{state:'BLOCKED',events,dossier,attention};}
   if(needsImage&&!input.imageProvider){event('BLOCKED',`${executionPlan.visualMode} scene/thumbnail plan requires an image provider but none is configured`);return{state:'BLOCKED',events,dossier,attention};}
 
-  const visualKinds = ['ai_video','ai_image','source_card','chart','motion_graphic','text'];
+  const visualKinds = ['ai_video','ai_image','broll','source_card','chart','motion_graphic','text'];
   const visualMix = Object.fromEntries(visualKinds.map((kind) => [kind, scenes.filter((scene) => scene.kind === kind).length]));
   const estimatedCostUsd=projectedCostUsd;
   event('PLAN', `Archetype visual mix: ${Object.entries(visualMix).map(([kind,count]) => `${kind}=${count}`).join(', ')} · generative bias ${executionPlan.generativeSpendBias.toFixed(2)} · conservative pre-render $${estimatedCostUsd.toFixed(2)}/${input.maxCostUsd.toFixed(2)}`);
@@ -240,7 +241,14 @@ export async function runContentPipeline(input: {
   const assets: AssetRecord[] = [];
   const beatForScene=(scene:Scene)=>script.beats.find((beat)=>scene.id===beat.id||scene.id.startsWith(`${beat.id}-s`));
 
-  for (const scene of scenes.filter((candidate) => !candidate.generated && ['chart','motion_graphic','text','source_card'].includes(candidate.kind))) {
+  for (const scene of scenes.filter((candidate) => !candidate.generated && ['broll','chart','motion_graphic','text','source_card'].includes(candidate.kind))) {
+    if(scene.kind==='broll'){
+      const beat=beatForScene(scene);
+      const footage=input.sourceFootage?.find((item)=>item.rightsStatus!=='BLOCKED'&&(!item.beatIds?.length||item.beatIds.includes(beat?.id??'')));
+      if(!footage)throw new Error(`Scene ${scene.id} selected source footage but no matching sourceFootage asset was supplied`);
+      assets.push({id:`footage-${scene.id}`,uri:footage.uri,mimeType:'video/mp4',provider:'user-source-footage',model:'source-clip-v1',costUsd:0,sceneId:scene.id,generated:false,sourceIds:scene.sourceIds,sourceUrl:footage.sourceUrl,license:footage.rightsStatus==='CLEARED'?footage.license:'verify-before-public',metadata:{kind:'broll',sourceFootageId:footage.id,title:footage.title??null,rightsStatus:footage.rightsStatus,clipStartSec:Math.max(0,Number(footage.startSec??0)),clipEndSec:footage.endSec==null?null:Math.max(0,Number(footage.endSec)),cropMode:footage.cropMode??'SMART_CENTER',sourceId:footage.sourceId??null,sourceRefs:scene.sourceRefs??[],instruction:scene.instruction}});
+      continue;
+    }
     const direct = scene.kind === 'source_card' ? scene.sourceRefs?.find((ref) => ref.policy === 'DIRECT_ASSET_ALLOWED' && ref.url) : undefined;
     if (direct?.url) {
       assets.push({id:`source-${scene.id}`,uri:direct.url,mimeType:/\.(mp4|webm)(?:\?|#|$)/i.test(direct.url)?'video/mp4':'image/jpeg',provider:'source-backed-direct',model:'source-visual-v1',costUsd:0,sceneId:scene.id,generated:false,sourceIds:scene.sourceIds,sourceUrl:direct.url,license:'verify-before-public',metadata:{kind:scene.kind,instruction:scene.instruction,sourceRefs:scene.sourceRefs??[],visualValue:scene.visualValue??null,selectionReason:scene.selectionReason??null}});
@@ -279,7 +287,7 @@ export async function runContentPipeline(input: {
   const manifest: ProductionManifest = {
     projectId:input.projectId,createdAt:new Date().toISOString(),contentFormat,aspectRatio,frame,
     contentArchetype:{version:1,id:String(contentArchetype?.archetype??profile.id??executionPlan.archetypeId),label:String(profile.label??contentArchetype?.archetype??executionPlan.archetypeId),confidence:Number(contentArchetype?.confidence??0),reasons:contentArchetype?.reasons??[],voiceMode:executionPlan.voiceMode,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile,syntheticDisclosurePolicy:executionPlan.syntheticDisclosurePolicy,profile},
-    executionPlan,script,packaging,thumbnails,selectedPackagingId:packagingChoice.selected.id,packagingSelection:{mode:packagingChoice.mode,explorationRate:packagingChoice.explorationRate,scores:packagingChoice.scores},scenes,assets,voice,estimatedCostUsd,actualCostUsd:editorialCostUsd+mediaCostUsd,containsSyntheticMedia:scenes.some((scene)=>scene.generated)||assets.some((asset)=>asset.generated)
+    executionPlan,script,packaging,thumbnails,selectedPackagingId:packagingChoice.selected.id,packagingSelection:{mode:packagingChoice.mode,explorationRate:packagingChoice.explorationRate,scores:packagingChoice.scores},scenes,assets,sourceFootage:input.sourceFootage,voice,estimatedCostUsd,actualCostUsd:editorialCostUsd+mediaCostUsd,containsSyntheticMedia:scenes.some((scene)=>scene.generated)||assets.some((asset)=>asset.generated)
   };
   event('PLAN', `Metered pre-render spend $${manifest.actualCostUsd.toFixed(4)} · conservative plan $${manifest.estimatedCostUsd.toFixed(4)} · editorial $${editorialCostUsd.toFixed(4)} · media $${mediaCostUsd.toFixed(4)} · cap $${input.maxCostUsd.toFixed(2)}`);
   if(Math.max(manifest.actualCostUsd,manifest.estimatedCostUsd)>input.maxCostUsd){event('BLOCKED',`Hard cost guard tripped before render: $${Math.max(manifest.actualCostUsd,manifest.estimatedCostUsd).toFixed(2)} / $${input.maxCostUsd.toFixed(2)}`);return{state:'BLOCKED',events,dossier,manifest,attention};}
