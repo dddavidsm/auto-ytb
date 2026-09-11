@@ -55,7 +55,9 @@ const cues = alignmentToSubtitleCues(manifest.voice?.alignment, {
   maxChars: manifest.captionPlan?.maxChars ?? 32,
   maxDurationSeconds: manifest.captionPlan?.maxDurationSeconds ?? 2.3,
 });
-const sceneAt = (time) => scenes.find((scene) => time >= Number(scene.startSec ?? 0) && time < Number(scene.startSec ?? 0) + Number(scene.durationSec ?? 0)) ?? (time < Number(scenes[0]?.startSec ?? 0) ? scenes[0] : scenes.at(-1));
+const sceneAt = (time) => scenes.find((scene) => time >= Number(scene.startSec ?? 0) && time < Number(scene.startSec ?? 0) + Number(scene.durationSec ?? 0))
+  ?? scenes.filter((scene) => Number(scene.startSec ?? 0) <= time).at(-1)
+  ?? scenes[0];
 const beatAt = (scene) => (manifest.script?.beats ?? []).find((beat) => scene?.id === beat.id || scene?.id?.startsWith(beat.id + '-s'));
 const cueAt = (time) => cues.find((cue) => time >= Number(cue.start ?? 0) && time < Number(cue.end ?? 0));
 const perSecond = samples.map(({ meanLuma, frame }, second) => {
