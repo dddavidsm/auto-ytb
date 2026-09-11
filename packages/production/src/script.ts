@@ -7,9 +7,10 @@ export function validateScript(script: VideoScript, dossier: ResearchDossier): s
   if (script.beats.length < 5) errors.push('Script needs at least 5 beats');
   if (script.beats[0]?.purpose !== 'hook') errors.push('First beat must be a hook');
   if (!script.beats.some((beat) => beat.purpose === 'payoff' || beat.purpose === 'reveal')) errors.push('Script needs a payoff/reveal');
-  const validSources = new Set(dossier.sources.map((source) => source.id));
+  const sourceKey = (value: string) => { try { return decodeURIComponent(value); } catch { return value; } };
+  const validSources = new Set(dossier.sources.map((source) => sourceKey(source.id)));
   for (const beat of script.beats) {
-    if (beat.sourceIds.some((sourceId) => !validSources.has(sourceId))) errors.push(`Beat ${beat.id} references an unknown source`);
+    if (beat.sourceIds.some((sourceId) => !validSources.has(sourceKey(sourceId)))) errors.push(`Beat ${beat.id} references an unknown source`);
   }
   return [...new Set(errors)];
 }
@@ -52,5 +53,14 @@ export async function generateScript(input: {
     schemaName: 'video_script',
     temperature: factClaimMode==='CREATIVE_ORIGINAL'?0.62:0.45,
   });
-  return { ...response.value, language: input.language ?? response.value.language ?? 'en', targetDurationSec };
+  // Grounding IDs sometimes arrive back from the text model with percent
+  // escapes decoded ("%3D" -> "="). Re-bind those aliases to the dossier's
+  // canonical IDs before QA so provenance remains exact and auditable.
+  const sourceKey = (value: string) => { try { return decodeURIComponent(value); } catch { return value; } };
+  const canonicalByKey = new Map(input.dossier.sources.map((source) => [sourceKey(source.id), source.id]));
+  const normalizedBeats = response.value.beats.map((beat) => ({
+    ...beat,
+    sourceIds: beat.sourceIds.map((sourceId) => canonicalByKey.get(sourceKey(sourceId)) ?? sourceId),
+  }));
+  return { ...response.value, beats: normalizedBeats, language: input.language ?? response.value.language ?? 'en', targetDurationSec };
 }

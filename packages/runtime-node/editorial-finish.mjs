@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 
 function run(command,args){return new Promise((res,rej)=>{const child=spawn(command,args,{stdio:['ignore','pipe','pipe']});let stderr='';child.stderr.on('data',(d)=>stderr+=d.toString());child.on('error',rej);child.on('close',(code)=>code===0?res():rej(new Error(`${command} exited ${code}: ${stderr.slice(-2200)}`)));});}
 const clean=(value)=>String(value??'').replace(/\s+/g,' ').trim();
+const textFileSafe=(value)=>String(value??'').replace(/%+/g,'%').replaceAll('%','\\%');
 const escapeFilterPath=(path)=>String(path).replaceAll('\\','/').replaceAll(':','\\:').replaceAll("'","\\'");
 
 function dialogueCues(script,plan){
@@ -106,8 +107,8 @@ export function withArchetypeEditorialFinish(renderer,options={}){
       const firstBeat=manifest.script?.beats?.[0];
       if(firstBeat?.purpose==='hook'&&firstBeat.onScreenText){
         const hookFile=join(captionWork,'hook.txt'),tagFile=join(captionWork,'hook-tag.txt');
-        await writeFile(hookFile,wrapHook(firstBeat.onScreenText,22),'utf8');
-        await writeFile(tagFile,'STOP SCROLLING  ·  REAL TEST','utf8');
+        await writeFile(hookFile,textFileSafe(wrapHook(firstBeat.onScreenText,22)),'utf8');
+        await writeFile(tagFile,textFileSafe('STOP SCROLLING  ·  REAL TEST'),'utf8');
         const hookStart=Number(firstBeat.startSec??0),hookEnd=hookStart+Math.min(3.6,Number(firstBeat.targetDurationSec??3.6));
         const hookEnable=`between(t\\,${hookStart.toFixed(3)}\\,${hookEnd.toFixed(3)})`;
         chain.push(`drawbox=x=iw*0.055:y=ih*0.07:w=iw*0.89:h=ih*0.21:color=0x070b12@0.80:t=fill:enable='${hookEnable}'`);
@@ -123,7 +124,7 @@ export function withArchetypeEditorialFinish(renderer,options={}){
         // each timed cue with drawtext instead: the box, outline and entrance
         // animation are deterministic and survive YouTube's transcode.
         const font=ffmpegFontOption();
-        for(let index=0;index<cues.length;index+=1){const file=join(captionWork,`cue-${index}.txt`);await writeFile(file,String(cues[index].text??'').trim(),'utf8');chain.push(captionDrawtext(cues[index],file,captionPlan,height,font));}
+        for(let index=0;index<cues.length;index+=1){const file=join(captionWork,`cue-${index}.txt`);await writeFile(file,textFileSafe(String(cues[index].text??'').trim()),'utf8');chain.push(captionDrawtext(cues[index],file,captionPlan,height,font));}
       }
       // Keep transitions motivated and deterministic: a short editorial flash
       // marks a real beat change without introducing a black frame or hiding

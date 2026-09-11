@@ -144,6 +144,7 @@ export class FfmpegRenderer {
     const kindFile = join(work, `procedural-kind-${index}.txt`);
     const metricFile = join(work, `procedural-metric-${index}.txt`);
     const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+    const textFileSafe = (value) => String(value ?? '').replace(/%+/g, '%').replaceAll('%', '\\%');
     const wrap = (value, max) => {
       const words = clean(value).split(' ').filter(Boolean);
       const lines = [];
@@ -169,10 +170,10 @@ export class FfmpegRenderer {
     const purpose = String(beat?.purpose ?? scene.kind).replaceAll('_', ' ').toUpperCase();
     const variant = (index + shotInBeat - 1) % 4;
     const metric = /million/i.test(`${beat?.narration} ${beat?.onScreenText}`) ? '3,000,000' : /thousand|1,000/i.test(`${beat?.narration} ${beat?.onScreenText}`) ? '1,000 / HR' : beat?.purpose === 'reveal' ? 'NOT READY' : beat?.purpose === 'payoff' ? 'NEXT\nHARNESS' : `${shotInBeat}/3`;
-    await writeFile(titleFile, wrap(title, width >= 1000 ? 22 : 18));
-    await writeFile(detailFile, wrap(detail, width >= 1000 ? 42 : 32));
-    await writeFile(kindFile, `${purpose}  //  SHOT ${String(index + 1).padStart(2, '0')}  //  ${shotInBeat}/3`);
-    await writeFile(metricFile, metric);
+    await writeFile(titleFile, textFileSafe(wrap(title, width >= 1000 ? 22 : 18)));
+    await writeFile(detailFile, textFileSafe(wrap(detail, width >= 1000 ? 42 : 32)));
+    await writeFile(kindFile, textFileSafe(`${purpose}  //  SHOT ${String(index + 1).padStart(2, '0')}  //  ${shotInBeat}/3`));
+    await writeFile(metricFile, textFileSafe(metric));
     const font = ffmpegFontOption();
     const fontPrefix = font ? `${font}:` : '';
     const fpath = (path) => escapeFfmpegFilterPath(path);
