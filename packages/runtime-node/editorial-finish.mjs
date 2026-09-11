@@ -37,6 +37,15 @@ function captionCues(manifest,plan){
   if(plan.source==='ON_SCREEN_CONTEXT')return contextCues(manifest.script);
   return[];
 }
+function captionKeyword(text){
+  const value=clean(text),matches=[
+    /\b3D\b/i,/\b(?:printed|print|printer)\b/i,/\b(?:moves?|movement)\b/i,
+    /\b(?:fingers?|pieces?|parts?|assembly|assembled)\b/i,/\b(?:grip|leverage|mechanical|motion)\b/i,
+    /\b(?:first|result|secret|real|watch)\b/i,/\b\d+(?:\.\d+)?%?\b/
+  ];
+  for(const pattern of matches){const match=pattern.exec(value);if(match)return{word:match[0],prefix:value.slice(0,match.index)};}
+  return null;
+}
 function styleFor(plan,height){
   const base=height>=1600?50:34,fontSize=Math.round(base*Number(plan.fontScale??1));
   const alignment=plan.position==='MIDDLE'?5:2;
@@ -45,19 +54,27 @@ function styleFor(plan,height){
   const outline=plan.preset==='EDITORIAL_CLEAN'?2:3;
   return `FontName=DejaVu Sans,FontSize=${fontSize},Bold=${bold},PrimaryColour=&H00FFFFFF,OutlineColour=&H00101010,BackColour=&H70000000,BorderStyle=1,Outline=${outline},Shadow=0,Alignment=${alignment},MarginV=${marginV},WrapStyle=2`;
 }
-function captionDrawtext(cue,file,plan,height,font){
+function captionDrawtext(cue,file,plan,height,font,keywordFile){
   const start=Number(cue.start??0),end=Number(cue.end??start+1);
   const margin=Math.round(height*(Number(plan.safeBottomPercent??8)/100));
   const size=Math.round((height>=1600?54:36)*Number(plan.fontScale??1));
   const y=plan.position==='MIDDLE'?'h*0.47':`h-${margin}-text_h`;
   const slide=`if(lt(t\\,${(start+0.12).toFixed(3)})\\,${y}+18*(1-(t-${start.toFixed(3)})/0.12)\\,${y})`;
-  const bold=plan.preset==='BOLD_SHORTS'||plan.preset==='DIALOGUE_SPEAKER'?'1':'0';
-  const accent=plan.preset==='BOLD_SHORTS'?'0xffd34e':'0x6ee7f9';
   const enable=`between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})`;
   // Minimal social-caption treatment: no opaque panel. The dark outline and
   // soft shadow preserve readability over moving footage while keeping the
   // subtitle visually integrated with the frame, like CapCut's clean presets.
-  return `drawtext=${font?`${font}:`:''}textfile='${escapeFilterPath(file)}':fontcolor=white:fontsize=${size}:borderw=3:bordercolor=0x080b12@0.96:shadowcolor=0x000000@0.75:shadowx=2:shadowy=3:box=0:x=(w-text_w)/2:y='${slide}':enable='${enable}':alpha='if(lt(t\\,${(start+0.12).toFixed(3)})\\,(t-${start.toFixed(3)})/0.12\\,1)':fix_bounds=1`;
+  const base=`drawtext=${font?`${font}:`:''}textfile='${escapeFilterPath(file)}':fontcolor=white:fontsize=${size}:borderw=3:bordercolor=0x080b12@0.96:shadowcolor=0x000000@0.75:shadowx=2:shadowy=3:box=0:x=(w-text_w)/2:y='${slide}':enable='${enable}':alpha='if(lt(t\\,${(start+0.12).toFixed(3)})\\,(t-${start.toFixed(3)})/0.12\\,1)':fix_bounds=1`;
+  if(!keywordFile||!plan.highlightKeywords)return base;
+  const keyword=captionKeyword(cue.text);
+  if(!keyword)return base;
+  // The keyword is drawn over the centered sentence. The measured estimate is
+  // deliberately conservative and keeps the accent aligned across Windows
+  // FFmpeg builds where text metrics differ slightly by font backend.
+  const fullWidth=Math.round(String(cue.text??'').length*size*0.52);
+  const prefixWidth=Math.round(keyword.prefix.length*size*0.52);
+  const accent=`drawtext=${font?`${font}:`:''}textfile='${escapeFilterPath(keywordFile)}':fontcolor=0xff3b30:fontsize=${size}:borderw=3:bordercolor=0x080b12@0.96:shadowcolor=0x000000@0.75:shadowx=2:shadowy=3:box=0:x='w/2-${Math.round(fullWidth/2)}+${prefixWidth}':y='${slide}':enable='${enable}':alpha='if(lt(t\\,${(start+0.12).toFixed(3)})\\,(t-${start.toFixed(3)})/0.12\\,1)':fix_bounds=1`;
+  return `${base},${accent}`;
 }
 function wrapHook(value,max=22){
   const words=String(value??'').replace(/\s+/g,' ').trim().split(' ').filter(Boolean),lines=[];let line='';
@@ -126,7 +143,7 @@ export function withArchetypeEditorialFinish(renderer,options={}){
         // each timed cue with drawtext instead: the box, outline and entrance
         // animation are deterministic and survive YouTube's transcode.
         const font=ffmpegFontOption();
-        for(let index=0;index<cues.length;index+=1){const file=join(captionWork,`cue-${index}.txt`);await writeFile(file,textFileSafe(String(cues[index].text??'').trim()),'utf8');chain.push(captionDrawtext(cues[index],file,captionPlan,height,font));}
+        for(let index=0;index<cues.length;index+=1){const cue=cues[index],file=join(captionWork,`cue-${index}.txt`);await writeFile(file,textFileSafe(String(cue.text??'').trim()),'utf8');let keywordFile=null;if(captionPlan?.highlightKeywords&&captionKeyword(cue.text)){keywordFile=join(captionWork,`cue-${index}-keyword.txt`);await writeFile(keywordFile,textFileSafe(captionKeyword(cue.text).word),'utf8');}chain.push(captionDrawtext(cue,file,captionPlan,height,font,keywordFile));}
       }
       // Keep transitions motivated and deterministic: a short editorial flash
       // marks a real beat change without introducing a black frame or hiding

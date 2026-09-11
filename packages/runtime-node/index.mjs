@@ -303,22 +303,17 @@ export class FfmpegRenderer {
       }
       const source = asset ? await this.materialize(asset.uri, join(work, `asset-${index}`)) : null;
       if (source && mimeFor(source).startsWith('image/')) {
-        const zoom = 1.12 + (index % 3) * 0.030;
-        const scaledWidth = Math.ceil(width * zoom / 2) * 2;
-        const scaledHeight = Math.ceil(height * zoom / 2) * 2;
-        const phase = (index % 5) * 0.7;
-        const motionX = `(in_w-out_w)*(0.5+0.32*sin(2*PI*t/1.7+${phase.toFixed(2)}))`;
-        const motionY = `(in_h-out_h)*(0.5+0.24*cos(2*PI*t/2.1+${phase.toFixed(2)}))`;
         const accent = index % 3 === 0 ? '0x6ea8fe' : index % 3 === 1 ? '0xffc857' : '0x63e6be';
-        const imageFilter = `scale=${scaledWidth}:${scaledHeight}:force_original_aspect_ratio=increase,crop=${width}:${height}:x='${motionX}':y='${motionY}',drawbox=x=0:y=0:w=iw*0.014:h=ih:color=${accent}@0.88:t=fill,drawbox=x=iw*0.07:y=ih*0.91:w=iw*0.86:h=ih*0.004:color=white@0.22:t=fill,format=yuv420p`;
+        const imageFilter = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2,drawbox=x=0:y=0:w=iw*0.014:h=ih:color=${accent}@0.88:t=fill,drawbox=x=iw*0.07:y=ih*0.91:w=iw*0.86:h=ih*0.004:color=white@0.22:t=fill,format=yuv420p`;
         await run(this.ffmpeg, ['-y','-loop','1','-i',source,'-t',String(duration),'-vf',imageFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
       } else if (source && mimeFor(source).startsWith('video/')) {
         const clipStart = Math.max(0, Number(asset?.metadata?.clipStartSec ?? 0));
         const clipEnd = asset?.metadata?.clipEndSec == null ? null : Math.max(clipStart, Number(asset.metadata.clipEndSec));
         const clipDuration = clipEnd == null ? duration : Math.max(0.2, Math.min(duration, clipEnd - clipStart));
-        const crop = String(asset?.metadata?.cropMode ?? 'CENTER') === 'SMART_CENTER'
-          ? `crop=${width}:${height}:(in_w-out_w)*(0.5+0.10*sin(2*PI*t/2.4)):(in_h-out_h)*(0.5+0.06*cos(2*PI*t/2.1))`
-          : `crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2`;
+        // SMART_CENTER means a stable intelligent center crop. Camera movement
+        // belongs to the supplied footage; adding a sinusoidal crop to every
+        // shot creates the dizzying effect viewers experience as motion sickness.
+        const crop = `crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2`;
         const clipWindow = clipEnd == null ? '' : `trim=duration=${clipDuration.toFixed(3)},tpad=stop_mode=clone:stop_duration=${Math.max(0,duration-clipDuration).toFixed(3)},setpts=PTS-STARTPTS,`;
         const videoFilter = `${clipWindow}scale=${width}:${height}:force_original_aspect_ratio=increase,${crop},format=yuv420p`;
         const inputArgs = ['-y','-stream_loop','-1'];

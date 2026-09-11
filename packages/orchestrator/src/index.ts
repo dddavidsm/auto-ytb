@@ -323,6 +323,7 @@ export async function runContentPipeline(input: {
   event('ASSETS', `Generating ${aspectRatio} scene visuals${isShort ? '' : ' plus thumbnail variants'}`);
   const assets: AssetRecord[] = [];
   const beatForScene=(scene:Scene)=>script.beats.find((beat)=>scene.id===beat.id||scene.id.startsWith(`${beat.id}-s`));
+  const sourceWindowUse=new Map<string,number>();
 
   for (const scene of scenes.filter((candidate) => !candidate.generated && ['broll','chart','motion_graphic','text','source_card'].includes(candidate.kind))) {
     if(scene.kind==='broll'){
@@ -335,7 +336,15 @@ export async function runContentPipeline(input: {
       )) ?? [];
       const footage=footageCandidates[Math.min(sceneIndex,Math.max(0,footageCandidates.length-1))];
       if(!footage)throw new Error(`Scene ${scene.id} selected source footage but no matching sourceFootage asset was supplied`);
-      assets.push({id:`footage-${scene.id}`,uri:footage.uri,mimeType:'video/mp4',provider:'user-source-footage',model:'source-clip-v1',costUsd:0,sceneId:scene.id,generated:false,sourceIds:scene.sourceIds,sourceUrl:footage.sourceUrl,license:footage.rightsStatus==='CLEARED'?footage.license:'verify-before-public',metadata:{kind:'broll',sourceFootageId:footage.id,title:footage.title??null,rightsStatus:footage.rightsStatus,clipStartSec:Math.max(0,Number(footage.startSec??0)),clipEndSec:footage.endSec==null?null:Math.max(0,Number(footage.endSec)),cropMode:footage.cropMode??'SMART_CENTER',sourceId:footage.sourceId??null,sourceRefs:scene.sourceRefs??[],instruction:scene.instruction}});
+      const baseStart=Math.max(0,Number(footage.startSec??0)),baseEnd=footage.endSec==null?null:Math.max(baseStart,Number(footage.endSec));
+      const shotDuration=Math.max(0.2,Number(scene.durationSec??1));
+      const usage=sourceWindowUse.get(footage.id)??0;
+      const available=baseEnd==null?null:Math.max(0,baseEnd-baseStart);
+      const offset=available==null?0:Math.min(Math.max(0,available-shotDuration),usage*shotDuration*0.82);
+      const clipStartSec=baseStart+offset;
+      const clipEndSec=baseEnd==null?null:Math.min(baseEnd,clipStartSec+shotDuration);
+      sourceWindowUse.set(footage.id,usage+1);
+      assets.push({id:`footage-${scene.id}`,uri:footage.uri,mimeType:'video/mp4',provider:'user-source-footage',model:'source-clip-v1',costUsd:0,sceneId:scene.id,generated:false,sourceIds:scene.sourceIds,sourceUrl:footage.sourceUrl,license:footage.rightsStatus==='CLEARED'?footage.license:'verify-before-public',metadata:{kind:'broll',sourceFootageId:footage.id,title:footage.title??null,rightsStatus:footage.rightsStatus,clipStartSec,clipEndSec,cropMode:footage.cropMode??'CENTER',sourceId:footage.sourceId??null,sourceRefs:scene.sourceRefs??[],instruction:scene.instruction,windowStrategy:'sequential-per-source-clip'}});
       continue;
     }
     const direct = scene.kind === 'source_card' ? scene.sourceRefs?.find((ref) => ref.policy === 'DIRECT_ASSET_ALLOWED' && ref.url) : undefined;
