@@ -174,11 +174,73 @@ export class FfmpegRenderer {
   }
 
   async renderProcedural({ scene, asset, beat, clip, work, index, width, height, duration }) {
+    const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+    const objectIntent = /\b(hand|hands|finger|fingers|piece|pieces|hinge|hinges|cable|cables|wrist|grasp|printer|printed|mechanical|device|object|assembly|assembled|filament|joint|joints)\b/i.test(`${clean(beat?.narration)} ${clean(beat?.visualIntent)} ${clean(scene.instruction)}`);
+    if (scene.kind === 'motion_graphic' && objectIntent) {
+      const font = ffmpegFontOption();
+      const fontPrefix = font ? `${font}:` : '';
+      const labelFile = join(work, `object-visualizer-${index}.txt`);
+      const label = /printer|filament|printed/i.test(`${beat?.narration} ${scene.instruction}`) ? 'PRINTED PARTS' : /cable|wrist|grasp/i.test(`${beat?.narration} ${scene.instruction}`) ? 'TENSION → GRIP' : 'MECHANICAL LINK';
+      await writeFile(labelFile, label);
+      const accent = scene.kind === 'motion_graphic' ? '0x63e6be' : '0xffc857';
+      const pulse = Math.max(0.2, duration);
+      const intentText = `${beat?.narration ?? ''} ${scene.instruction ?? ''}`;
+      const visualMode = /printer|filament|layer/i.test(intentText) ? 2 : /cable|wrist|grasp|tension/i.test(intentText) ? 3 : index % 2;
+      const objectShape = visualMode === 0 ? [
+        `drawbox=x=iw*0.25:y=ih*0.57:w=iw*0.50:h=ih*0.08:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.38:y=ih*0.43:w=iw*0.24:h=ih*0.16:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.29:y=ih*0.47:w=iw*0.07:h=ih*0.24:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.40:y=ih*0.34:w=iw*0.055:h=ih*0.30:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.48:y=ih*0.30:w=iw*0.055:h=ih*0.34:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.56:y=ih*0.34:w=iw*0.055:h=ih*0.30:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.64:y=ih*0.41:w=iw*0.055:h=ih*0.23:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.39:y=ih*0.58:w=iw*0.012:h=ih*0.22:color=${accent}:t=fill`,
+        `drawbox=x=iw*0.49:y=ih*0.58:w=iw*0.012:h=ih*0.24:color=${accent}:t=fill`,
+        `drawbox=x=iw*0.59:y=ih*0.58:w=iw*0.012:h=ih*0.22:color=${accent}:t=fill`,
+      ] : visualMode === 1 ? [
+        `drawbox=x=iw*0.16:y=ih*0.51:w=iw*0.16:h=ih*0.12:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*(0.37+0.025*sin(2*PI*t/1.7)):y=ih*0.41:w=iw*0.14:h=ih*0.12:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*(0.61-0.025*sin(2*PI*t/1.7)):y=ih*0.34:w=iw*0.15:h=ih*0.12:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.29:y=ih*0.66:w=iw*0.13:h=ih*0.10:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.48:y=ih*0.62:w=iw*0.13:h=ih*0.10:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.67:y=ih*0.56:w=iw*0.13:h=ih*0.10:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*(0.29+0.19*(0.5+0.5*sin(2*PI*t/1.9))):y=ih*0.58:w=iw*0.06:h=ih*0.018:color=${accent}:t=fill`,
+        `drawbox=x=iw*0.20:y=ih*0.78:w=iw*0.60:h=ih*0.006:color=${accent}@0.7:t=fill`,
+      ] : visualMode === 2 ? [
+        `drawbox=x=iw*0.18:y=ih*0.62:w=iw*0.64:h=ih*0.018:color=0xe9eef2@0.55:t=fill`,
+        `drawbox=x=iw*0.22:y=ih*0.66:w=iw*0.56:h=ih*0.018:color=0xe9eef2@0.70:t=fill`,
+        `drawbox=x=iw*0.26:y=ih*0.70:w=iw*0.48:h=ih*0.018:color=0xe9eef2@0.85:t=fill`,
+        `drawbox=x=iw*(0.18+0.54*(0.5+0.5*sin(2*PI*t/2.1))):y=ih*0.31:w=iw*0.14:h=ih*0.08:color=${accent}:t=fill`,
+        `drawbox=x=iw*(0.22+0.54*(0.5+0.5*sin(2*PI*t/2.1))):y=ih*0.39:w=iw*0.06:h=ih*0.20:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.14:y=ih*0.77:w=iw*0.72:h=ih*0.006:color=${accent}@0.7:t=fill`,
+      ] : [
+        `drawbox=x=iw*0.18:y=ih*0.43:w=iw*0.48:h=ih*0.14:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.62:y=ih*0.39:w=iw*0.16:h=ih*0.22:color=0xe9eef2@0.92:t=fill`,
+        `drawbox=x=iw*0.25:y=ih*0.57:w=iw*0.06:h=ih*0.24:color=${accent}:t=fill`,
+        `drawbox=x=iw*0.41:y=ih*0.57:w=iw*0.06:h=ih*0.24:color=${accent}:t=fill`,
+        `drawbox=x=iw*0.57:y=ih*0.57:w=iw*0.06:h=ih*0.24:color=${accent}:t=fill`,
+        `drawbox=x=iw*(0.18+0.44*(0.5+0.5*sin(2*PI*t/1.5))):y=ih*0.28:w=iw*0.09:h=ih*0.024:color=0xffc857:t=fill`,
+        `drawbox=x=iw*0.14:y=ih*0.78:w=iw*0.72:h=ih*0.006:color=${accent}@0.7:t=fill`,
+      ];
+      const filters = [
+        `drawbox=x=0:y=0:w=iw:h=ih:color=0x071016:t=fill`,
+        `drawbox=x=iw*0.08:y=ih*0.12:w=iw*0.84:h=ih*0.004:color=${accent}@0.8:t=fill`,
+        `drawtext=${fontPrefix}textfile='${escapeFfmpegFilterPath(labelFile)}':fontcolor=${accent}:fontsize=${Math.max(24, Math.round(height*0.018))}:x=w*0.10:y=h*0.16`,
+        ...objectShape,
+        `drawbox=x=iw*(0.16+0.58*min(1\,t/${pulse.toFixed(3)})):y=ih*0.76:w=iw*0.10:h=ih*0.014:color=0xffc857:t=fill`,
+        `drawbox=x=iw*0.15:y=ih*0.76:w=iw*0.68:h=ih*0.004:color=white@0.25:t=fill`,
+        `drawtext=${fontPrefix}text='OBJECT ACTION':fontcolor=white@0.82:fontsize=${Math.max(20, Math.round(height*0.014))}:x=w*0.10:y=h*0.84`,
+        `drawbox=x=iw*0.08:y=ih*0.91:w=iw*0.84:h=ih*0.006:color=${accent}@0.75:t=fill`,
+        'format=yuv420p',
+      ];
+      const safeFilters=filters.map((value)=>value.replace('min(1,t/','min(1\\,t/'));
+      await run(this.ffmpeg, ['-y','-f','lavfi','-i',`color=c=0x071016:s=${width}x${height}:r=${this.fps}:d=${duration}`,'-vf',safeFilters.join(','),'-an','-c:v','libx264','-preset','veryfast',clip]);
+      return;
+    }
     const titleFile = join(work, `procedural-title-${index}.txt`);
     const detailFile = join(work, `procedural-detail-${index}.txt`);
     const kindFile = join(work, `procedural-kind-${index}.txt`);
     const metricFile = join(work, `procedural-metric-${index}.txt`);
-    const clean = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
     const textFileSafe = (value) => String(value ?? '').replace(/%+/g, '%').replaceAll('%', '\\%');
     const wrap = (value, max) => {
       const words = clean(value).split(' ').filter(Boolean);
@@ -326,15 +388,18 @@ export class FfmpegRenderer {
     await mkdir(work, { recursive: true });
     const clips = [];
     let timelineCursor = 0;
-    const freezeFrame = async (source, duration, index, position) => {
-      const frame = join(work, `freeze-${index}-${position}.png`);
-      const frozen = join(work, `freeze-${index}-${position}.mp4`);
-      const frameArgs = position === 'first'
-        ? ['-y','-i',source,'-frames:v','1',frame]
-        : ['-y','-sseof','-0.05','-i',source,'-frames:v','1',frame];
-      await run(this.ffmpeg, frameArgs);
-      await run(this.ffmpeg, ['-y','-loop','1','-i',frame,'-t',duration.toFixed(3),'-vf',`scale=${width}:${height},format=yuv420p`,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',frozen]);
-      return frozen;
+    const motionBridge = async (source, duration, index, position) => {
+      const sample = join(work, `bridge-sample-${index}-${position}.mp4`);
+      const bridge = join(work, `bridge-${index}-${position}.mp4`);
+      const bridgeWindow = Math.max(0.18, Math.min(0.6, duration));
+      const inputArgs = position === 'first'
+        ? ['-y','-i',source]
+        : ['-y','-sseof',String(-bridgeWindow),'-i',source];
+      const bridgeFilter = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2,setpts=PTS-STARTPTS,format=yuv420p`;
+      await run(this.ffmpeg, [...inputArgs,'-t',bridgeWindow.toFixed(3),'-vf',bridgeFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',sample]);
+      if (duration <= bridgeWindow + 0.01) return sample;
+      await run(this.ffmpeg, ['-y','-stream_loop','-1','-i',sample,'-t',duration.toFixed(3),'-vf','setpts=PTS-STARTPTS,format=yuv420p','-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',bridge]);
+      return bridge;
     };
     for (let index = 0; index < manifest.scenes.length; index += 1) {
       const scene = manifest.scenes[index];
@@ -344,7 +409,17 @@ export class FfmpegRenderer {
       const duration = Math.max(0.2, Number(scene.durationSec));
       if (asset?.uri?.startsWith('procedural://')) {
         await this.renderProcedural({ scene, asset, beat, clip, work, index, width, height, duration });
+        const sceneStart = Math.max(0, Number(scene.startSec ?? timelineCursor));
+        const gap = sceneStart - timelineCursor;
+        if (gap > 0.015) {
+          const source = clips.at(-1) ?? clip;
+          const bridge = await motionBridge(source, gap, index, clips.length ? 'last' : 'first');
+          if (clips.length) clips.push(bridge);
+          else clips.unshift(bridge);
+          timelineCursor = sceneStart;
+        }
         clips.push(clip);
+        timelineCursor = Math.max(timelineCursor, sceneStart + duration);
         continue;
       }
       const source = asset ? await this.materialize(asset.uri, join(work, `asset-${index}`)) : null;
@@ -355,14 +430,13 @@ export class FfmpegRenderer {
       } else if (source && mimeFor(source).startsWith('video/')) {
         const clipStart = Math.max(0, Number(asset?.metadata?.clipStartSec ?? 0));
         const clipEnd = asset?.metadata?.clipEndSec == null ? null : Math.max(clipStart, Number(asset.metadata.clipEndSec));
-        const clipDuration = clipEnd == null ? duration : Math.max(0.2, Math.min(duration, clipEnd - clipStart));
         // SMART_CENTER means a stable intelligent center crop. Camera movement
         // belongs to the supplied footage; adding a sinusoidal crop to every
         // shot creates the dizzying effect viewers experience as motion sickness.
         const crop = `crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2`;
-        const clipWindow = clipEnd == null ? '' : `trim=duration=${clipDuration.toFixed(3)},tpad=stop_mode=clone:stop_duration=${Math.max(0,duration-clipDuration).toFixed(3)},setpts=PTS-STARTPTS,`;
-        const videoFilter = `${clipWindow}scale=${width}:${height}:force_original_aspect_ratio=increase,${crop},format=yuv420p`;
-        const inputArgs = ['-y','-stream_loop','-1'];
+        const videoFilter = `scale=${width}:${height}:force_original_aspect_ratio=increase,${crop},format=yuv420p`;
+        const inputArgs = ['-y'];
+        if (clipEnd == null) inputArgs.push('-stream_loop','-1');
         if (clipStart > 0) inputArgs.push('-ss',String(clipStart));
         inputArgs.push('-i',source,'-t',String(duration),'-vf',videoFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip);
         await run(this.ffmpeg, inputArgs);
@@ -373,9 +447,9 @@ export class FfmpegRenderer {
       const gap = sceneStart - timelineCursor;
       if (gap > 0.015) {
         const source = clips.at(-1) ?? clip;
-        const frozen = await freezeFrame(source, gap, index, clips.length ? 'last' : 'first');
-        if (clips.length) clips.push(frozen);
-        else clips.unshift(frozen);
+        const bridge = await motionBridge(source, gap, index, clips.length ? 'last' : 'first');
+        if (clips.length) clips.push(bridge);
+        else clips.unshift(bridge);
         timelineCursor = sceneStart;
       }
       clips.push(clip);

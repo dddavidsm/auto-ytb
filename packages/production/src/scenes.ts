@@ -132,8 +132,9 @@ function eligibleSourceClips(beat:ScriptBeat, sourceFootage:SourceFootage[] = []
   );
 }
 
-function pickDiverseSourceClip(candidates:SourceFootage[], usage:Map<string,number>, recentIds:string[], recentUris:string[]):SourceFootage|undefined{
-  const ranked=[...candidates].sort((a,b)=>{
+function pickDiverseSourceClip(candidates:SourceFootage[], usage:Map<string,number>, recentIds:string[], recentUris:string[], requiredDuration:number):SourceFootage|undefined{
+  const durationReady=candidates.filter((item)=>item.endSec==null||item.startSec==null||Number(item.endSec)-Number(item.startSec)>=requiredDuration-0.05);
+  const ranked=[...(durationReady.length?durationReady:candidates)].sort((a,b)=>{
     const aUses=usage.get(a.id)??0;
     const bUses=usage.get(b.id)??0;
     const aFresh=aUses===0?1:0;
@@ -146,12 +147,10 @@ function pickDiverseSourceClip(candidates:SourceFootage[], usage:Map<string,numb
     const bDifferentUri=recentUris.includes(b.uri)?0:1;
     return bDifferentUri-aDifferentUri;
   });
-  // Prefer a fresh source window. A second use is only a fallback and cannot
-  // follow the same source id immediately. Once candidates are exhausted,
-  // callers deliberately choose another visual treatment instead of looping
-  // the same video through the rest of the narration.
-  return ranked.find((item)=>(usage.get(item.id)??0)===0)
-    ?? ranked.find((item)=>(usage.get(item.id)??0)<2 && !recentIds.includes(item.id));
+  // Use each supplied source clip once. If no fresh, duration-ready clip is
+  // available, callers deliberately choose another visual treatment instead
+  // of looping the same source through the rest of the narration.
+  return ranked.find((item)=>(usage.get(item.id)??0)===0 && !recentIds.includes(item.id));
 }
 
 export function planScenes(script: VideoScript, options: ScenePlanningOptions = {}): Scene[] {
@@ -166,7 +165,7 @@ export function planScenes(script: VideoScript, options: ScenePlanningOptions = 
     const sourceRefs = buildVisualSourceRefs(beat.sourceIds, options.sources ?? []);
     for (let index = 0; index < sceneCount; index += 1) {
       const visualValue = scoreVisualValue(beat,index);
-      const sourceClip=pickDiverseSourceClip(eligibleSourceClips(beat,options.sourceFootage),sourceUsage,recentSourceIds,recentSourceUris);
+      const sourceClip=pickDiverseSourceClip(eligibleSourceClips(beat,options.sourceFootage),sourceUsage,recentSourceIds,recentSourceUris,duration);
       const choice = chooseSceneKind(beat,index,visualValue,sourceRefs.length>0,{...options,selectedSourceClip:sourceClip});
       if(sourceClip){
         sourceUsage.set(sourceClip.id,(sourceUsage.get(sourceClip.id)??0)+1);
