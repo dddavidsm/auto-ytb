@@ -130,7 +130,7 @@ export function withArchetypeEditorialFinish(renderer,options={}){
       // the incoming visual behind a generic fade.
       for(let index=0;index<boundaries.length;index+=1){
         const boundary=boundaries[index],color=index%2?'0xffc857':'0x6ea8fe';
-        chain.push(`drawbox=x=0:y=0:w=iw:h=ih:color=${color}@0.12:t=fill:enable='between(t\\,${Math.max(0,boundary-0.035).toFixed(3)}\\,${(boundary+0.085).toFixed(3)})'`);
+        chain.push(`drawbox=x=0:y=0:w=iw:h=ih:color=${color}@0.07:t=fill:enable='between(t\\,${Math.max(0,boundary-0.025).toFixed(3)}\\,${(boundary+0.060).toFixed(3)})'`);
       }
       if(chain.length){filters.push(`${current}${chain.map((item,index)=>`${index?',':''}${item}`).join('')}[finished]`);current='[finished]';}
       const needsReencode=filters.length>0;

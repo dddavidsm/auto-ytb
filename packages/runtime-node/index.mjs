@@ -192,8 +192,8 @@ export class FfmpegRenderer {
       text(kindFile, `fontcolor=${accent}:fontsize=${Math.max(22, Math.round(height * 0.015))}:x=w*0.09:y=h*0.12`),
       text(titleFile, `fontcolor=white:fontsize=${titleSize}:line_spacing=12:x=w*0.09-min(w*0.035\\,w*0.035*t/0.35):y=h*0.17:shadowcolor=black@0.7:shadowx=3:shadowy=3`),
       text(detailFile, `fontcolor=0xdbe7f5@0.86:fontsize=${detailSize}:line_spacing=8:x=w*0.09:y=h*0.34`),
-      `drawbox=x=iw*(0.10+0.78*(0.5+0.5*sin(2*PI*t/2.8))):y=ih*0.43:w=iw*0.008:h=ih*0.34:color=${accent}@0.28:t=fill`,
-      `drawbox=x=iw*0.13:y=ih*(0.43+0.20*(0.5+0.5*sin(2*PI*t/3.6))):w=iw*0.74:h=ih*0.004:color=white@0.16:t=fill`,
+      `drawbox=x=iw*(0.08+0.82*(0.5+0.5*sin(2*PI*t/1.65))):y=ih*0.43:w=iw*0.018:h=ih*0.34:color=${accent}@0.55:t=fill`,
+      `drawbox=x=iw*0.10:y=ih*(0.43+0.22*(0.5+0.5*sin(2*PI*t/2.2))):w=iw*0.80:h=ih*0.008:color=white@0.34:t=fill`,
       `drawbox=x=iw*0.12:y=ih*0.405:w=iw*0.76:h=ih*0.038:color=${accent}@0.10:t=fill:enable='between(t\\,0\\,1.15)'`,
       `drawbox=x=iw*0.12:y=ih*0.405:w=iw*0.76:h=ih*0.038:color=0xffc857@0.12:t=fill:enable='between(t\\,1.15\\,2.30)'`,
       `drawbox=x=iw*0.12:y=ih*0.405:w=iw*0.76:h=ih*0.038:color=0x63e6be@0.13:t=fill:enable='between(t\\,2.30\\,${Math.max(2.31, duration)})'`,
@@ -297,12 +297,12 @@ export class FfmpegRenderer {
       }
       const source = asset ? await this.materialize(asset.uri, join(work, `asset-${index}`)) : null;
       if (source && mimeFor(source).startsWith('image/')) {
-        const zoom = 1.08 + (index % 3) * 0.025;
+        const zoom = 1.12 + (index % 3) * 0.030;
         const scaledWidth = Math.ceil(width * zoom / 2) * 2;
         const scaledHeight = Math.ceil(height * zoom / 2) * 2;
         const phase = (index % 5) * 0.7;
-        const motionX = `(in_w-out_w)*(0.5+0.22*sin(2*PI*t/${Math.max(0.2, duration)}+${phase.toFixed(2)}))`;
-        const motionY = `(in_h-out_h)*(0.5+0.16*cos(2*PI*t/${Math.max(0.2, duration)}+${phase.toFixed(2)}))`;
+        const motionX = `(in_w-out_w)*(0.5+0.32*sin(2*PI*t/1.7+${phase.toFixed(2)}))`;
+        const motionY = `(in_h-out_h)*(0.5+0.24*cos(2*PI*t/2.1+${phase.toFixed(2)}))`;
         const accent = index % 3 === 0 ? '0x6ea8fe' : index % 3 === 1 ? '0xffc857' : '0x63e6be';
         const imageFilter = `scale=${scaledWidth}:${scaledHeight}:force_original_aspect_ratio=increase,crop=${width}:${height}:x='${motionX}':y='${motionY}',drawbox=x=0:y=0:w=iw*0.014:h=ih:color=${accent}@0.88:t=fill,drawbox=x=iw*0.07:y=ih*0.91:w=iw*0.86:h=ih*0.004:color=white@0.22:t=fill,format=yuv420p`;
         await run(this.ffmpeg, ['-y','-loop','1','-i',source,'-t',String(duration),'-vf',imageFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
