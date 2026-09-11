@@ -194,6 +194,7 @@ export class FfmpegRenderer {
       text(detailFile, `fontcolor=0xdbe7f5@0.86:fontsize=${detailSize}:line_spacing=8:x=w*0.09:y=h*0.34`),
       `drawbox=x=iw*(0.08+0.82*(0.5+0.5*sin(2*PI*t/1.65))):y=ih*0.43:w=iw*0.018:h=ih*0.34:color=${accent}@0.55:t=fill`,
       `drawbox=x=iw*0.10:y=ih*(0.43+0.22*(0.5+0.5*sin(2*PI*t/2.2))):w=iw*0.80:h=ih*0.008:color=white@0.34:t=fill`,
+      `drawbox=x=iw*(0.14+0.68*(0.5+0.5*sin(2*PI*t/2.70))):y=ih*(0.50+0.07*cos(2*PI*t/1.90)):w=iw*0.09:h=ih*0.08:color=${accent}@0.34:t=fill`,
       `drawbox=x=iw*0.12:y=ih*0.405:w=iw*0.76:h=ih*0.038:color=${accent}@0.10:t=fill:enable='between(t\\,0\\,1.15)'`,
       `drawbox=x=iw*0.12:y=ih*0.405:w=iw*0.76:h=ih*0.038:color=0xffc857@0.12:t=fill:enable='between(t\\,1.15\\,2.30)'`,
       `drawbox=x=iw*0.12:y=ih*0.405:w=iw*0.76:h=ih*0.038:color=0x63e6be@0.13:t=fill:enable='between(t\\,2.30\\,${Math.max(2.31, duration)})'`,
@@ -269,6 +270,10 @@ export class FfmpegRenderer {
       filters.push(`drawtext=${fontPrefix}text='CONFLICT':fontcolor=white@0.78:fontsize=${Math.max(20, Math.round(height * 0.014))}:x=w*0.43:y=h*0.775`);
       filters.push(`drawtext=${fontPrefix}text='RESULT':fontcolor=white@0.78:fontsize=${Math.max(20, Math.round(height * 0.014))}:x=w*0.69:y=h*0.775`);
     }
+    // A broad scan window creates a readable, purposeful visual pulse instead
+    // of leaving several narration seconds on an apparently static card.
+    filters.push(`drawbox=x=iw*(0.10+0.68*(0.5+0.5*sin(2*PI*t/2.70))):y=ih*(0.47+0.04*cos(2*PI*t/1.90)):w=iw*0.22:h=ih*0.27:color=${accent}@0.14:t=fill`);
+    filters.push(`drawbox=x=iw*(0.10+0.68*(0.5+0.5*sin(2*PI*t/2.70))):y=ih*0.47:w=iw*0.010:h=ih*0.27:color=white@0.42:t=fill`);
     filters.push(`drawbox=x=${margin}:y=ih-${margin}:w=(iw-${margin * 2})*min(1\\,t/${Math.max(0.2, duration)}):h=${barH}:color=${accent}:t=fill`);
     filters.push(`drawbox=x=${margin}:y=ih-${margin}:w=iw-${margin * 2}:h=${barH}:color=white@0.16:t=5`);
     filters.push(`drawbox=x=iw*0.90:y=ih*0.12:w=iw*0.035:h=ih*0.035:color=${accent}@0.85:t=fill`);
