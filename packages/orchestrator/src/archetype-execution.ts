@@ -87,7 +87,7 @@ export function buildArchetypeExecutionPlan(decision: ContentArchetypeRuntimeDec
     preferredFormats,
     targetSceneDurationSec,
     generativeSpendBias,
-    requiredCapabilities:{search:researchRequired,voice:voiceMode!=='NONE',image:true,video:visualMode==='GENERATIVE_FIRST'||visualMode==='CHARACTER_CONTINUITY'},
+    requiredCapabilities:{search:researchRequired,voice:voiceMode!=='NONE',image:true,video:contentFormat==='SHORT_VERTICAL'||visualMode==='GENERATIVE_FIRST'||visualMode==='CHARACTER_CONTINUITY'},
   };
 }
 

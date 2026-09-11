@@ -54,7 +54,10 @@ function captionDrawtext(cue,file,plan,height,font){
   const bold=plan.preset==='BOLD_SHORTS'||plan.preset==='DIALOGUE_SPEAKER'?'1':'0';
   const accent=plan.preset==='BOLD_SHORTS'?'0xffd34e':'0x6ee7f9';
   const enable=`between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})`;
-  return `drawtext=${font?`${font}:`:''}textfile='${escapeFilterPath(file)}':fontcolor=white:fontsize=${size}:borderw=4:bordercolor=0x080b12:box=1:boxcolor=0x080b12@0.88:boxborderw=18:x=(w-text_w)/2:y='${slide}':enable='${enable}':alpha='if(lt(t\\,${(start+0.12).toFixed(3)})\\,(t-${start.toFixed(3)})/0.12\\,1)':fix_bounds=1`;
+  // Minimal social-caption treatment: no opaque panel. The dark outline and
+  // soft shadow preserve readability over moving footage while keeping the
+  // subtitle visually integrated with the frame, like CapCut's clean presets.
+  return `drawtext=${font?`${font}:`:''}textfile='${escapeFilterPath(file)}':fontcolor=white:fontsize=${size}:borderw=3:bordercolor=0x080b12@0.96:shadowcolor=0x000000@0.75:shadowx=2:shadowy=3:box=0:x=(w-text_w)/2:y='${slide}':enable='${enable}':alpha='if(lt(t\\,${(start+0.12).toFixed(3)})\\,(t-${start.toFixed(3)})/0.12\\,1)':fix_bounds=1`;
 }
 function wrapHook(value,max=22){
   const words=String(value??'').replace(/\s+/g,' ').trim().split(' ').filter(Boolean),lines=[];let line='';

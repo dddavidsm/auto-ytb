@@ -256,6 +256,7 @@ export async function runContentPipeline(input: {
       scene.instruction,
       beatContext?`Production beat context for subject/cast grounding: ${beatContext}`:'',
       `Compose natively for ${aspectRatio}; keep the focal subject readable on a phone screen. The visual must explain, prove, escalate or refresh the viewer promise rather than act as generic decoration.`,
+      scene.kind === 'ai_video' ? 'Depict one concrete observable action from this beat with a clear before→during→after state change; use motivated camera movement, subject movement or transformation. Do not make a still image with a zoom, floating text, fake UI or unrelated montage.' : '',
     ].filter(Boolean).join(' ');
     const generated = scene.kind === 'ai_video'
       ? await input.videoProvider!.generate({ prompt:visualPrompt, durationSeconds: Math.min(scene.durationSec, 8), aspectRatio })

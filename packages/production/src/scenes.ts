@@ -59,6 +59,16 @@ function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, h
     && index<=2
     && ['hook','escalation','reveal','payoff'].includes(beat.purpose);
   if(visualMode==='GENERATIVE_FIRST'||visualMode==='CHARACTER_CONTINUITY')return chooseGenerativeFirst(beat,index,visualValue,bias,visualMode);
+  // A vertical explainer needs real motion at the narrative anchors. Procedural
+  // cards remain useful for evidence, but the hook/escalation/payoff should
+  // change state on screen instead of becoming a slideshow with a pan effect.
+  const nativeShortVideoAnchor=Number(options.targetSceneDurationSec??10)<=8
+    && index===0
+    && ['hook','escalation','reveal','payoff'].includes(beat.purpose)
+    && bias>=0.45;
+  if(nativeShortVideoAnchor){
+    return {kind:'ai_video',generated:true,costTier:'premium',selectionReason:`Native Short anchor requires an observable action/state change for ${beat.purpose}; video spend bias ${bias.toFixed(2)}.`};
+  }
   if (hasQuantitativeIntent(beat) && (beat.purpose === 'evidence' || beat.purpose === 'setup')) {
     return { kind:'chart', generated:false, costTier:'free', selectionReason:'Quantitative/evidence beat is clearer and cheaper as a procedural chart.' };
   }
