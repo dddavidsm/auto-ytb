@@ -12,7 +12,7 @@ export function buildCaptionPlan(execution:ContentExecutionPlan,contentFormat:Pr
     return{version:1,mode:'SPEAKER_AWARE',enabled:true,burnIn:true,preset:'DIALOGUE_SPEAKER',source:'SCRIPT_DIALOGUE',maxChars:short?34:46,maxDurationSeconds:short?2.3:3.5,maxLines:2,position:'BOTTOM',safeBottomPercent:short?18:8,fontScale:short?1.04:0.9,speakerAware:true,highlightKeywords:false,uppercase:false};
   }
   const bold=short&&['TOP_LIST','ANIMAL_TOPS','ORIGINAL_COMEDY'].includes(id);
-  return{version:1,mode:'FULL_SPEECH',enabled:true,burnIn:true,preset:bold?'BOLD_SHORTS':'EDITORIAL_CLEAN',source:'VOICE_ALIGNMENT',maxChars:short?32:48,maxDurationSeconds:short?2.3:4,maxLines:2,position:short?'LOWER_MIDDLE':'BOTTOM',safeBottomPercent:short?20:7,fontScale:short?1.06:0.86,speakerAware:false,highlightKeywords:short,uppercase:false};
+  return{version:1,mode:'FULL_SPEECH',enabled:true,burnIn:true,preset:bold?'BOLD_SHORTS':'EDITORIAL_CLEAN',source:'VOICE_ALIGNMENT',maxChars:short?52:48,maxDurationSeconds:short?3.6:4,maxLines:2,position:short?'LOWER_MIDDLE':'BOTTOM',safeBottomPercent:short?22:7,fontScale:short?1.1:0.86,speakerAware:false,highlightKeywords:short,uppercase:false};
 }
 
 export function buildEditPlan(execution:ContentExecutionPlan,contentFormat:ProductionContentFormat):EditPlan{

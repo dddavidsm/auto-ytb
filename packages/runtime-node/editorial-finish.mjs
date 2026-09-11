@@ -46,6 +46,41 @@ function captionKeyword(text){
   for(const pattern of matches){const match=pattern.exec(value);if(match)return{word:match[0],prefix:value.slice(0,match.index)};}
   return null;
 }
+function assTime(seconds){
+  const value=Math.max(0,Number(seconds??0)),hours=Math.floor(value/3600),minutes=Math.floor((value%3600)/60),secs=value%60;
+  return `${hours}:${String(minutes).padStart(2,'0')}:${secs.toFixed(2).padStart(5,'0')}`;
+}
+function assText(value){return String(value??'').replace(/\\/g,'\\\\').replace(/[{}]/g,(match)=>`\\${match}`).replace(/\r?\n/g,'\\N');}
+function wrapCaption(value,maxChars=35){
+  const words=clean(value).split(' ').filter(Boolean),lines=[];let line='';
+  for(const word of words){if(!line){line=word;continue;}if(`${line} ${word}`.length>maxChars){lines.push(line);line=word;}else line=`${line} ${word}`;}
+  if(line)lines.push(line);
+  if(lines.length>1&&lines.at(-1).split(' ').length===1){const last=lines.pop(),previous=lines.pop(),parts=previous.split(' '),moved=parts.pop();lines.push(parts.join(' '),`${moved} ${last}`);}
+  return lines.slice(0,2);
+}
+function highlightAss(value,keyword){
+  const tokens=String(value??'').match(/\s+|\S+/g)??[];let used=false;
+  return tokens.map((token)=>{
+    if(used||/^\s+$/.test(token))return assText(token);
+    const match=token.match(/^([^A-Za-z0-9]*)([A-Za-z0-9]+)([^A-Za-z0-9]*)$/);
+    if(!match||match[2].toLowerCase()!==String(keyword?.word??'').toLowerCase())return assText(token);
+    used=true;
+    return `${assText(match[1])}{\\c&H00303BFF&}${assText(match[2])}{\\c&H00FFFFFF&}${assText(match[3])}`;
+  }).join('');
+}
+function captionAss(cues,plan,width,height){
+  const fontsize=Math.round((height>=1600?58:38)*Number(plan?.fontScale??1));
+  const maxLineChars=height>=1600?35:52;
+  const y=plan?.position==='MIDDLE'?Math.round(height*0.5):plan?.position==='BOTTOM'?Math.round(height*0.9):Math.round(height*0.77);
+  const lines=cues.map((cue)=>{
+    const keyword=plan?.highlightKeywords?captionKeyword(String(cue.text??'')):null;
+    const text=wrapCaption(cue.text,maxLineChars).map((line)=>highlightAss(line,keyword)).join('\\N');
+    const start=Number(cue.start??0),end=Number(cue.end??start+1),intro=Math.min(0.12,Math.max(0.07,(end-start)*0.08)),outro=Math.min(0.1,Math.max(0.07,(end-start)*0.07));
+    const move=`{\\an2\\move(${Math.round(width/2)},${y+18},${Math.round(width/2)},${y},0,${Math.round(intro*1000)})\\fad(${Math.round(intro*1000)},${Math.round(outro*1000)})}`;
+    return `Dialogue: 0,${assTime(start)},${assTime(end)},Default,,0,0,0,${move}${text}`;
+  });
+  return `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,DejaVu Sans,${fontsize},&H00FFFFFF,&H00FFFFFF,&HCC101010,&HFF000000,0,0,0,0,100,100,0,0,1,3,2,2,70,70,0,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, Effect, Text\n${lines.join('\n')}\n`;
+}
 function styleFor(plan,height){
   const base=height>=1600?50:34,fontSize=Math.round(base*Number(plan.fontScale??1));
   const alignment=plan.position==='MIDDLE'?5:2;
@@ -118,9 +153,9 @@ export function withArchetypeEditorialFinish(renderer,options={}){
       const cues=captionCues(manifest,captionPlan);
       const width=Number(manifest.frame?.width??(manifest.contentFormat==='SHORT_VERTICAL'?1080:1920)),height=Number(manifest.frame?.height??(manifest.contentFormat==='SHORT_VERTICAL'?1920:1080));
       const punches=punchIntervals(manifest,editPlan),boundaries=transitionBoundaries(manifest,editPlan);
-      let subtitlePath=null;
+      let subtitlePath=null,assPath=null;
       const captionWork=await mkdtemp(join(tmpdir(),'auto-ytb-caption-'));
-      if(cues.length){subtitlePath=renderPath.replace(/\.[^.]+$/,'.burn.srt');await writeFile(subtitlePath,subtitlesToSrt(cues),'utf8');}
+      if(cues.length){subtitlePath=renderPath.replace(/\.[^.]+$/,'.burn.srt');assPath=renderPath.replace(/\.[^.]+$/,'.burn.ass');await writeFile(subtitlePath,subtitlesToSrt(cues),'utf8');await writeFile(assPath,captionAss(cues,captionPlan,width,height),'utf8');}
       const filters=[];let current='[0:v]';
       if(punches.length){
         const enable=punches.map(([start,end])=>`between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})`).join('+');
@@ -145,12 +180,11 @@ export function withArchetypeEditorialFinish(renderer,options={}){
       // against the whole timeline therefore blackens every preceding scene. Until
       // transitions are rendered from separately trimmed segments, keep the
       // documentary transition plan as hard cuts rather than producing invalid video.
-      if(subtitlePath){
-        // libass styling is not consistent across Windows FFmpeg builds. Burn
-        // each timed cue with drawtext instead: the box, outline and entrance
-        // animation are deterministic and survive YouTube's transcode.
-        const font=ffmpegFontOption();
-        for(let index=0;index<cues.length;index+=1){const cue=cues[index],fullText=String(cue.text??'').trim(),file=join(captionWork,`cue-${index}.txt`),keyword=captionPlan?.highlightKeywords?captionKeyword(fullText):null;await writeFile(file,textFileSafe(fullText),'utf8');let files={full:file,before:null,keyword:null,after:null};if(keyword){const rawAfter=fullText.slice(keyword.prefix.length+keyword.word.length);files={full:file,before:join(captionWork,`cue-${index}-before.txt`),keyword:join(captionWork,`cue-${index}-keyword.txt`),after:join(captionWork,`cue-${index}-after.txt`)};await writeFile(files.before,textFileSafe(keyword.prefix.replace(/\s+$/,'')),'utf8');await writeFile(files.keyword,textFileSafe(keyword.word),'utf8');await writeFile(files.after,textFileSafe(rawAfter.replace(/^\s+/,'')),'utf8');}chain.push(captionDrawtext(cue,files,captionPlan,height,font,keyword));}
+      if(assPath){
+        // ASS keeps the entire caption as one timed dialogue event. Inline
+        // colour tags highlight one word without drawing a second sentence on
+        // top, while libass handles exact centering and line wrapping.
+        chain.push(`subtitles=filename='${escapeFilterPath(assPath)}'`);
       }
       // Keep transitions motivated and deterministic: a short editorial flash
       // marks a real beat change without introducing a black frame or hiding

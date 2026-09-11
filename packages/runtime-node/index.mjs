@@ -47,21 +47,56 @@ export function alignmentToSubtitleCues(alignment, options = {}) {
   flush();
   const maxChars = Math.max(18, Number(options.maxChars ?? 44));
   const maxDuration = Math.max(1.2, Number(options.maxDurationSeconds ?? 3.6));
+  const minWords = Math.max(3, Number(options.minWords ?? 4));
   const cues = [];
-  let current = null;
+  const sentenceEnd = /[.!?…]$/;
+  const clauseEnd = /[,;:]$/;
+  const clauseLead = /^(because|when|once|while|although|but|so|that)$/i;
+  const weakCutWord = /^(a|an|the|to|of|by|and|or|with|from|into|through|their|own|its)$/i;
+  const makeCue = (part) => ({ text:part.map((word) => word.text).join(' '), start:part[0].start, end:part.at(-1).end });
+
+  // Build complete spoken sentences first. A fixed character window can cut
+  // across punctuation and create fragments such as "how. Every rigid".
+  const sentences = [];
+  let sentence = [];
   for (const word of words) {
-    if (!current) { current = { text:word.text, start:word.start, end:word.end }; continue; }
-    const candidate = `${current.text} ${word.text}`;
-    const duration = word.end - current.start;
-    if (candidate.length > maxChars || duration > maxDuration) {
-      cues.push(current);
-      current = { text:word.text, start:word.start, end:word.end };
-    } else {
-      current.text = candidate;
-      current.end = word.end;
+    sentence.push(word);
+    if (sentenceEnd.test(word.text)) { sentences.push(sentence); sentence = []; }
+  }
+  if (sentence.length) sentences.push(sentence);
+
+  for (const completeSentence of sentences) {
+    let cursor = 0;
+    while (cursor < completeSentence.length) {
+      const remaining = completeSentence.slice(cursor);
+      const wholeText = remaining.map((word) => word.text).join(' ');
+      const wholeDuration = remaining.at(-1).end - remaining[0].start;
+      if (wholeText.length <= maxChars && wholeDuration <= maxDuration * 1.35) {
+        cues.push(makeCue(remaining));
+        break;
+      }
+
+      let bestCut = -1;
+      let bestScore = Number.NEGATIVE_INFINITY;
+      const candidate = [];
+      for (let index = 0; index < remaining.length; index += 1) {
+        candidate.push(remaining[index]);
+        const text = candidate.map((word) => word.text).join(' ');
+        const duration = candidate.at(-1).end - candidate[0].start;
+        if (candidate.length < minWords) continue;
+        if (text.length > maxChars * 1.12 || duration > maxDuration * 1.45) break;
+        const last = candidate.at(-1).text;
+        const boundary = clauseEnd.test(last) ? 8 : clauseLead.test(last) ? 6 : sentenceEnd.test(last) ? 12 : 0;
+        const distanceFromTarget = Math.abs(text.length - maxChars * 0.88);
+        const weakCutPenalty = weakCutWord.test(last) ? 18 : 0;
+        const score = boundary * 10 - distanceFromTarget - weakCutPenalty;
+        if (score > bestScore) { bestScore = score; bestCut = index + 1; }
+      }
+      if (bestCut < 0) bestCut = Math.min(Math.max(minWords, 1), remaining.length);
+      cues.push(makeCue(remaining.slice(0, bestCut)));
+      cursor += bestCut;
     }
   }
-  if (current) cues.push(current);
   return cues.filter((cue) => cue.end > cue.start && cue.text.trim());
 }
 
@@ -290,6 +325,17 @@ export class FfmpegRenderer {
     const work = join(tmpdir(), `auto-ytb-${manifest.projectId}-${Date.now()}`);
     await mkdir(work, { recursive: true });
     const clips = [];
+    let timelineCursor = 0;
+    const freezeFrame = async (source, duration, index, position) => {
+      const frame = join(work, `freeze-${index}-${position}.png`);
+      const frozen = join(work, `freeze-${index}-${position}.mp4`);
+      const frameArgs = position === 'first'
+        ? ['-y','-i',source,'-frames:v','1',frame]
+        : ['-y','-sseof','-0.05','-i',source,'-frames:v','1',frame];
+      await run(this.ffmpeg, frameArgs);
+      await run(this.ffmpeg, ['-y','-loop','1','-i',frame,'-t',duration.toFixed(3),'-vf',`scale=${width}:${height},format=yuv420p`,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',frozen]);
+      return frozen;
+    };
     for (let index = 0; index < manifest.scenes.length; index += 1) {
       const scene = manifest.scenes[index];
       const clip = join(work, `scene-${String(index).padStart(4, '0')}.mp4`);
@@ -323,7 +369,17 @@ export class FfmpegRenderer {
       } else {
         throw new Error(`Scene ${scene.id} has no renderable visual asset`);
       }
+      const sceneStart = Math.max(0, Number(scene.startSec ?? timelineCursor));
+      const gap = sceneStart - timelineCursor;
+      if (gap > 0.015) {
+        const source = clips.at(-1) ?? clip;
+        const frozen = await freezeFrame(source, gap, index, clips.length ? 'last' : 'first');
+        if (clips.length) clips.push(frozen);
+        else clips.unshift(frozen);
+        timelineCursor = sceneStart;
+      }
       clips.push(clip);
+      timelineCursor = Math.max(timelineCursor, sceneStart + duration);
     }
     if (!clips.length) throw new Error('Manifest has no scenes');
     const concatList = join(work, 'concat.txt');
@@ -335,7 +391,7 @@ export class FfmpegRenderer {
     await mkdir(dirname(out), { recursive: true });
     const voicePath = manifest.voice?.uri ? await this.materialize(manifest.voice.uri, join(work, 'voice')) : null;
     let subtitlesUri = null;
-    const subtitleCues = alignmentToSubtitleCues(manifest.voice?.alignment, { maxChars:manifest.contentFormat==='SHORT_VERTICAL'?32:48, maxDurationSeconds:manifest.contentFormat==='SHORT_VERTICAL'?2.4:4.2 });
+    const subtitleCues = alignmentToSubtitleCues(manifest.voice?.alignment, { maxChars:manifest.captionPlan?.maxChars ?? (manifest.contentFormat==='SHORT_VERTICAL'?52:48), maxDurationSeconds:manifest.captionPlan?.maxDurationSeconds ?? (manifest.contentFormat==='SHORT_VERTICAL'?3.6:4.2) });
     if (subtitleCues.length) {
       const subtitlePath = out.replace(/\.[^.]+$/,'.srt');
       await writeFile(subtitlePath, subtitlesToSrt(subtitleCues), 'utf8');
