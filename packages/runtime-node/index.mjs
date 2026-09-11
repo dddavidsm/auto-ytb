@@ -424,8 +424,11 @@ export class FfmpegRenderer {
       }
       const source = asset ? await this.materialize(asset.uri, join(work, `asset-${index}`)) : null;
       if (source && mimeFor(source).startsWith('image/')) {
-        const accent = index % 3 === 0 ? '0x6ea8fe' : index % 3 === 1 ? '0xffc857' : '0x63e6be';
-        const imageFilter = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2,drawbox=x=0:y=0:w=iw*0.014:h=ih:color=${accent}@0.88:t=fill,drawbox=x=iw*0.07:y=ih*0.91:w=iw*0.86:h=ih*0.004:color=white@0.22:t=fill,format=yuv420p`;
+        // AI stills are turned into restrained documentary shots. Keep the
+        // subject photographic and clean: no card frame, logo, progress bar,
+        // or decorative UI is allowed to compete with the narration.
+        const motionPeriod = Math.max(12, Math.round(duration * 5));
+        const imageFilter = `scale=${Math.round(width * 1.06)}:${Math.round(height * 1.06)}:force_original_aspect_ratio=increase,crop=${width}:${height}:(in_w-out_w)/2+12*sin(2*PI*t/${motionPeriod}):(in_h-out_h)/2+8*cos(2*PI*t/${motionPeriod + 3}),format=yuv420p`;
         await run(this.ffmpeg, ['-y','-loop','1','-i',source,'-t',String(duration),'-vf',imageFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
       } else if (source && mimeFor(source).startsWith('video/')) {
         const clipStart = Math.max(0, Number(asset?.metadata?.clipStartSec ?? 0));
