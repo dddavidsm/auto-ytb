@@ -26,6 +26,7 @@ export async function generateScript(input: {
   scriptMode?: ContentExecutionPlan['scriptMode'];
 }): Promise<VideoScript> {
   const targetDurationSec = input.targetDurationSec ?? 600;
+  const spokenWordBudget = Math.max(55, Math.round(targetDurationSec * 2.45));
   const factClaimMode=input.factClaimMode??'VERIFY_CLAIMS';
   const scriptMode=input.scriptMode??'NARRATION';
   const claims = input.dossier.claims.map((claim) => `[${claim.id}] ${claim.text} sources=${claim.sourceIds.join(',')}`).join('\n');
@@ -49,7 +50,7 @@ export async function generateScript(input: {
     : `Use source IDs from the dossier for factual beats.${claims?`\nClaims:\n${claims}`:''}`;
   const response = await input.model.generateJson<VideoScript>({
     system,
-    prompt: `Angle: ${input.angle.title}\nThesis: ${input.angle.thesis}\nViewer promise: ${input.angle.viewerPromise}\nTarget duration: ${targetDurationSec}s\nScript mode: ${scriptMode}\nFact mode: ${factClaimMode}\n${modeGuidance}\n${sourceGuidance}\n${guidance}\nCreate a beat-by-beat script with a concrete hook and payoff.`,
+    prompt: `Angle: ${input.angle.title}\nThesis: ${input.angle.thesis}\nViewer promise: ${input.angle.viewerPromise}\nTarget duration: ${targetDurationSec}s\n${scriptMode === 'VISUAL_ACTION' ? '' : `HARD LENGTH CONTRACT: keep all spoken narration between ${Math.max(45, Math.round(spokenWordBudget * 0.82))} and ${Math.round(spokenWordBudget * 1.08)} words total (about ${targetDurationSec}s at a natural short-form pace). Do not exceed this budget; remove setup and repeated explanations before adding detail.`}\nScript mode: ${scriptMode}\nFact mode: ${factClaimMode}\n${modeGuidance}\n${sourceGuidance}\n${guidance}\nCreate a beat-by-beat script with a concrete hook and payoff.`,
     schemaName: 'video_script',
     temperature: factClaimMode==='CREATIVE_ORIGINAL'?0.62:0.45,
   });
