@@ -54,27 +54,34 @@ function styleFor(plan,height){
   const outline=plan.preset==='EDITORIAL_CLEAN'?2:3;
   return `FontName=DejaVu Sans,FontSize=${fontSize},Bold=${bold},PrimaryColour=&H00FFFFFF,OutlineColour=&H00101010,BackColour=&H70000000,BorderStyle=1,Outline=${outline},Shadow=0,Alignment=${alignment},MarginV=${marginV},WrapStyle=2`;
 }
-function captionDrawtext(cue,file,plan,height,font,keywordFile){
+function captionDrawtext(cue,files,plan,height,font,keyword){
   const start=Number(cue.start??0),end=Number(cue.end??start+1);
   const margin=Math.round(height*(Number(plan.safeBottomPercent??8)/100));
   const size=Math.round((height>=1600?54:36)*Number(plan.fontScale??1));
   const y=plan.position==='MIDDLE'?'h*0.47':`h-${margin}-text_h`;
-  const slide=`if(lt(t\\,${(start+0.12).toFixed(3)})\\,${y}+18*(1-(t-${start.toFixed(3)})/0.12)\\,${y})`;
+  const intro=Math.min(0.14,Math.max(0.07,(end-start)*0.12));
+  const outro=Math.min(0.12,Math.max(0.07,(end-start)*0.10));
+  const fadeOutStart=Math.max(start+intro,end-outro);
+  const slide=`if(lt(t\\,${(start+intro).toFixed(3)})\\,${y}+18*(1-(t-${start.toFixed(3)})/${intro.toFixed(3)})\\,${y})`;
   const enable=`between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})`;
+  const alpha=`if(lt(t\\,${(start+intro).toFixed(3)})\\,(t-${start.toFixed(3)})/${intro.toFixed(3)}\\,if(gt(t\\,${fadeOutStart.toFixed(3)})\\,(${end.toFixed(3)}-t)/${outro.toFixed(3)}\\,1))`;
+  const motion=`if(lt(t\\,${(start+intro).toFixed(3)})\\,18*(1-(t-${start.toFixed(3)})/${intro.toFixed(3)})\\,if(gt(t\\,${fadeOutStart.toFixed(3)})\\,-12*(t-${fadeOutStart.toFixed(3)})/${outro.toFixed(3)}\\,0))`;
   // Minimal social-caption treatment: no opaque panel. The dark outline and
   // soft shadow preserve readability over moving footage while keeping the
   // subtitle visually integrated with the frame, like CapCut's clean presets.
-  const base=`drawtext=${font?`${font}:`:''}textfile='${escapeFilterPath(file)}':fontcolor=white:fontsize=${size}:borderw=3:bordercolor=0x080b12@0.96:shadowcolor=0x000000@0.75:shadowx=2:shadowy=3:box=0:x=(w-text_w)/2:y='${slide}':enable='${enable}':alpha='if(lt(t\\,${(start+0.12).toFixed(3)})\\,(t-${start.toFixed(3)})/0.12\\,1)':fix_bounds=1`;
-  if(!keywordFile||!plan.highlightKeywords)return base;
-  const keyword=captionKeyword(cue.text);
-  if(!keyword)return base;
-  // The keyword is drawn over the centered sentence. The measured estimate is
-  // deliberately conservative and keeps the accent aligned across Windows
-  // FFmpeg builds where text metrics differ slightly by font backend.
-  const fullWidth=Math.round(String(cue.text??'').length*size*0.52);
-  const prefixWidth=Math.round(keyword.prefix.length*size*0.52);
-  const accent=`drawtext=${font?`${font}:`:''}textfile='${escapeFilterPath(keywordFile)}':fontcolor=0xff3b30:fontsize=${size}:borderw=3:bordercolor=0x080b12@0.96:shadowcolor=0x000000@0.75:shadowx=2:shadowy=3:box=0:x='w/2-${Math.round(fullWidth/2)}+${prefixWidth}':y='${slide}':enable='${enable}':alpha='if(lt(t\\,${(start+0.12).toFixed(3)})\\,(t-${start.toFixed(3)})/0.12\\,1)':fix_bounds=1`;
-  return `${base},${accent}`;
+  const draw=(file,color,x)=>file?`drawtext=${font?`${font}:`:''}textfile='${escapeFilterPath(file)}':fontcolor=${color}:fontsize=${size}:borderw=3:bordercolor=0x080b12@0.96:shadowcolor=0x000000@0.75:shadowx=2:shadowy=3:box=0:x='${x}':y='${slide}':enable='${enable}':alpha='${alpha}':fix_bounds=1`:'';
+  if(!keyword||!plan.highlightKeywords)return draw(files.full,'white','(w-text_w)/2+'+motion);
+  // Compose one cue from adjacent segments. Drawing the whole white sentence
+  // and a red keyword on top caused duplicate words and visible overlap.
+  const rawBefore=keyword.prefix,rawAfter=String(cue.text??'').slice(rawBefore.length+keyword.word.length);
+  const before=rawBefore.replace(/\s+$/,''),after=rawAfter.replace(/^\s+/,'');
+  const beforeSpacing=rawBefore.length-before.length,afterSpacing=rawAfter.length-after.length;
+  const charWidth=size*0.52,fullWidth=Math.round(String(cue.text??'').length*charWidth);
+  const base=`w/2-${Math.round(fullWidth/2)}`;
+  const beforeX=`${base}+${motion}`;
+  const keywordX=`${base}+${Math.round((before.length+beforeSpacing)*charWidth)}+${motion}`;
+  const afterX=`${base}+${Math.round((before.length+beforeSpacing+keyword.word.length+afterSpacing)*charWidth)}+${motion}`;
+  return [draw(files.before,'white',beforeX),draw(files.keyword,'0xff3b30',keywordX),draw(files.after,'white',afterX)].filter(Boolean).join(',');
 }
 function wrapHook(value,max=22){
   const words=String(value??'').replace(/\s+/g,' ').trim().split(' ').filter(Boolean),lines=[];let line='';
@@ -143,7 +150,7 @@ export function withArchetypeEditorialFinish(renderer,options={}){
         // each timed cue with drawtext instead: the box, outline and entrance
         // animation are deterministic and survive YouTube's transcode.
         const font=ffmpegFontOption();
-        for(let index=0;index<cues.length;index+=1){const cue=cues[index],file=join(captionWork,`cue-${index}.txt`);await writeFile(file,textFileSafe(String(cue.text??'').trim()),'utf8');let keywordFile=null;if(captionPlan?.highlightKeywords&&captionKeyword(cue.text)){keywordFile=join(captionWork,`cue-${index}-keyword.txt`);await writeFile(keywordFile,textFileSafe(captionKeyword(cue.text).word),'utf8');}chain.push(captionDrawtext(cue,file,captionPlan,height,font,keywordFile));}
+        for(let index=0;index<cues.length;index+=1){const cue=cues[index],fullText=String(cue.text??'').trim(),file=join(captionWork,`cue-${index}.txt`),keyword=captionPlan?.highlightKeywords?captionKeyword(fullText):null;await writeFile(file,textFileSafe(fullText),'utf8');let files={full:file,before:null,keyword:null,after:null};if(keyword){const rawAfter=fullText.slice(keyword.prefix.length+keyword.word.length);files={full:file,before:join(captionWork,`cue-${index}-before.txt`),keyword:join(captionWork,`cue-${index}-keyword.txt`),after:join(captionWork,`cue-${index}-after.txt`)};await writeFile(files.before,textFileSafe(keyword.prefix.replace(/\s+$/,'')),'utf8');await writeFile(files.keyword,textFileSafe(keyword.word),'utf8');await writeFile(files.after,textFileSafe(rawAfter.replace(/^\s+/,'')),'utf8');}chain.push(captionDrawtext(cue,files,captionPlan,height,font,keyword));}
       }
       // Keep transitions motivated and deterministic: a short editorial flash
       // marks a real beat change without introducing a black frame or hiding
