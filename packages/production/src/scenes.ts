@@ -12,6 +12,7 @@ type ScenePlanningOptions = {
   realityMode?: string;
   cameraProfile?: string;
   sourceFootage?: SourceFootage[];
+  selectedSourceClip?: SourceFootage | null;
 };
 
 function scoreVisualValue(beat: ScriptBeat, index: number): number {
@@ -59,11 +60,7 @@ function chooseSceneKind(beat: ScriptBeat, index: number, visualValue: number, h
     && index>0
     && index<=2
     && ['hook','escalation','reveal','payoff'].includes(beat.purpose);
-  const sourceCandidates=options.sourceFootage?.filter((item)=>
-    item.rightsStatus!=='BLOCKED'
-    && (!item.beatIds?.length || item.beatIds.includes(beat.id) || item.beatIds.includes(beat.purpose))
-  ) ?? [];
-  const sourceClip=sourceCandidates[Math.min(index,Math.max(0,sourceCandidates.length-1))];
+  const sourceClip=options.selectedSourceClip ?? null;
   if(sourceClip){
     return {kind:'broll',generated:false,costTier:'free',sourceFootageId:sourceClip.id,selectionReason:`Licensed/user-supplied footage ${sourceClip.id} is the primary visual proof for ${beat.purpose}; preserve the observable action and attribution.`};
   }
@@ -128,16 +125,56 @@ function diversifyLongRuns(input:Scene[]):Scene[]{
   return out;
 }
 
+function eligibleSourceClips(beat:ScriptBeat, sourceFootage:SourceFootage[] = []):SourceFootage[]{
+  return sourceFootage.filter((item)=>
+    item.rightsStatus!=='BLOCKED'
+    && (!item.beatIds?.length || item.beatIds.includes(beat.id) || item.beatIds.includes(beat.purpose))
+  );
+}
+
+function pickDiverseSourceClip(candidates:SourceFootage[], usage:Map<string,number>, recentIds:string[], recentUris:string[]):SourceFootage|undefined{
+  const ranked=[...candidates].sort((a,b)=>{
+    const aUses=usage.get(a.id)??0;
+    const bUses=usage.get(b.id)??0;
+    const aFresh=aUses===0?1:0;
+    const bFresh=bUses===0?1:0;
+    if(aFresh!==bFresh)return bFresh-aFresh;
+    const aCooling=recentIds.includes(a.id)?0:1;
+    const bCooling=recentIds.includes(b.id)?0:1;
+    if(aCooling!==bCooling)return bCooling-aCooling;
+    const aDifferentUri=recentUris.includes(a.uri)?0:1;
+    const bDifferentUri=recentUris.includes(b.uri)?0:1;
+    return bDifferentUri-aDifferentUri;
+  });
+  // Prefer a fresh source window. A second use is only a fallback and cannot
+  // follow the same source id immediately. Once candidates are exhausted,
+  // callers deliberately choose another visual treatment instead of looping
+  // the same video through the rest of the narration.
+  return ranked.find((item)=>(usage.get(item.id)??0)===0)
+    ?? ranked.find((item)=>(usage.get(item.id)??0)<2 && !recentIds.includes(item.id));
+}
+
 export function planScenes(script: VideoScript, options: ScenePlanningOptions = {}): Scene[] {
   const targetSceneDurationSec = Math.max(2.5, Math.min(16, options.targetSceneDurationSec ?? 10));
   const scenes: Scene[] = [];
+  const sourceUsage = new Map<string,number>();
+  const recentSourceIds: string[] = [];
+  const recentSourceUris: string[] = [];
   for (const beat of script.beats) {
     const sceneCount = Math.max(1, Math.ceil(beat.targetDurationSec / targetSceneDurationSec));
     const duration = beat.targetDurationSec / sceneCount;
     const sourceRefs = buildVisualSourceRefs(beat.sourceIds, options.sources ?? []);
     for (let index = 0; index < sceneCount; index += 1) {
       const visualValue = scoreVisualValue(beat,index);
-      const choice = chooseSceneKind(beat,index,visualValue,sourceRefs.length>0,options);
+      const sourceClip=pickDiverseSourceClip(eligibleSourceClips(beat,options.sourceFootage),sourceUsage,recentSourceIds,recentSourceUris);
+      const choice = chooseSceneKind(beat,index,visualValue,sourceRefs.length>0,{...options,selectedSourceClip:sourceClip});
+      if(sourceClip){
+        sourceUsage.set(sourceClip.id,(sourceUsage.get(sourceClip.id)??0)+1);
+        recentSourceIds.push(sourceClip.id);
+        recentSourceUris.push(sourceClip.uri);
+        if(recentSourceIds.length>3)recentSourceIds.shift();
+        if(recentSourceUris.length>3)recentSourceUris.shift();
+      }
       const procedural = choice.kind === 'chart' || choice.kind === 'motion_graphic' || choice.kind === 'source_card';
       const realismInstruction=options.realityMode==='REALISTIC_SYNTHETIC'
         ? `Naturalistic ${options.cameraProfile??'consumer-camera'} capture with physically coherent anatomy, contact, motion, focus and lighting; no fake source UI or watermarks.`

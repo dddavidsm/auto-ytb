@@ -68,7 +68,7 @@ function highlightAss(value,keyword){
     return `${assText(match[1])}{\\c&H00303BFF&}${assText(match[2])}{\\c&H00FFFFFF&}${assText(match[3])}`;
   }).join('');
 }
-function captionAss(cues,plan,width,height){
+function captionAssLegacy(cues,plan,width,height){
   const fontsize=Math.round((height>=1600?58:38)*Number(plan?.fontScale??1));
   const maxLineChars=height>=1600?35:52;
   const y=plan?.position==='MIDDLE'?Math.round(height*0.5):plan?.position==='BOTTOM'?Math.round(height*0.9):Math.round(height*0.77);
@@ -80,6 +80,25 @@ function captionAss(cues,plan,width,height){
     return `Dialogue: 0,${assTime(start)},${assTime(end)},Default,,0,0,0,${move}${text}`;
   });
   return `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,DejaVu Sans,${fontsize},&H00FFFFFF,&H00FFFFFF,&HCC101010,&HFF000000,0,0,0,0,100,100,0,0,1,3,2,2,70,70,0,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, Effect, Text\n${lines.join('\n')}\n`;
+}
+// Keep the caption styling legible on bright footage: a compact dark contour
+// and shadow preserve the clean CapCut-like look without an opaque text panel.
+function captionAss(cues,plan,width,height){
+  const fontsize=Math.round((height>=1600?58:38)*Number(plan?.fontScale??1));
+  const maxLineChars=height>=1600?35:52;
+  const y=plan?.position==='MIDDLE'?Math.round(height*0.5):plan?.position==='BOTTOM'?Math.round(height*0.9):Math.round(height*0.77);
+  const lines=cues.map((cue)=>{
+    const keyword=plan?.highlightKeywords?captionKeyword(String(cue.text??'')):null;
+    const text=wrapCaption(cue.text,maxLineChars).map((line)=>highlightAss(line,keyword)).join('\\N');
+    const start=Number(cue.start??0),end=Number(cue.end??start+1),intro=Math.min(0.12,Math.max(0.07,(end-start)*0.08)),outro=Math.min(0.1,Math.max(0.07,(end-start)*0.07));
+    const move='{\\an2\\move('+Math.round(width/2)+','+(y+18)+','+Math.round(width/2)+','+y+',0,'+Math.round(intro*1000)+')\\fad('+Math.round(intro*1000)+','+Math.round(outro*1000)+')}';
+    return 'Dialogue: 0,'+assTime(start)+','+assTime(end)+',Default,,0,0,0,'+move+text;
+  });
+  const newline=String.fromCharCode(10);
+  const contrastStyle='Style: Default,DejaVu Sans,'+fontsize+',&H00FFFFFF,&H00FFFFFF,&H40101010,&HFF000000,0,0,0,0,100,100,0,0,1,5,2,2,70,70,0,1';
+  return ['[Script Info]','ScriptType: v4.00+','PlayResX: '+width,'PlayResY: '+height,'ScaledBorderAndShadow: yes','','[V4+ Styles]','Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',contrastStyle,'','[Events]','Format: Layer, Start, End, Style, Name, MarginL, MarginR, Effect, Text',lines.join(newline),''].join(newline);
+  const style='Style: Default,DejaVu Sans,'+fontsize+',&H00FFFFFF,&H00FFFFFF,&H40101010,&HFF000000,0,0,0,0,100,100,0,0,1,5,2,2,70,70,0,1';
+  return '[Script Info]\\nScriptType: v4.00+\\nPlayResX: '+width+'\\nPlayResY: '+height+'\\nScaledBorderAndShadow: yes\\n\\n[V4+ Styles]\\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\\n'+style+'\\n\\n[Events]\\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, Effect, Text\\n'+lines.join('\\n')+'\\n';
 }
 function styleFor(plan,height){
   const base=height>=1600?50:34,fontSize=Math.round(base*Number(plan.fontScale??1));
