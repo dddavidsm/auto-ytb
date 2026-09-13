@@ -3,6 +3,11 @@ export type SeriesAudienceMode = 'GENERAL' | 'MADE_FOR_KIDS';
 export type SeriesCharacterSpec = {
   key: string;
   name: string;
+  description?: string;
+  referenceAssets?: string[];
+  proportions?: string;
+  clothing?: string[];
+  faceTraits?: string[];
   role?: string;
   continuityKey: string;
   invariantFeatures: string[];
@@ -42,6 +47,16 @@ export type SeriesBible = {
   tone: string[];
   themes: string[];
   worldRules: string[];
+  locations?: string[];
+  palette?: string[];
+  lighting?: string[];
+  cameraStyle?: string[];
+  graphicStyle?: string[];
+  musicIdentity?: string;
+  sfxIdentity?: string;
+  recurringElements?: string[];
+  continuityFacts?: string[];
+  episodeHistory?: Array<{ episodeKey: string; summary: string; canonicalFacts?: string[] }>;
   episodeStructure: string[];
   continuityRules: string[];
   recurringDevices: string[];
@@ -257,13 +272,13 @@ export function buildSeriesContinuityContext(input:{
   const characters=input.characters?.length?input.characters:input.bible.characters;
   const styles=input.styles?.length?input.styles:input.bible.styles;
   const memory=[...(input.memories??[])].filter((item)=>item.canonical!==false&&item.active!==false).sort((a,b)=>b.importance-a.importance).slice(0,20);
-  const referenceUris=[...new Set([...characters.map((item)=>item.canonicalReferenceUri),...styles.map((item)=>item.canonicalReferenceUri)].filter(Boolean).map(String))].slice(0,8);
+  const referenceUris=[...new Set([...characters.flatMap((item)=>[item.canonicalReferenceUri,...(item.referenceAssets??[])]),...styles.map((item)=>item.canonicalReferenceUri)].filter(Boolean).map(String))].slice(0,8);
   const ageLabel=input.profile.audienceMode==='MADE_FOR_KIDS'
     ?`Target children aged ${input.profile.targetAgeMin??'?'}–${input.profile.targetAgeMax??'?'}.`
     :'General audience.';
   const memoryText=memory.map((item)=>`${item.type}:${item.key}=${JSON.stringify(item.payload)}`).join(' | ');
   const characterRules=characters.flatMap((item)=>[
-    `${item.name} must preserve: ${item.invariantFeatures.join(', ')}.`,
+    `${item.name} must preserve: ${item.invariantFeatures.join(', ')}.${item.description?` Description: ${item.description}.`:''}${item.faceTraits?.length?` Face traits: ${item.faceTraits.join(', ')}.`:''}${item.proportions?` Proportions: ${item.proportions}.`:''}${item.clothing?.length?` Clothing: ${item.clothing.join(', ')}.`:''}`,
     item.speechRules.length?`${item.name} speech rules: ${item.speechRules.join('; ')}.`:'',
     item.forbiddenChanges.length?`Never change ${item.name}: ${item.forbiddenChanges.join('; ')}.`:'',
   ]).filter(Boolean).join(' ');

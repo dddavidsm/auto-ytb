@@ -21,3 +21,8 @@ export * from './opportunity-engine.js';
 export * from './engines.js';
 export * from './labs.js';
 export * from './pipeline.js';
+export * from './format-profiles.js';
+export * from './timeline.js';
+export * from './production-orchestrator.js';
+export * from './series-factory.js';
+export * from './retention-doctor.js';

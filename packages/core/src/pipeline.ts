@@ -65,6 +65,62 @@ export type QualityGateStatus = 'PASS' | 'WARN' | 'FAIL' | 'NOT_RUN';
 export type QualityGate = { id: string; status: QualityGateStatus; message: string; critical: boolean };
 export type BenchmarkQualityReport = { ready: boolean; gates: QualityGate[]; blockers: string[]; score: number };
 
+export type ProductionReadinessReport = {
+  preflight: QualityGate[];
+  postGeneration: QualityGate[];
+  readyForFinal: boolean;
+  readyForRelease: boolean;
+  blockers: string[];
+  score: number;
+};
+
+export function evaluateProductionReadiness(input: {
+  referencePack?: ReferencePack;
+  research?: ResearchPack;
+  originality?: OriginalityReport;
+  hooks?: { length: number; pass?: boolean };
+  packaging?: PackagingCandidate[];
+  story?: StoryArchitecture;
+  shotPlan?: ShotPlan;
+  cost?: { allowed: boolean; estimatedCostUsd: number; budgetUsd?: number };
+  providerPass?: boolean;
+  seriesContinuityPass?: boolean;
+  seriesRelevant?: boolean;
+  sync?: boolean;
+  audio?: boolean;
+  visual?: boolean;
+  copyright?: boolean;
+  ypp?: boolean;
+  render?: boolean;
+}): ProductionReadinessReport {
+  const gate = (id: string, condition: boolean | undefined, message: string, critical = true): QualityGate => ({ id, status: condition === undefined ? 'NOT_RUN' : condition ? 'PASS' : 'FAIL', message, critical });
+  const preflight: QualityGate[] = [
+    gate('REFERENCE_PASS', Boolean(input.referencePack && input.referencePack.items.length >= 3), 'Reference Pack contains at least 3 structural references.'),
+    gate('RESEARCH_PASS', input.research ? input.research.criticalUnverified.length === 0 && input.research.conflicts.length === 0 : undefined, input.research ? 'Research Pack has no critical unverified or conflicting claims.' : 'Research Pack not run.'),
+    gate('ORIGINALITY_PASS', input.originality ? input.originality.status !== 'FAIL' : undefined, input.originality ? `Originality ${input.originality.status}.` : 'Originality guard not run.'),
+    gate('SCRIPT_PASS', Boolean(input.story?.beats.length), 'Story architecture exists.'),
+    gate('HOOK_PASS', input.hooks ? input.hooks.length >= 15 && input.hooks.pass !== false : undefined, input.hooks ? `${input.hooks.length} hook variants available.` : 'Hook Engineer not run.'),
+    gate('PACKAGING_PASS', Boolean(input.packaging?.length), 'Title, thumbnail and packaging candidates exist.'),
+    gate('SHOT_PLAN_PASS', Boolean(input.shotPlan?.scenes.length), 'Shot Plan exists.'),
+    gate('BUDGET_PASS', input.cost ? input.cost.allowed : undefined, input.cost ? `$${input.cost.estimatedCostUsd.toFixed(2)} estimated against budget.` : 'Budget check not run.'),
+    gate('PROVIDER_PASS', input.providerPass, 'Every required production capability has a usable route.'),
+    gate('SERIES_CONTINUITY_PASS', input.seriesRelevant ? input.seriesContinuityPass : true, input.seriesRelevant ? 'Series Bible continuity is valid.' : 'Not applicable to this format.'),
+  ];
+  const postGeneration: QualityGate[] = [
+    gate('SYNC_PASS', input.sync, 'Narration, visuals, audio and captions are synchronized.'),
+    gate('AUDIO_PASS', input.audio, 'Audio inspection passed.'),
+    gate('VISUAL_PASS', input.visual, 'Visual inspection passed.'),
+    gate('COPYRIGHT_PASS', input.copyright, 'Rights and provenance checks passed.'),
+    gate('YPP_PASS', input.ypp, 'Authenticity and YPP checks passed.'),
+    gate('RENDER_PASS', input.render, 'Final render inspection passed.'),
+  ];
+  const failed = (items: QualityGate[]) => items.filter((item) => item.critical && item.status !== 'PASS').map((item) => `${item.id}: ${item.message}`);
+  const preflightBlockers = failed(preflight);
+  const postBlockers = failed(postGeneration);
+  const all = [...preflight, ...postGeneration];
+  return { preflight, postGeneration, readyForFinal: preflightBlockers.length === 0, readyForRelease: preflightBlockers.length === 0 && postBlockers.length === 0, blockers: [...preflightBlockers, ...postBlockers], score: Math.round(all.reduce((sum, item) => sum + (item.status === 'PASS' ? 100 : item.status === 'WARN' ? 70 : 0), 0) / all.length) };
+}
+
 export function evaluateBenchmarkQualityGates(input: { referencePack?: ReferencePack; packaging?: PackagingCandidate[]; originality?: OriginalityReport; research?: ResearchPack; hooks?: { length: number; pass?: boolean }; story?: StoryArchitecture; shotPlan?: ShotPlan; cost?: { allowed: boolean; estimatedCostUsd: number; budgetUsd?: number }; sync?: boolean; audio?: boolean; copyright?: boolean; ypp?: boolean; render?: boolean }): BenchmarkQualityReport {
   const gate = (id: string, condition: boolean | undefined, message: string, critical = true): QualityGate => ({ id, status: condition === undefined ? 'NOT_RUN' : condition ? 'PASS' : 'FAIL', message, critical });
   const gates: QualityGate[] = [gate('REFERENCE_EVIDENCE_PASS', Boolean(input.referencePack && input.referencePack.items.length >= 3), 'Reference Pack contains at least 3 structural references.'), gate('PACKAGING_PASS', Boolean(input.packaging?.length), 'Packaging candidates exist.'), gate('ORIGINALITY_PASS', input.originality ? input.originality.status !== 'FAIL' : undefined, input.originality ? `Originality ${input.originality.status}.` : 'Originality guard not run.'), gate('FACT_CHECK_PASS', input.research ? input.research.criticalUnverified.length === 0 && input.research.conflicts.length === 0 : undefined, input.research ? `${input.research.criticalUnverified.length} critical claims unverified.` : 'Research Pack not run.'), gate('HOOK_PASS', input.hooks ? input.hooks.length >= 15 && input.hooks.pass !== false : undefined, input.hooks ? `${input.hooks.length} hook variants available.` : 'Hook Lab not run.'), gate('SCRIPT_PASS', Boolean(input.story?.beats.length), 'Story architecture exists.'), gate('VISUAL_PLAN_PASS', Boolean(input.shotPlan?.scenes.length), 'Shot Plan exists.'), gate('SYNC_PASS', input.sync, 'Narration-to-visual synchronization status.'), gate('AUDIO_PASS', input.audio, 'Audio plan status.'), gate('COPYRIGHT_PASS', input.copyright, 'Rights status.'), gate('YPP_PASS', input.ypp, 'Authenticity/YPP status.'), gate('COST_PASS', input.cost ? input.cost.allowed : undefined, input.cost ? `$${input.cost.estimatedCostUsd.toFixed(2)} estimated.` : 'Cost gate not run.'), gate('RENDER_PASS', input.render, 'Render inspection status.')];

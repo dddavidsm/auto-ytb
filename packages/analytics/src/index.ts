@@ -1,4 +1,5 @@
 export * from './creative.js';
+export * from './learning.js';
 
 export type RetentionPoint = { elapsedRatio: number; audienceWatchRatio: number };
 export type VideoPerformance = {

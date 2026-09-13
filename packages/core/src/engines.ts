@@ -3,6 +3,8 @@ import type { ContentDNA } from './content-dna.js';
 import type { EvidenceBackedOpportunity } from './opportunity-engine.js';
 import type { PatternCluster } from './pattern-mining.js';
 import type { ReferencePack } from './reference-pack.js';
+import type { ContentFormatProfile } from './format-profiles.js';
+export type { ContentFormatProfile } from './format-profiles.js';
 
 export const SEVEN_ENGINE_NAMES = [
   'NICHE_HUNTER',
@@ -44,6 +46,12 @@ export type HookVariant = {
   referencePattern: string;
   estimatedGenerationCostUsd: number;
   scores: { clarity: number; novelty: number; curiosity: number; visualStrength: number; speedToValue: number; specificity: number; credibility: number; retentionProbabilityProxy: number };
+  visualConcept: string;
+  cameraMotion: string;
+  sfx: string;
+  musicState: 'DUCKED' | 'RISE' | 'SILENCE' | 'BED';
+  durationWindow: '0-3S' | '3-8S' | '8-15S';
+  estimatedCost: number;
 };
 
 const hookFrames = [
@@ -60,8 +68,10 @@ export function engineerHooks(input: { topic: string; promise: string; dna?: Con
   return Array.from({ length: count }, (_, index) => {
     const [kind, line, device, emotion] = hookFrames[index % hookFrames.length]!;
     const duration = index % 3 === 0 ? 3 : index % 3 === 1 ? 7 : 13;
+    const durationWindow: HookVariant['durationWindow'] = duration <= 3 ? '0-3S' : duration <= 8 ? '3-8S' : '8-15S';
     const visual = `${input.topic} represented with one dominant subject, contextual background and a visible change at ${duration}s`;
     const base = 68 + (index % 5) * 3;
+    const musicState: HookVariant['musicState'] = index % 3 === 0 ? 'DUCKED' : index % 3 === 1 ? 'BED' : 'SILENCE';
     return {
       id: `hook-${String(index + 1).padStart(2, '0')}`,
       spokenLine: `${line} ${input.topic}.`,
@@ -70,6 +80,12 @@ export function engineerHooks(input: { topic: string; promise: string; dna?: Con
       cameraAction: index % 2 ? 'slow push-in with motivated cut at the reveal' : 'hard cut from wide context to close subject',
       textOverlay: index % 4 === 0 ? kind.replaceAll('_', ' ') : undefined,
       soundDesign: index % 3 === 0 ? 'single impact + restrained low bed' : 'short riser, then ducked ambience',
+      visualConcept: visual,
+      cameraMotion: index % 2 ? 'slow push-in with motivated cut at the reveal' : 'hard cut from wide context to close subject',
+      sfx: index % 3 === 0 ? 'single restrained impact' : 'short riser',
+      musicState,
+      durationWindow,
+      estimatedCost: index % 3 === 0 ? 0.01 : index % 3 === 1 ? 0.02 : 0.04,
       durationSeconds: duration,
       curiosityDevice: device,
       emotion,
@@ -96,6 +112,11 @@ export type ClipCandidate = {
   rightsStatus: 'CLEARED' | 'VERIFY' | 'BLOCKED';
   downloadUseAllowed: boolean;
   attributionRequired: boolean;
+  timestamp?: string;
+  candidateMoment?: string;
+  verification?: 'VERIFIED' | 'PLAUSIBLE' | 'UNVERIFIED';
+  usageAllowed?: boolean;
+  attributionRequirement?: string;
   quality: number;
   rankingPosition?: number;
 };
@@ -103,7 +124,7 @@ export type ClipCandidate = {
 export type ClipResearchPack = { version: 1; format: 'CLIP_BASED' | 'RANKING'; candidates: ClipCandidate[]; limitations: string[] };
 
 export function rankClipCandidates(candidates: ClipCandidate[]): ClipResearchPack {
-  const ranked = candidates.map((candidate) => ({ ...candidate, quality: Math.max(0, Math.min(100, candidate.quality)), downloadUseAllowed: candidate.rightsStatus === 'CLEARED' && candidate.downloadUseAllowed })).sort((a, b) => Number(b.rightsStatus === 'CLEARED') - Number(a.rightsStatus === 'CLEARED') || b.quality - a.quality).map((candidate, index) => ({ ...candidate, rankingPosition: index + 1 }));
+  const ranked = candidates.map((candidate) => ({ ...candidate, quality: Math.max(0, Math.min(100, candidate.quality)), verification: candidate.verification ?? candidate.verificationStatus, usageAllowed: candidate.usageAllowed ?? (candidate.rightsStatus === 'CLEARED' && candidate.downloadUseAllowed), attributionRequirement: candidate.attributionRequirement ?? (candidate.attributionRequired ? 'credit creator/source before public use' : undefined), downloadUseAllowed: candidate.rightsStatus === 'CLEARED' && candidate.downloadUseAllowed })).sort((a, b) => Number(b.rightsStatus === 'CLEARED') - Number(a.rightsStatus === 'CLEARED') || b.quality - a.quality).map((candidate, index) => ({ ...candidate, rankingPosition: index + 1 }));
   return { version: 1, format: 'CLIP_BASED', candidates: ranked, limitations: ranked.some((candidate) => candidate.rightsStatus !== 'CLEARED') ? ['Uncleared clips are discovery/research signals only and must not enter production automatically.'] : [] };
 }
 
@@ -119,13 +140,15 @@ export function diagnoseRetention(input: { durationSeconds: number; points: Arra
   return { whatHappened: sorted.length && worst.delta < -0.05 ? `Retention drops ${Math.round(Math.abs(worst.delta) * 100)} percentage points.` : 'No material retention drop was detected in the supplied curve.', where: at, likelyWhy: early ? 'The opening may not deliver the packaging promise quickly enough.' : beat?.purpose === 'setup' ? 'Setup likely runs longer than the audience will tolerate before a payoff.' : 'The local beat or visual may not communicate the promised progression.', confidence: sorted.length >= 5 ? 72 : 42, whatToChangeFirst: early ? 'Rewrite the first 15 seconds and test a clearer audio + visual promise.' : `Audit ${beat?.id ?? 'the segment at ' + at} before changing the rest of the edit.`, expectedImpact: 'Recover the largest observed local loss without changing unrelated variables.', howToTestIt: 'Run one controlled packaging/hook variant while keeping topic, duration and later beats fixed.', problem: early ? 'HOOK' : beat?.purpose === 'setup' ? 'SLOW_SETUP' : 'OTHER' };
 }
 
-export type ViralTemplate = { constants: string[]; variables: string[]; titleGrammar: string; thumbnailGrammar: string; hookMechanics: string[]; storyStructure: string[]; pacing: string; escalation: string; payoffPositions: string[]; visualCadence: string; editingGrammar: string; audioGrammar: string; ctaPlacement: string; durationProfile: string; originalityGuard: string[] };
+export type ViralTemplate = { topicArchetype: string; audiencePromise: string; constants: string[]; variables: string[]; titleGrammar: string; thumbnailGrammar: string; hookMechanics: string[]; storyArchitecture: string[]; storyStructure: string[]; pacingProfile: string; pacing: string; retentionDevices: string[]; escalation: string; payoffPositions: string[]; visualCadence: string; editingGrammar: string; audioGrammar: string; ctaPlacement: string; durationProfile: string; originalityGuard: string[]; sourceEvidence: Array<{ videoId: string; signal: string; contentRemoved: boolean }>; confidence: number };
 
 export function deconstructWinningVideo(video: BenchmarkVideo, dna?: ContentDNA): ViralTemplate {
-  return { constants: ['evidence-led premise', 'visible escalation', 'clear payoff', 'one dominant packaging promise'], variables: ['entity', 'country/market', 'time period', 'specific conflict', 'visual subject', 'supporting evidence'], titleGrammar: dna?.titleDNA.grammarPattern ?? 'UNKNOWN_UNTIL_TITLE_ANALYSIS', thumbnailGrammar: dna?.thumbnailDNA.compositionType ?? 'STRUCTURED_COMPOSITION_REQUIRED', hookMechanics: ['state consequence early', 'withhold the causal explanation', 'show a concrete visual change'], storyStructure: ['cold open', 'promise', 'context', 'escalation', 'reveal', 'payoff'], pacing: video.durationSeconds > 600 ? 'long-form escalation with regular micro-payoffs' : 'compressed progression with short payoff interval', escalation: 'increase stakes through evidence, not adjectives', payoffPositions: ['first meaningful payoff in opening quarter', 'largest reveal near final third'], visualCadence: 'change visual mode when the narrative function changes', editingGrammar: 'motivated cuts; no keyword slideshow', audioGrammar: 'ducked music, selective SFX, intentional silence before reveals', ctaPlacement: 'after the final payoff', durationProfile: `${Math.round(video.durationSeconds / 60)} minute profile`, originalityGuard: ['never reuse scripts, phrases, assets or exact thumbnail composition', 'combine multiple references and replace all concrete entities'] };
+  const storyArchitecture = ['contradiction or consequence', 'context', 'evidence escalation', 'false explanation', 'causal reveal', 'consequence/payoff'];
+  const pacingProfile = video.durationSeconds > 600 ? 'long-form escalation with regular micro-payoffs' : 'compressed progression with short payoff interval';
+  const confidence = Math.round((dna?.scriptDNA.availability === 'TRANSCRIPT' ? 78 : 58) + (dna?.thumbnailDNA.availability === 'VISION' ? 8 : 0));
+  return { topicArchetype: dna?.topicDNA.topics[0] ?? video.topic ?? 'evidence-led change', audiencePromise: dna?.topicDNA.audiencePromise ?? 'understand the hidden mechanism and its consequence', constants: ['evidence-led premise', 'visible escalation', 'clear payoff', 'one dominant packaging promise'], variables: ['entity', 'country/market', 'time period', 'specific conflict', 'visual subject', 'supporting evidence'], titleGrammar: dna?.titleDNA.grammarPattern ?? 'UNKNOWN_UNTIL_TITLE_ANALYSIS', thumbnailGrammar: dna?.thumbnailDNA.compositionType ?? 'STRUCTURED_COMPOSITION_REQUIRED', hookMechanics: ['state consequence early', 'withhold the causal explanation', 'show a concrete visual change'], storyArchitecture, storyStructure: storyArchitecture, pacingProfile, pacing: pacingProfile, retentionDevices: ['open loop', 'micro-payoff before exposition', 'pattern interrupt at escalation', 'reveal after competing explanation'], escalation: 'increase stakes through evidence, not adjectives', payoffPositions: ['first meaningful payoff in opening quarter', 'largest reveal near final third'], visualCadence: 'change visual mode when the narrative function changes', editingGrammar: 'motivated cuts; no keyword slideshow', audioGrammar: 'ducked music, selective SFX, intentional silence before reveals', ctaPlacement: 'after the final payoff', durationProfile: `${Math.round(video.durationSeconds / 60)} minute profile`, originalityGuard: ['never reuse scripts, phrases, assets or exact thumbnail composition', 'combine multiple references and replace all concrete entities'], sourceEvidence: [{ videoId: video.id, signal: `${video.likelyOutlier.score}/100 outlier evidence`, contentRemoved: true }], confidence: Math.min(95, confidence) };
 }
 
-export type ContentFormatProfile = { format: BenchmarkFormat | 'CHARACTER_SERIES' | 'RANKING'; targetDurationSeconds: number; hookIntensity: number; sceneLengthSeconds: number; visualCategories: string[]; researchDepth: 'LIGHT' | 'STANDARD' | 'DEEP'; factChecking: boolean; productionStrategy: 'DRAFT_THEN_FINAL' | 'FINAL_ONLY' };
 export type ProductionEnginePlan = { profile: ContentFormatProfile; stages: string[]; providerRequirements: string[]; estimatedCostUsd: number; allowed: boolean; reasons: string[] };
 
 export function planProductionEngine(input: { format: ContentFormatProfile; estimatedCostUsd: number; budgetUsd?: number; requiresResearch?: boolean }): ProductionEnginePlan {
