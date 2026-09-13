@@ -155,6 +155,9 @@ const firstCheckpoint = { status: first.run.status, resumeFrom: first.run.resume
 simulatedFailure = false;
 const resumed = await resumeProductionRun(runId, store, artifacts, execute);
 for (const call of resumed.providerCalls) providerLatencies[call.provider] = (providerLatencies[call.provider] ?? 0) + Number(call.latencyMs ?? 0);
+const persistedReports = (await store.load(runId))?.reports ?? {};
+const persistedGates = persistedReports.ProductionReadinessReport?.gates ?? [];
+await store.saveQualityGates(runId, persistedGates.map((gate) => ({ ...gate, gateId: gate.id ?? gate.gateId ?? 'UNKNOWN_GATE', runId })));
 const draftRender = resumed.subtasks.find((task) => task.taskKey === 'render');
 if (!draftRender?.artifactId) throw new Error('Pilot did not produce a durable draft render');
 const draftArtifact = await artifacts.get(draftRender.artifactId); if (!draftArtifact) throw new Error('Draft render artifact metadata is missing');
