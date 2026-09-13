@@ -4,3 +4,5 @@ export * from './workflow-repositories.js';
 export * from './artifact-store.js';
 export * from './durable-production.js';
 export * from './pilot-reports.js';
+export * from './durable-worker.js';
+export * from './revision-run.js';

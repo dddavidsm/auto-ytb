@@ -1,0 +1,38 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createDefaultProviderRegistry, ProviderHealthCheck, runProviderProbes, ProviderRouter } from '../packages/providers/dist/index.js';
+import { FileArtifactStore, RemoteArtifactStore, MemoryLeaseStore, providerReceiptCanBeReused, makeRevisionRun } from '../packages/persistence/dist/index.js';
+import { VisualStrategyPlanner, VisualPromptCompiler, scoreSceneImportance, decideRevision, buildVoiceQualityReport } from '../packages/production/dist/index.js';
+
+const root = await mkdtemp(join(tmpdir(), 'auto-ytb-real-ai-'));
+try {
+  const registry = createDefaultProviderRegistry({});
+  const health = await new ProviderHealthCheck(registry).check();
+  assert.equal(health.find((item) => item.provider === 'gemini')?.capabilities.find((item) => item.capability === 'VIDEO')?.state, 'NO_CREDENTIALS');
+  const probeSummary = await runProviderProbes(registry);
+  assert.equal(probeSummary.noExternalCalls, true);
+  const planner = new VisualStrategyPlanner(new ProviderRouter(registry));
+  const importance = scoreSceneImportance({ sceneId: 'hero', purpose: 'hook', visualValue: 95, needsMotion: true, screenTimeSeconds: 5 });
+  assert.equal(importance.class, 'HERO');
+  const plan = planner.plan({ sceneId: 'hero', importance, durationSeconds: 5, aspectRatio: '16:9', budgetRemainingUsd: 3, needsMotion: true, narrativeValue: 95 });
+  assert.equal(plan.preferredStrategy, 'PROGRAMMATIC_GRAPHIC');
+  assert.equal(plan.fallback1, 'KINETIC_TEXT');
+  const compiled = new VisualPromptCompiler().compile({ shotPlan: { instruction: 'A machine changes state in a dark workshop', durationSec: 5 }, provider: { provider: 'gemini' }, durationSeconds: 5 });
+  for (const key of ['SUBJECT', 'ACTION', 'SETTING', 'COMPOSITION', 'CAMERA', 'LIGHTING', 'STYLE', 'CONTINUITY', 'MOTION', 'DURATION', 'AVOID']) assert.ok(compiled.sections[key]);
+  assert.match(compiled.prompt, /SUBJECT:/);
+  const report = { sceneId: 'hero', expectedMeaning: 'machine changes', observedMeaning: 'unrelated landscape', relevanceScore: 45, issues: ['semantic mismatch'], decision: 'REGENERATE', evaluationStatus: 'EVALUATED' };
+  assert.equal(decideRevision({ report, importance: 'HERO', remainingBudgetUsd: 1, fallbackAvailable: true, currentCostUsd: 1 }).decision, 'REGENERATE');
+  assert.equal(decideRevision({ report: { ...report, relevanceScore: 55 }, importance: 'SUPPORT', remainingBudgetUsd: 1, fallbackAvailable: true, currentCostUsd: 1 }).decision, 'USE_FALLBACK');
+  assert.equal(buildVoiceQualityReport({ provider: 'windows-sapi-local', durationSeconds: 4 }).status, 'NOT_EVALUATED');
+  const leases = new MemoryLeaseStore(); leases.add({ id: 'job-1', kind: 'production' });
+  const first = await leases.claim('worker-a', 1000); assert.ok(first); assert.equal(await leases.claim('worker-b', 1000), null); assert.equal(await leases.heartbeat('job-1', 'worker-b', 1000), false); assert.equal(await leases.recoverExpired(new Date(Date.now() + 2000).toISOString()), 1); assert.ok(await leases.claim('worker-b', 1000)); assert.equal(await leases.complete('job-1', 'worker-a'), false);
+  assert.equal(providerReceiptCanBeReused({ requestHash: 'same', responseStatus: 'COMPLETED', artifactId: 'a' }, 'same'), true);
+  assert.equal(providerReceiptCanBeReused({ requestHash: 'same', responseStatus: 'PROCESSING' }, 'same'), false);
+  const revision = makeRevisionRun({ id: 'revision-1', parentRunId: 'run-1', selectedSceneIds: ['scene-1'], reasons: { 'scene-1': 'semantic mismatch' }, costBefore: 1 }); assert.equal(revision.status, 'PLANNED'); assert.deepEqual(revision.selectedSceneIds, ['scene-1']);
+  const local = new FileArtifactStore(join(root, 'local')); const source = join(root, 'source.txt'); await writeFile(source, 'durable artifact');
+  const artifact = await local.putFile({ runId: 'run-1', type: 'REPORT', mimeType: 'text/plain', provider: 'local', sourcePath: source, cost: 0, isDraft: true, isFinal: false }); assert.equal(artifact.lifecycle, 'DRAFT'); assert.equal(await local.isValid(artifact), true);
+  const remote = new RemoteArtifactStore(local, { async put(_path, storageKey) { return { storageKey, path: _path }; }, async get() { return null; } }); assert.equal((await remote.putFile({ runId: 'run-1', type: 'REPORT', mimeType: 'text/plain', provider: 'local', sourcePath: source, cost: 0, isDraft: true, isFinal: false })).storageClass, 'remote');
+  console.log('real AI production hardening tests: PASS');
+} finally { await rm(root, { recursive: true, force: true }); }

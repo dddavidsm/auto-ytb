@@ -1,0 +1,11 @@
+alter table jobs add column if not exists lease_owner text;
+alter table jobs add column if not exists lease_expires_at timestamptz;
+alter table jobs add column if not exists heartbeat_at timestamptz;
+create index if not exists idx_jobs_lease_recovery on jobs(state, lease_expires_at) where state='running';
+alter table provider_calls add column if not exists provider_request_id text;
+alter table provider_calls add column if not exists provider_job_id text;
+alter table provider_calls add column if not exists submitted_at timestamptz;
+alter table provider_calls add column if not exists completed_at timestamptz;
+alter table provider_calls add column if not exists response_status text;
+alter table provider_calls add column if not exists artifact_id uuid references generated_artifacts(id) on delete set null;
+create index if not exists idx_provider_calls_request_hash on provider_calls(production_run_id, request_hash) where request_hash is not null;

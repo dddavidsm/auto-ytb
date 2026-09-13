@@ -1,0 +1,26 @@
+import type { SqlClient } from './sql.js';
+
+export type JobLease = { id: string; kind: string; state: 'running'; attempts: number; leaseOwner: string; leaseExpiresAt: string; heartbeatAt: string; payload?: Record<string, unknown> };
+export type LeaseStore = { claim(owner: string, leaseMs: number): Promise<JobLease | null>; heartbeat(id: string, owner: string, leaseMs: number): Promise<boolean>; complete(id: string, owner: string): Promise<boolean>; fail(id: string, owner: string, error: string, retry: boolean): Promise<boolean>; recoverExpired(now?: string): Promise<number> };
+
+export class SqlDurableJobStore implements LeaseStore {
+  constructor(private readonly db: SqlClient) {}
+  async claim(owner: string, leaseMs: number): Promise<JobLease | null> { const result = await this.db.query<any>(`with candidate as (select id from jobs where state in ('queued','retry') and not_before<=now() order by priority desc,created_at asc for update skip locked limit 1) update jobs j set state='running',attempts=j.attempts+1,locked_at=now(),locked_by=$1,lease_owner=$1,lease_expires_at=now()+($2::text||' milliseconds')::interval,heartbeat_at=now(),updated_at=now() from candidate where j.id=candidate.id returning j.id,j.kind,j.state,j.attempts,j.payload,j.lease_owner,j.lease_expires_at,j.heartbeat_at`, [owner, String(leaseMs)]); const row = result.rows[0]; return row ? this.map(row) : null; }
+  async heartbeat(id: string, owner: string, leaseMs: number) { const r = await this.db.query(`update jobs set lease_expires_at=now()+($3::text||' milliseconds')::interval,heartbeat_at=now(),updated_at=now() where id=$1 and state='running' and lease_owner=$2`, [id, owner, String(leaseMs)]); return (r as any).rowCount > 0; }
+  async complete(id: string, owner: string) { const r = await this.db.query(`update jobs set state='succeeded',locked_at=null,locked_by=null,lease_owner=null,lease_expires_at=null,heartbeat_at=now(),completed_at=now(),updated_at=now() where id=$1 and state='running' and lease_owner=$2`, [id, owner]); return (r as any).rowCount > 0; }
+  async fail(id: string, owner: string, error: string, retry = true) { const state = retry ? 'retry' : 'dead'; const r = await this.db.query(`update jobs set state=$3,locked_at=null,locked_by=null,lease_owner=null,lease_expires_at=null,heartbeat_at=now(),last_error=$4,updated_at=now() where id=$1 and state='running' and lease_owner=$2`, [id, owner, state, error.slice(0, 8000)]); return (r as any).rowCount > 0; }
+  async recoverExpired() { const r = await this.db.query(`update jobs set state='retry',locked_at=null,locked_by=null,lease_owner=null,lease_expires_at=null,heartbeat_at=now(),not_before=now(),last_error=coalesce(last_error,'') || ' Recovered expired production lease.',updated_at=now() where state='running' and lease_expires_at < now() returning id`); return r.rows.length; }
+  private map(row: any): JobLease { return { id: row.id, kind: row.kind, state: 'running', attempts: Number(row.attempts), leaseOwner: row.lease_owner, leaseExpiresAt: new Date(row.lease_expires_at).toISOString(), heartbeatAt: new Date(row.heartbeat_at).toISOString(), payload: row.payload ?? {} }; }
+}
+
+export class MemoryLeaseStore implements LeaseStore {
+  private jobs: Array<JobLease & { availableAt: number }> = [];
+  add(input: { id: string; kind: string; payload?: Record<string, unknown> }) { this.jobs.push({ ...input, state: 'running', attempts: 0, leaseOwner: '', leaseExpiresAt: '', heartbeatAt: '', availableAt: Date.now() }); }
+  async claim(owner: string, leaseMs: number) { const job = this.jobs.find((item) => item.leaseOwner === '' && item.availableAt <= Date.now()); if (!job) return null; job.leaseOwner = owner; job.attempts += 1; job.leaseExpiresAt = new Date(Date.now() + leaseMs).toISOString(); job.heartbeatAt = new Date().toISOString(); return { ...job }; }
+  async heartbeat(id: string, owner: string, leaseMs: number) { const job = this.jobs.find((item) => item.id === id); if (!job || job.leaseOwner !== owner || new Date(job.leaseExpiresAt).getTime() < Date.now()) return false; job.leaseExpiresAt = new Date(Date.now() + leaseMs).toISOString(); job.heartbeatAt = new Date().toISOString(); return true; }
+  async complete(id: string, owner: string) { const job = this.jobs.find((item) => item.id === id); if (!job || job.leaseOwner !== owner) return false; job.leaseOwner = 'DONE'; return true; }
+  async fail(id: string, owner: string, _error: string, retry = true) { const job = this.jobs.find((item) => item.id === id); if (!job || job.leaseOwner !== owner) return false; job.leaseOwner = ''; job.availableAt = retry ? Date.now() : Number.MAX_SAFE_INTEGER; return true; }
+  async recoverExpired(now = new Date().toISOString()) { const time = new Date(now).getTime(); let count = 0; for (const job of this.jobs) if (job.leaseOwner && job.leaseOwner !== 'DONE' && new Date(job.leaseExpiresAt).getTime() < time) { job.leaseOwner = ''; job.availableAt = Date.now(); count += 1; } return count; }
+}
+
+export function providerReceiptCanBeReused(receipt: { requestHash?: string; responseStatus?: string; artifactId?: string } | undefined, requestHash: string) { return Boolean(receipt?.requestHash === requestHash && receipt?.artifactId && ['COMPLETED', 'AVAILABLE', 'SUCCEEDED'].includes(String(receipt.responseStatus ?? '').toUpperCase())); }
