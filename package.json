@@ -25,6 +25,7 @@
     "test:durable-production": "npm run build && node scripts/test-durable-production.mjs",
     "test:real-ai-production": "npm run build && node scripts/test-real-ai-production.mjs",
     "quality-iteration:smoke": "npm run build && node scripts/test-real-ai-production.mjs",
+    "provider:activation-report": "npm run build && node scripts/provider-activation-report.mjs",
     "retention:fixture-test": "npm run build && node scripts/test-production-milestone.mjs",
     "niche:live": "npm run build && node apps/cli/dist/niche-live.js",
     "pipeline:mock": "npm run build && node apps/cli/dist/pipeline-mock.js",

@@ -6,3 +6,4 @@ export * from './gemini.js';
 export * from './gemini-unified.js';
 export * from './registry.js';
 export * from './health.js';
+export * from './credentials.js';

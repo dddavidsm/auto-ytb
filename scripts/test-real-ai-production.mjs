@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createDefaultProviderRegistry, ProviderHealthCheck, runProviderProbes, ProviderRouter } from '../packages/providers/dist/index.js';
+import { createDefaultProviderRegistry, ProviderHealthCheck, runProviderProbes, ProviderRouter, buildProviderCredentialRequirements, buildCapabilityActivationReport } from '../packages/providers/dist/index.js';
 import { FileArtifactStore, RemoteArtifactStore, MemoryLeaseStore, providerReceiptCanBeReused, makeRevisionRun } from '../packages/persistence/dist/index.js';
 import { VisualStrategyPlanner, VisualPromptCompiler, scoreSceneImportance, decideRevision, buildVoiceQualityReport } from '../packages/production/dist/index.js';
 
@@ -13,6 +13,7 @@ try {
   assert.equal(health.find((item) => item.provider === 'gemini')?.capabilities.find((item) => item.capability === 'VIDEO')?.state, 'NO_CREDENTIALS');
   const probeSummary = await runProviderProbes(registry);
   assert.equal(probeSummary.noExternalCalls, true);
+  const credentialReport = buildProviderCredentialRequirements(registry, {}); assert.equal(credentialReport.find((item) => item.provider === 'gemini' && item.capability === 'IMAGE')?.credentialState, 'MISSING'); assert.equal(buildCapabilityActivationReport(registry, {}).find((item) => item.capability === 'TTS')?.status, 'available');
   const planner = new VisualStrategyPlanner(new ProviderRouter(registry));
   const importance = scoreSceneImportance({ sceneId: 'hero', purpose: 'hook', visualValue: 95, needsMotion: true, screenTimeSeconds: 5 });
   assert.equal(importance.class, 'HERO');
