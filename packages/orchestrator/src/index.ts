@@ -1,4 +1,4 @@
-import type { FinalMediaInspection, ImageProvider, ObjectStore, Publisher, SearchProvider, TextModel, ThumbnailComposer, VideoProvider, VideoRenderer, VoiceProvider } from '@auto-ytb/providers';
+import type { BinaryAsset, FinalMediaInspection, ImageProvider, ObjectStore, Publisher, SearchProvider, TextModel, ThumbnailComposer, VideoProvider, VideoRenderer, VoiceProvider } from '@auto-ytb/providers';
 import { buildResearchDossier, type ResearchDossier } from '@auto-ytb/editorial';
 import { generatePackaging, generateScript, planScenes, selectPackagingWithExploration, synchronizeTimelineToVoice, type AssetRecord, type PackagingLearningProfile, type ProductionContentFormat, type ProductionManifest, type ThumbnailAsset, type VideoScript, type PackagingVariant, type Scene, type SourceFootage } from '@auto-ytb/production';
 import { reviewAttentionBlueprint, runQa, type AttentionReview, type QaReport } from '@auto-ytb/qa';
@@ -367,9 +367,19 @@ export async function runContentPipeline(input: {
       `Compose natively for ${aspectRatio}; keep the focal subject readable on a phone screen. The visual must explain, prove, escalate or refresh the viewer promise rather than act as generic decoration.`,
       scene.kind === 'ai_video' ? 'Depict one concrete observable action from this beat with a clear before→during→after state change; use motivated camera movement, subject movement or transformation. Do not make a still image with a zoom, floating text, fake UI or unrelated montage.' : '',
     ].filter(Boolean).join(' ');
-    const generated = scene.kind === 'ai_video'
-      ? await input.videoProvider!.generate({ prompt:visualPrompt, durationSeconds: Math.min(scene.durationSec, 8), aspectRatio })
-      : await input.imageProvider!.generate({ prompt:visualPrompt, aspectRatio });
+    let generated:BinaryAsset;
+    if(scene.kind==='ai_video'){
+      try{
+        generated=await input.videoProvider!.generate({ prompt:visualPrompt, durationSeconds: Math.min(scene.durationSec, 8), aspectRatio });
+      }catch(error){
+        const reason=String(error instanceof Error?error.message:error).slice(0,240);
+        if(!input.imageProvider)throw error;
+        event('ASSETS',`Video unavailable for ${scene.id}; falling back to AI image plus local motion (${reason})`);
+        const fallbackPrompt=`${visualPrompt} Produce one strong documentary keyframe for a local slow camera move. Preserve the subject, composition and visual meaning; no text, logos or watermarks.`;
+        generated=await input.imageProvider.generate({prompt:fallbackPrompt,aspectRatio});
+        generated={...generated,metadata:{...(generated.metadata??{}),fallbackFrom:'ai_video',fallbackReason:reason}};
+      }
+    }else generated=await input.imageProvider!.generate({ prompt:visualPrompt, aspectRatio });
     assets.push({...generated,sceneId:scene.id,generated:true,sourceIds:scene.sourceIds,metadata:{...(generated.metadata??{}),sourceRefs:scene.sourceRefs??[],visualValue:scene.visualValue??null,selectionReason:scene.selectionReason??null,beatContext:beatContext??null}});
   }
 
