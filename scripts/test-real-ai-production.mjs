@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { createDefaultProviderRegistry, ProviderHealthCheck, runProviderProbes, ProviderRouter, buildProviderCredentialRequirements, buildCapabilityActivationReport } from '../packages/providers/dist/index.js';
 import { FileArtifactStore, RemoteArtifactStore, MemoryLeaseStore, providerReceiptCanBeReused, makeRevisionRun } from '../packages/persistence/dist/index.js';
 import { VisualStrategyPlanner, VisualPromptCompiler, scoreSceneImportance, decideRevision, buildVoiceQualityReport } from '../packages/production/dist/index.js';
+import { FfmpegThumbnailComposer } from '../packages/runtime-node/thumbnail.mjs';
 
 const root = await mkdtemp(join(tmpdir(), 'auto-ytb-real-ai-'));
 try {
@@ -35,5 +36,7 @@ try {
   const local = new FileArtifactStore(join(root, 'local')); const source = join(root, 'source.txt'); await writeFile(source, 'durable artifact');
   const artifact = await local.putFile({ runId: 'run-1', type: 'REPORT', mimeType: 'text/plain', provider: 'local', sourcePath: source, cost: 0, isDraft: true, isFinal: false }); assert.equal(artifact.lifecycle, 'DRAFT'); assert.equal(await local.isValid(artifact), true);
   const remote = new RemoteArtifactStore(local, { async put(_path, storageKey) { return { storageKey, path: _path }; }, async get() { return null; } }); assert.equal((await remote.putFile({ runId: 'run-1', type: 'REPORT', mimeType: 'text/plain', provider: 'local', sourcePath: source, cost: 0, isDraft: true, isFinal: false })).storageClass, 'remote');
+  const thumbnailSource = join(root, 'thumbnail-source.png'); await writeFile(thumbnailSource, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+  const thumbnail = await new FfmpegThumbnailComposer({ outputRoot: join(root, 'thumbnails') }).compose({ backgroundUri: `file://${thumbnailSource}`, outputKey: 'percent.jpg', text: '43% YIELD' }); assert.ok(thumbnail.bytes > 0);
   console.log('real AI production hardening tests: PASS');
 } finally { await rm(root, { recursive: true, force: true }); }

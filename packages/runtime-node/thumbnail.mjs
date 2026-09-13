@@ -18,7 +18,7 @@ export class FfmpegThumbnailComposer {
       const textFile=`${out}.txt`;await writeFile(textFile,text);
       const escaped=escapeFfmpegFilterPath(textFile);
       const font=ffmpegFontOption();
-      filters.push(`drawbox=x=0:y=500:w=1280:h=220:color=black@0.42:t=fill`,`drawtext=${font?`${font}:`:''}textfile='${escaped}':fontcolor=white:fontsize=76:line_spacing=8:borderw=3:bordercolor=black:x=70:y=545`);
+      filters.push(`drawbox=x=0:y=500:w=1280:h=220:color=black@0.42:t=fill`,`drawtext=${font?`${font}:`:''}textfile='${escaped}':expansion=none:fontcolor=white:fontsize=76:line_spacing=8:borderw=3:bordercolor=black:x=70:y=545`);
     }
     await run(this.ffmpeg,['-y','-i',source,'-vf',filters.join(','),'-frames:v','1','-q:v','3',out]);
     const bytes=(await readFile(out)).byteLength;
