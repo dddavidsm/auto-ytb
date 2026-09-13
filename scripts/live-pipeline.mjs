@@ -84,7 +84,7 @@ try{
   const channelRow=await db.query(`insert into channels (channel_key,youtube_channel_id,title,language,country,niche,is_owned,identity,voice_profile,autonomy_policy,library_policy,credentials_ref,config_path,lifecycle_state,automation_enabled)
     values ($1,$2,$3,$4,$5,$6,true,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12,'ready',true)
     on conflict (channel_key) where channel_key is not null and is_owned=true do update set youtube_channel_id=coalesce(excluded.youtube_channel_id,channels.youtube_channel_id),title=excluded.title,language=excluded.language,country=excluded.country,niche=excluded.niche,identity=excluded.identity,voice_profile=excluded.voice_profile,autonomy_policy=excluded.autonomy_policy,library_policy=excluded.library_policy,credentials_ref=coalesce(excluded.credentials_ref,channels.credentials_ref),config_path=excluded.config_path,is_owned=true,updated_at=now() returning id`,[
-      channelKey,process.env.YOUTUBE_CHANNEL_ID||null,channel.id,channel.language,channel.region,channel.id,JSON.stringify(channel.identity??{}),JSON.stringify(channel.voiceProfile??{}),JSON.stringify(channel.autonomyPolicy??{}),JSON.stringify(channel.libraryPolicy??{}),channel.credentialsRef??'PRIMARY',configPath
+      channelKey,channel.youtubeChannelId||null,channel.id,channel.language,channel.region,channel.id,JSON.stringify(channel.identity??{}),JSON.stringify(channel.voiceProfile??{}),JSON.stringify(channel.autonomyPolicy??{}),JSON.stringify(channel.libraryPolicy??{}),channel.credentialsRef??'PRIMARY',configPath
     ]);
 const channelId=channelRow.rows[0].id;
   console.log('[live-pipeline] channel state ready; reading learning signals');
