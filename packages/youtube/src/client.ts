@@ -8,6 +8,8 @@ export type SearchVideo = {
   channelId: string;
   channelTitle: string;
   publishedAt: string;
+  description?: string;
+  thumbnailUrl?: string;
 };
 
 export type ChannelDetails = {
@@ -17,6 +19,9 @@ export type ChannelDetails = {
   viewCount: number;
   videoCount: number;
   uploadsPlaylistId: string;
+  handle?: string;
+  description?: string;
+  createdAt?: string;
 };
 
 export type EnrichedVideo = SearchVideo & {
@@ -24,6 +29,8 @@ export type EnrichedVideo = SearchVideo & {
   likeCount: number | null;
   commentCount: number | null;
   duration: string;
+  description?: string;
+  thumbnailUrl?: string;
 };
 
 export type YouTubeClientAuth = string | { apiKey?: string; accessToken?: string };
@@ -78,7 +85,7 @@ export class YouTubeClient {
     const json = await this.get<{
       items: Array<{
         id: { videoId: string };
-        snippet: { title: string; channelId: string; channelTitle: string; publishedAt: string };
+        snippet: { title: string; description?: string; channelId: string; channelTitle: string; publishedAt: string; thumbnails?: { high?: { url: string }; default?: { url: string } } };
       }>;
     }>('search', params);
 
@@ -88,7 +95,18 @@ export class YouTubeClient {
       channelId: item.snippet.channelId,
       channelTitle: item.snippet.channelTitle,
       publishedAt: item.snippet.publishedAt,
+      description: item.snippet.description,
+      thumbnailUrl: item.snippet.thumbnails?.high?.url ?? item.snippet.thumbnails?.default?.url,
     }));
+  }
+
+  async searchChannels(input: { query: string; regionCode?: string; relevanceLanguage?: string; limit?: number }): Promise<string[]> {
+    this.searchBudget.consume(1);
+    const params = new URLSearchParams({ part: 'snippet', type: 'channel', q: input.query, maxResults: String(Math.min(input.limit ?? 10, 50)), safeSearch: 'moderate' });
+    if (input.regionCode) params.set('regionCode', input.regionCode);
+    if (input.relevanceLanguage) params.set('relevanceLanguage', input.relevanceLanguage);
+    const json = await this.get<{ items: Array<{ id: { channelId: string } }> }>('search', params);
+    return json.items.map((item) => item.id.channelId).filter(Boolean);
   }
 
   async getChannels(channelIds: string[]): Promise<ChannelDetails[]> {
@@ -104,7 +122,7 @@ export class YouTubeClient {
       const json = await this.get<{
         items: Array<{
           id: string;
-          snippet: { title: string };
+          snippet: { title: string; description?: string; customUrl?: string; publishedAt?: string };
           statistics?: { subscriberCount?: string; viewCount?: string; videoCount?: string };
           contentDetails: { relatedPlaylists: { uploads: string } };
         }>;
@@ -117,6 +135,9 @@ export class YouTubeClient {
           viewCount: Number(item.statistics?.viewCount ?? 0),
           videoCount: Number(item.statistics?.videoCount ?? 0),
           uploadsPlaylistId: item.contentDetails.relatedPlaylists.uploads,
+          handle: item.snippet.customUrl,
+          description: item.snippet.description,
+          createdAt: item.snippet.publishedAt,
         });
       }
     }
@@ -134,7 +155,7 @@ export class YouTubeClient {
     const json = await this.get<{
       items: Array<{
         contentDetails: { videoId: string; videoPublishedAt?: string };
-        snippet: { title: string; channelId: string; channelTitle: string; publishedAt: string };
+      snippet: { title: string; description?: string; channelId: string; channelTitle: string; publishedAt: string; thumbnails?: { high?: { url: string }; default?: { url: string } } };
       }>;
     }>('playlistItems', params);
     const base: SearchVideo[] = json.items.map((item) => ({
@@ -143,6 +164,8 @@ export class YouTubeClient {
       channelId: item.snippet.channelId || channelId,
       channelTitle: item.snippet.channelTitle || channel.title,
       publishedAt: item.contentDetails.videoPublishedAt ?? item.snippet.publishedAt,
+      description: item.snippet.description,
+      thumbnailUrl: item.snippet.thumbnails?.high?.url ?? item.snippet.thumbnails?.default?.url,
     }));
     return this.enrichVideos(base);
   }
@@ -160,7 +183,7 @@ export class YouTubeClient {
       const json = await this.get<{
         items: Array<{
           id: string;
-          snippet: { title: string; channelId: string; channelTitle: string; publishedAt: string };
+          snippet: { title: string; description?: string; channelId: string; channelTitle: string; publishedAt: string; thumbnails?: { high?: { url: string }; default?: { url: string } } };
           statistics?: { viewCount?: string; likeCount?: string; commentCount?: string };
           contentDetails: { duration: string };
         }>;
@@ -176,6 +199,8 @@ export class YouTubeClient {
           likeCount: item.statistics?.likeCount ? Number(item.statistics.likeCount) : null,
           commentCount: item.statistics?.commentCount ? Number(item.statistics.commentCount) : null,
           duration: item.contentDetails.duration,
+          description: item.snippet.description,
+          thumbnailUrl: item.snippet.thumbnails?.high?.url ?? item.snippet.thumbnails?.default?.url,
         });
       }
     }

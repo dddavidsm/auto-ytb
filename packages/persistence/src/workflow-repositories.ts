@@ -1,5 +1,34 @@
 import type { SqlClient } from './sql.js';
 
+export class BenchmarkRepository {
+  constructor(private readonly db: SqlClient) {}
+
+  async saveContentDNA(input: { channelId?: string | null; videoId?: string | null; version?: number; dna: unknown; sourceQuality?: unknown }): Promise<number> {
+    const result = await this.db.query<{ id: number }>(`insert into content_dna_snapshots (channel_id,video_id,version,dna,source_quality) values ($1,$2,$3,$4::jsonb,$5::jsonb) returning id`, [input.channelId ?? null, input.videoId ?? null, input.version ?? 1, JSON.stringify(input.dna), JSON.stringify(input.sourceQuality ?? {})]);
+    if (!result.rows[0]) throw new Error('Content DNA insert returned no row');
+    return result.rows[0].id;
+  }
+
+  async savePatternCluster(input: { niche: string; cluster: unknown & { name?: string; description?: string; evidenceCount?: number; referenceVideos?: string[]; referenceChannels?: string[]; successCorrelation?: number; confidence?: number; nicheSpecificity?: number; transferable?: boolean; evidence?: string[] } }): Promise<string> {
+    const cluster = input.cluster;
+    const result = await this.db.query<{ id: string }>(`insert into pattern_clusters (niche,name,description,evidence_count,reference_videos,reference_channels,success_correlation,confidence,niche_specificity,transferable,evidence) values ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$9,$10,$11::jsonb) returning id`, [input.niche, cluster.name ?? 'Unnamed pattern', cluster.description ?? '', cluster.evidenceCount ?? 0, JSON.stringify(cluster.referenceVideos ?? []), JSON.stringify(cluster.referenceChannels ?? []), cluster.successCorrelation ?? 0, cluster.confidence ?? 0, cluster.nicheSpecificity ?? 0, cluster.transferable ?? false, JSON.stringify(cluster.evidence ?? [])]);
+    if (!result.rows[0]) throw new Error('Pattern cluster insert returned no row');
+    return result.rows[0].id;
+  }
+
+  async saveReferencePack(input: { opportunityId?: string | null; niche: string; topic?: string | null; format?: string | null; pack: { diversity?: unknown; limitations?: unknown; items?: Array<{ videoId?: string; databaseVideoId?: string | null; externalVideoId?: string | null; channelId?: string; role: string; evidence?: string[]; outlierScore?: number; selectedBecause: string }> } }): Promise<string> {
+    const result = await this.db.query<{ id: string }>(`insert into reference_packs (opportunity_id,niche,topic,format,version,diversity,limitations) values ($1,$2,$3,$4,1,$5::jsonb,$6::jsonb) returning id`, [input.opportunityId ?? null, input.niche, input.topic ?? null, input.format ?? null, JSON.stringify(input.pack.diversity ?? {}), JSON.stringify(input.pack.limitations ?? [])]);
+    if (!result.rows[0]) throw new Error('Reference pack insert returned no row');
+    const packId = result.rows[0].id;
+    for (const item of input.pack.items ?? []) await this.db.query(`insert into reference_pack_items (reference_pack_id,video_id,external_video_id,channel_id,role,evidence,outlier_score,selected_because) values ($1,$2,$3,$4,$5,$6::jsonb,$7,$8)`, [packId, item.databaseVideoId ?? null, item.externalVideoId ?? item.videoId ?? null, item.channelId ?? null, item.role, JSON.stringify(item.evidence ?? []), item.outlierScore ?? null, item.selectedBecause]);
+    return packId;
+  }
+
+  async attachOpportunityEvidence(opportunityId: string, input: { evidence: unknown; referencePack?: unknown; scoreBreakdown?: unknown; confidence: number }): Promise<void> {
+    await this.db.query(`update opportunities set evidence=$2::jsonb,reference_pack=$3::jsonb,score_breakdown=$4::jsonb,confidence=$5 where id=$1`, [opportunityId, JSON.stringify(input.evidence), JSON.stringify(input.referencePack ?? {}), JSON.stringify(input.scoreBreakdown ?? {}), input.confidence]);
+  }
+}
+
 export class ResearchRepository {
   constructor(private readonly db: SqlClient) {}
   async create(input: { opportunityId?: string | null; topic:string; researchConfidence:number; executiveSummary:string; blockingIssues:string[]; dossier:unknown }):Promise<string> {
