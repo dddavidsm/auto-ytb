@@ -24,7 +24,7 @@ with channel_row as (
     '{"primaryLanguage":"en","accent":"neutral-international-english","alignmentRequired":true}'::jsonb,
     '{"autonomyMode":"REVIEW_REQUIRED","allowAutomaticPublicScheduling":false,"blockOnUnresolvedRights":true,"blockOnPolicyWarning":true}'::jsonb,
     '{"provider":"google-drive","rootFolder":"AUTO-YTB","channelFolder":"klyverio-en"}'::jsonb)
-  on conflict (channel_key) where is_owned=true do update set title=excluded.title,handle=excluded.handle,language=excluded.language,country=excluded.country,niche=excluded.niche,updated_at=now()
+  on conflict (channel_key) where channel_key is not null and is_owned=true do update set title=excluded.title,handle=excluded.handle,language=excluded.language,country=excluded.country,niche=excluded.niche,updated_at=now()
   returning id
 )
 insert into channel_strategies(channel_id,target_markets,active_formats,brand_identity,voice_identity,visual_identity,cost_policy,production_preferences,analytics_settings,experiment_policy,statistics_status)

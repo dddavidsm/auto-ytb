@@ -179,9 +179,10 @@ export async function runContentPipeline(input: {
   const events: PipelineEvent[] = [];
   const event = (state: PipelineState, message: string) => events.push({ at: new Date().toISOString(), state, message });
   const contentFormat = input.contentFormat ?? 'LONG_HORIZONTAL';
-  const isShort = contentFormat === 'SHORT_VERTICAL';
-  const aspectRatio = isShort ? '9:16' as const : '16:9' as const;
-  const frame = isShort ? { width:1080,height:1920 } : { width:1920,height:1080 };
+  const isVertical = contentFormat === 'SHORT_VERTICAL';
+  const isCompact = contentFormat !== 'LONG_HORIZONTAL';
+  const aspectRatio = isVertical ? '9:16' as const : '16:9' as const;
+  const frame = isVertical ? { width:1080,height:1920 } : { width:1920,height:1080 };
   const archetypeModel=input.model as ArchetypeAwareTextModel;
   const contentArchetype=input.contentArchetype??archetypeModel.contentArchetypeDecision??(archetypeModel.contentArchetypeProfile?{archetype:archetypeModel.contentArchetypeProfile.id,confidence:0,reasons:['Runtime-bound Content Archetype profile'],profile:archetypeModel.contentArchetypeProfile}:undefined);
   const executionPlan=buildArchetypeExecutionPlan(contentArchetype,contentFormat);
@@ -206,8 +207,10 @@ export async function runContentPipeline(input: {
   }
   const angle = dossier.angles.find((candidate) => candidate.id === dossier.recommendedAngleId)!;
 
-  const formatScriptGuidance = isShort
+  const formatScriptGuidance = isVertical
     ? 'This is a native vertical YouTube Short. Deliver the viewer promise immediately, create tension or curiosity in the first spoken/visual beat, use one focused narrative arc, remove all nonessential setup, and end on a concrete payoff. Never open with greetings, housekeeping or a compressed long-form introduction.'
+    : contentFormat === 'SHORT_HORIZONTAL'
+      ? 'This is a concise horizontal documentary/explainer pilot. Deliver the viewer promise immediately, use a focused six-beat arc with visible progression, remove long-form throat-clearing, and end on a concrete payoff without filler.'
     : 'This is a horizontal long-form YouTube video. Open on the strongest contradiction, consequence, action or unresolved question, make the clicked promise clear immediately, then build sustained curiosity through progressive evidence/actions, escalation, reveals and a satisfying payoff without filler.';
   const languageGuidance=executionPlan.voiceRequired
     ?`Write spoken material natively in ${input.language}. Do not translate literally from another language.`
@@ -223,6 +226,7 @@ export async function runContentPipeline(input: {
   let attention!:AttentionReview;
   let packagingChoice!:ReturnType<typeof selectPackagingWithExploration>;
   let projectedCostUsd=0;
+  const thumbnailVariantCount=contentFormat==='SHORT_VERTICAL'?0:2;
 
   for(let attempt=0;attempt<=maxRepairs;attempt+=1){
     const repairLabel=attempt===0?'initial attention draft':`attention repair ${attempt}/${maxRepairs}`;
@@ -248,7 +252,7 @@ export async function runContentPipeline(input: {
     event('PLAN', `Planning ${aspectRatio} ${executionPlan.visualMode} timeline for attention pass ${attempt+1}`);
     draftScenes=planScenes(draftScript,{targetSceneDurationSec:adaptiveSceneDuration,sources:dossier.sources,sourceFootage:input.sourceFootage,visualMode:executionPlan.visualMode,generativeSpendBias:executionPlan.generativeSpendBias,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile,visualMixPolicy:'MIXED_MEDIA'});
     const spendSoFar=Math.max(0,Number(input.additionalCostUsd?.() ?? input.model.getNonAssetCostUsd?.() ?? 0));
-    const budgetFit=fitScenePlanToBudget({scenes:draftScenes,maxCostUsd:input.maxCostUsd,narrationSeconds:executionPlan.voiceRequired?input.targetDurationSec:0,voiceRequired:executionPlan.voiceRequired,fixedCostUsd:spendSoFar,isShort,packagingCount:packaging.length,imageAvailable:Boolean(input.imageProvider)});
+    const budgetFit=fitScenePlanToBudget({scenes:draftScenes,maxCostUsd:input.maxCostUsd,narrationSeconds:executionPlan.voiceRequired?input.targetDurationSec:0,voiceRequired:executionPlan.voiceRequired,fixedCostUsd:spendSoFar,isShort:isVertical,packagingCount:thumbnailVariantCount,imageAvailable:Boolean(input.imageProvider)});
     draftScenes=budgetFit.scenes;projectedCostUsd=budgetFit.projectedCostUsd;
     if(budgetFit.changed)event('PLAN',`Pre-spend budget guard downgraded ${budgetFit.downgrades.length} scene(s): ${budgetFit.downgrades.join(', ')} · projected $${projectedCostUsd.toFixed(2)} / cap $${input.maxCostUsd.toFixed(2)}`);
     if(projectedCostUsd>input.maxCostUsd){
@@ -274,8 +278,8 @@ export async function runContentPipeline(input: {
         :'Preserve the original premise and any canonical character/world constraints. Do not turn fictional/generated events into claimed real-world evidence. Every beat must create visible progress toward the locked payoff.',
     ];
     if(attention.issues.some((issue)=>['monotonous-pacing','weak-visual-storytelling'].includes(issue.code))){
-      const current=adaptiveSceneDuration??(isShort?5:10);
-      adaptiveSceneDuration=Math.max(isShort?2.5:4.5,current*0.82);
+      const current=adaptiveSceneDuration??(isCompact?5:10);
+      adaptiveSceneDuration=Math.max(isCompact?2.5:4.5,current*0.82);
     }
   }
 
@@ -301,7 +305,7 @@ export async function runContentPipeline(input: {
   }
 
   const editorialCostPreMedia=Math.max(0,Number(input.additionalCostUsd?.() ?? input.model.getNonAssetCostUsd?.() ?? 0));
-  const postVoiceBudget=fitScenePlanToBudget({scenes,maxCostUsd:input.maxCostUsd,narrationSeconds:voice?.durationSeconds??0,voiceRequired:executionPlan.voiceRequired,voiceCostUsd:Number(voice?.costUsd??0),fixedCostUsd:editorialCostPreMedia,isShort,packagingCount:packaging.length,imageAvailable:Boolean(input.imageProvider)});
+  const postVoiceBudget=fitScenePlanToBudget({scenes,maxCostUsd:input.maxCostUsd,narrationSeconds:voice?.durationSeconds??0,voiceRequired:executionPlan.voiceRequired,voiceCostUsd:Number(voice?.costUsd??0),fixedCostUsd:editorialCostPreMedia,isShort:isVertical,packagingCount:thumbnailVariantCount,imageAvailable:Boolean(input.imageProvider)});
   scenes=postVoiceBudget.scenes;projectedCostUsd=postVoiceBudget.projectedCostUsd;
   if(postVoiceBudget.changed){
     event('PLAN',`Post-voice budget guard downgraded ${postVoiceBudget.downgrades.length} scene(s): ${postVoiceBudget.downgrades.join(', ')} · projected $${projectedCostUsd.toFixed(2)} / cap $${input.maxCostUsd.toFixed(2)}`);
@@ -311,7 +315,7 @@ export async function runContentPipeline(input: {
   if(projectedCostUsd>input.maxCostUsd){event('BLOCKED',`Hard budget exceeded after voice timing: projected $${projectedCostUsd.toFixed(2)} / cap $${input.maxCostUsd.toFixed(2)}`);return{state:'BLOCKED',events,dossier,attention};}
 
   const needsVideo=scenes.some((scene)=>scene.generated&&scene.kind==='ai_video');
-  const needsImage=scenes.some((scene)=>scene.generated&&scene.kind==='ai_image')||!isShort;
+  const needsImage=scenes.some((scene)=>scene.generated&&scene.kind==='ai_image')||!isVertical;
   if(needsVideo&&!input.videoProvider){event('BLOCKED',`${executionPlan.visualMode} scene plan requires a video provider but none is configured`);return{state:'BLOCKED',events,dossier,attention};}
   if(needsImage&&!input.imageProvider){event('BLOCKED',`${executionPlan.visualMode} scene/thumbnail plan requires an image provider but none is configured`);return{state:'BLOCKED',events,dossier,attention};}
 
@@ -320,7 +324,7 @@ export async function runContentPipeline(input: {
   const estimatedCostUsd=projectedCostUsd;
   event('PLAN', `Archetype visual mix: ${Object.entries(visualMix).map(([kind,count]) => `${kind}=${count}`).join(', ')} · generative bias ${executionPlan.generativeSpendBias.toFixed(2)} · conservative pre-render $${estimatedCostUsd.toFixed(2)}/${input.maxCostUsd.toFixed(2)}`);
 
-  event('ASSETS', `Generating ${aspectRatio} scene visuals${isShort ? '' : ' plus thumbnail variants'}`);
+  event('ASSETS', `Generating ${aspectRatio} scene visuals${isVertical ? '' : ' plus thumbnail variants'}`);
   const assets: AssetRecord[] = [];
   const beatForScene=(scene:Scene)=>script.beats.find((beat)=>scene.id===beat.id||scene.id.startsWith(`${beat.id}-s`));
   const sourceWindowUse=new Map<string,number>();
@@ -370,8 +374,8 @@ export async function runContentPipeline(input: {
   }
 
   const thumbnails: ThumbnailAsset[] = [];
-  if (!isShort) {
-    for (const variant of packaging) {
+  if (!isVertical) {
+    for (const variant of packaging.slice(0,thumbnailVariantCount)) {
       const background = await input.imageProvider!.generate({prompt:`${variant.thumbnailConcept}. YouTube thumbnail background for ${executionPlan.archetypeId}: one dominant focal subject, high visual contrast, uncluttered composition, strong separation between foreground and background, leave intentional negative space for optional typography, no readable fake text, no fake logos, no watermarks. The visual promise must be truthful to the opening and payoff.`,aspectRatio:'16:9'});
       const composed = await input.thumbnailComposer.compose({backgroundUri:background.uri,text:variant.thumbnailText,outputKey:`${input.projectId}/${variant.id}.jpg`});
       thumbnails.push({ ...composed, packagingId: variant.id, text: variant.thumbnailText, costUsd: (background.costUsd ?? 0) + (composed.costUsd ?? 0) });
@@ -411,14 +415,14 @@ export async function runContentPipeline(input: {
   if(!finalInspection.passed){event('BLOCKED',`Final render rejected: ${finalInspection.issues.join(', ')}`);return{state:'BLOCKED',events,dossier,manifest,qa,attention:qa.attention,finalInspection,renderUri:render.uri};}
 
   if (!input.autoUploadPrivate) {
-    event('READY_FOR_REVIEW', isShort ? `Native vertical Short render ready · ${executionPlan.archetypeId} · attention ${qa.attention.score}/100 · render QA ${finalInspection.score}/100` : `Render and ${thumbnails.length} thumbnail variants ready · ${executionPlan.archetypeId} · attention ${qa.attention.score}/100 · render QA ${finalInspection.score}/100`);
+    event('READY_FOR_REVIEW', isVertical ? `Native vertical Short render ready · ${executionPlan.archetypeId} · attention ${qa.attention.score}/100 · render QA ${finalInspection.score}/100` : `Render and ${thumbnails.length} thumbnail variants ready · ${executionPlan.archetypeId} · render QA ${finalInspection.score}/100`);
     return { state:'READY_FOR_REVIEW',events,dossier,manifest,qa,attention:qa.attention,finalInspection,renderUri:render.uri };
   }
 
   event('PRIVATE_UPLOAD', `Uploading private ${contentFormat}`);
   const selected = packaging.find((variant) => variant.id === manifest.selectedPackagingId) ?? packaging[0];
-  const upload = await input.publisher.uploadPrivate({fileUri:render.uri,title:selected?.title??script.title,description:dossier.executiveSummary,tags:isShort?['Shorts']:[],language:input.language,containsSyntheticMedia:qa.containsSyntheticMedia});
-  if (!isShort) {const selectedThumbnail=thumbnails.find((thumbnail)=>thumbnail.packagingId===manifest.selectedPackagingId)??thumbnails[0];if(selectedThumbnail)await input.publisher.setThumbnail({externalId:upload.externalId,fileUri:selectedThumbnail.uri});}
+  const upload = await input.publisher.uploadPrivate({fileUri:render.uri,title:selected?.title??script.title,description:dossier.executiveSummary,tags:isVertical?['Shorts']:[],language:input.language,containsSyntheticMedia:qa.containsSyntheticMedia});
+  if (!isVertical) {const selectedThumbnail=thumbnails.find((thumbnail)=>thumbnail.packagingId===manifest.selectedPackagingId)??thumbnails[0];if(selectedThumbnail)await input.publisher.setThumbnail({externalId:upload.externalId,fileUri:selectedThumbnail.uri});}
   event('READY_FOR_REVIEW', `Private ${contentFormat} upload ${upload.externalId} ready for downstream publication policy · ${executionPlan.archetypeId} · attention ${qa.attention.score}/100 · render QA ${finalInspection.score}/100`);
   return { state:'READY_FOR_REVIEW',events,dossier,manifest,qa,attention:qa.attention,finalInspection,renderUri:render.uri,externalId:upload.externalId };
 }

@@ -76,7 +76,7 @@ export type SourceFootage = {
   rightsStatus: 'CLEARED' | 'VERIFY' | 'BLOCKED';
   cropMode?: 'CENTER' | 'SMART_CENTER';
 };
-export type ProductionContentFormat = 'LONG_HORIZONTAL' | 'SHORT_VERTICAL';
+export type ProductionContentFormat = 'LONG_HORIZONTAL' | 'SHORT_HORIZONTAL' | 'SHORT_VERTICAL';
 
 export type ContentExecutionPlan = {
   archetypeId: string;

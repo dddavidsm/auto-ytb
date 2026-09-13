@@ -21,6 +21,10 @@ assert.equal(kidsPlan.researchRequired,false);
 assert.equal(kidsPlan.scriptMode,'DIALOGUE');
 assert.equal(kidsPlan.voiceRequired,true);
 assert.equal(kidsPlan.visualMode,'CHARACTER_CONTINUITY');
+const compactHorizontalPlan=buildArchetypeExecutionPlan({archetype:'EXPLAINER_DOCUMENTARY',confidence:1,reasons:['compact horizontal pilot'],profile:{...normalizedKids,preferredFormats:[]}},'SHORT_HORIZONTAL');
+assert.equal(compactHorizontalPlan.targetSceneDurationSec,normalizedKids.targetSceneDurationSec.short);
+assert.equal(compactHorizontalPlan.requiredCapabilities.video,true);
+assert.ok(compactHorizontalPlan.preferredFormats.includes('SHORT_HORIZONTAL'));
 
 const dog=inferContentArchetype({topic:'Funny dog gets caught stealing socks from the laundry basket',contentFormat:'SHORT_VERTICAL'});
 assert.equal(dog.archetype,'ANIMAL_REALISM');

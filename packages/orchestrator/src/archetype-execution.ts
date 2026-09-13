@@ -62,12 +62,12 @@ export function buildArchetypeExecutionPlan(decision: ContentArchetypeRuntimeDec
       :researchRequired
         ?'EVIDENCE_FIRST'
         :'HYBRID';
-  const targetSceneDurationSec=contentFormat==='SHORT_VERTICAL'
+  const targetSceneDurationSec=contentFormat!=='LONG_HORIZONTAL'
     ? Number(profile.targetSceneDurationSec?.short??0)||undefined
     : Number(profile.targetSceneDurationSec?.long??0)||undefined;
   const preferredFormats=Array.isArray(profile.preferredFormats)&&profile.preferredFormats.length
     ? profile.preferredFormats
-    : ['LONG_HORIZONTAL','SHORT_VERTICAL'] as ProductionContentFormat[];
+    : ['LONG_HORIZONTAL','SHORT_HORIZONTAL','SHORT_VERTICAL'] as ProductionContentFormat[];
   return {
     archetypeId:String(decision?.archetype??profile.id??'DEFAULT_FACTUAL'),
     researchMode:researchRequired?'FACTUAL_RESEARCH':'CREATIVE_ORIGINAL',
@@ -87,7 +87,7 @@ export function buildArchetypeExecutionPlan(decision: ContentArchetypeRuntimeDec
     preferredFormats,
     targetSceneDurationSec,
     generativeSpendBias,
-    requiredCapabilities:{search:researchRequired,voice:voiceMode!=='NONE',image:true,video:contentFormat==='SHORT_VERTICAL'||visualMode==='GENERATIVE_FIRST'||visualMode==='CHARACTER_CONTINUITY'},
+    requiredCapabilities:{search:researchRequired,voice:voiceMode!=='NONE',image:true,video:contentFormat!=='LONG_HORIZONTAL'||visualMode==='GENERATIVE_FIRST'||visualMode==='CHARACTER_CONTINUITY'},
   };
 }
 

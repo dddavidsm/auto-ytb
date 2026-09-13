@@ -24,8 +24,8 @@ if(sourceFootagePath){
 const configPath=resolve(arg('channel-config','config/channels/future-tech-business.example.json'));
 const channel=JSON.parse(await readFile(configPath,'utf8'));
 const requestedFormat=String(arg('format',channel.preferredFormat==='SHORT_VERTICAL'?'SHORT_VERTICAL':'LONG_HORIZONTAL')).toUpperCase();
-const contentFormat=requestedFormat==='SHORT_VERTICAL'?'SHORT_VERTICAL':'LONG_HORIZONTAL';
-const isShort=contentFormat==='SHORT_VERTICAL';
+const contentFormat=['SHORT_VERTICAL','SHORT_HORIZONTAL'].includes(requestedFormat)?requestedFormat:'LONG_HORIZONTAL';
+const isShort=contentFormat!=='LONG_HORIZONTAL';
 console.log(`[live-pipeline] start format=${contentFormat} topic=${topic.slice(0,120)}`);
 // Content-archetype inference must see the selected channel domain. Without this context a
 // factual AI/business opportunity can fall through to GENERAL_STORY (creative fiction).
@@ -48,7 +48,7 @@ function packagingGuidanceFromMetrics(metrics){
 }
 
 function productionProfileFromMetrics(metrics,base,format){
-  const sample=Number(metrics?.sample_size??0),short=format==='SHORT_VERTICAL',durationBounds=short?{min:20,max:180}:{min:480,max:900},sceneBounds=short?{min:2.5,max:8,base:Number(base.targetSceneDurationSec??4.5)}:{min:5,max:16,base:Number(base.targetSceneDurationSec??10)},costFloor=short?2:8;
+  const sample=Number(metrics?.sample_size??0),short=format!=='LONG_HORIZONTAL',durationBounds=short?{min:20,max:180}:{min:480,max:900},sceneBounds=short?{min:2.5,max:8,base:Number(base.targetSceneDurationSec??4.5)}:{min:5,max:16,base:Number(base.targetSceneDurationSec??10)},costFloor=short?2:8;
   if(sample<3)return{sampleSize:sample,targetDurationSec:base.targetDurationSec,targetSceneDurationSec:Math.max(sceneBounds.min,Math.min(sceneBounds.max,sceneBounds.base)),maxCostUsd:base.maxCostUsd,scriptGuidance:undefined,adapted:false};
   const hook=metrics.strong_hook_rate==null?null:Number(metrics.strong_hook_rate),avp=metrics.average_view_percentage==null?null:Number(metrics.average_view_percentage),roi=metrics.average_roi==null?null:Number(metrics.average_roi);
   let durationFactor=1,targetSceneDurationSec=sceneBounds.base,costFactor=1;const guidance=[];
