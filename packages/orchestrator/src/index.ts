@@ -227,6 +227,7 @@ export async function runContentPipeline(input: {
   let packagingChoice!:ReturnType<typeof selectPackagingWithExploration>;
   let projectedCostUsd=0;
   const thumbnailVariantCount=contentFormat==='SHORT_VERTICAL'?0:2;
+  let videoFallbackDisabled=false;
 
   for(let attempt=0;attempt<=maxRepairs;attempt+=1){
     const repairLabel=attempt===0?'initial attention draft':`attention repair ${attempt}/${maxRepairs}`;
@@ -367,19 +368,22 @@ export async function runContentPipeline(input: {
       `Compose natively for ${aspectRatio}; keep the focal subject readable on a phone screen. The visual must explain, prove, escalate or refresh the viewer promise rather than act as generic decoration.`,
       scene.kind === 'ai_video' ? 'Depict one concrete observable action from this beat with a clear before→during→after state change; use motivated camera movement, subject movement or transformation. Do not make a still image with a zoom, floating text, fake UI or unrelated montage.' : '',
     ].filter(Boolean).join(' ');
-    let generated:BinaryAsset;
+    let generated:BinaryAsset|undefined;
     if(scene.kind==='ai_video'){
-      try{
+      let videoError:unknown;
+      if(!videoFallbackDisabled)try{
         generated=await input.videoProvider!.generate({ prompt:visualPrompt, durationSeconds: Math.min(scene.durationSec, 8), aspectRatio });
-      }catch(error){
-        const reason=String(error instanceof Error?error.message:error).slice(0,240);
-        if(!input.imageProvider)throw error;
+      }catch(error){videoError=error;videoFallbackDisabled=true;}
+      if(videoError||videoFallbackDisabled){
+        const reason=String(videoError instanceof Error?videoError.message:videoError??'video provider disabled after an earlier failure').slice(0,240);
+        if(!input.imageProvider)throw(videoError??new Error('Video fallback requires an image provider'));
         event('ASSETS',`Video unavailable for ${scene.id}; falling back to AI image plus local motion (${reason})`);
         const fallbackPrompt=`${visualPrompt} Produce one strong documentary keyframe for a local slow camera move. Preserve the subject, composition and visual meaning; no text, logos or watermarks.`;
         generated=await input.imageProvider.generate({prompt:fallbackPrompt,aspectRatio});
         generated={...generated,metadata:{...(generated.metadata??{}),fallbackFrom:'ai_video',fallbackReason:reason}};
       }
     }else generated=await input.imageProvider!.generate({ prompt:visualPrompt, aspectRatio });
+    if(!generated)throw new Error(`Scene ${scene.id} produced no visual asset`);
     assets.push({...generated,sceneId:scene.id,generated:true,sourceIds:scene.sourceIds,metadata:{...(generated.metadata??{}),sourceRefs:scene.sourceRefs??[],visualValue:scene.visualValue??null,selectionReason:scene.selectionReason??null,beatContext:beatContext??null}});
   }
 

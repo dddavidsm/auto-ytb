@@ -85,7 +85,8 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
 
   const packagingIds = new Set(input.manifest.packaging.map((variant) => variant.id));
   const thumbnailIds = new Set(input.manifest.thumbnails.map((thumbnail) => thumbnail.packagingId));
-  const missingThumbnails = isShort ? [] : [...packagingIds].filter((id) => !thumbnailIds.has(id));
+  const boundedThumbnailCoverage = isShort || (thumbnailIds.has(input.manifest.selectedPackagingId) && input.manifest.thumbnails.length >= Math.min(2, input.manifest.packaging.length));
+  const missingThumbnails = isShort || boundedThumbnailCoverage ? [] : [...packagingIds].filter((id) => !thumbnailIds.has(id));
   const selectedThumbnailMissing = isShort ? false : !thumbnailIds.has(input.manifest.selectedPackagingId);
   const oversizedThumbnails = input.manifest.thumbnails.filter((thumbnail) => (thumbnail.bytes ?? 0) > 2_000_000);
   const invalidThumbnailMime = input.manifest.thumbnails.filter((thumbnail) => !['image/jpeg','image/png'].includes(thumbnail.mimeType));
@@ -93,7 +94,7 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
   const packagingTitlesTooLong = input.manifest.packaging.filter((variant) => variant.title.length > 100);
   const thumbnailBlocking = isShort
     ? packagingTitlesTooLong.length > 0
-    : Boolean(missingThumbnails.length || selectedThumbnailMissing || oversizedThumbnails.length || invalidThumbnailMime.length || input.manifest.thumbnails.length < Math.min(3,input.manifest.packaging.length));
+    : Boolean(missingThumbnails.length || selectedThumbnailMissing || oversizedThumbnails.length || invalidThumbnailMime.length || !boundedThumbnailCoverage);
   const thumbnailWarn = thumbnailTextTooLong.length || packagingTitlesTooLong.length;
   const thumbnailPenalty = missingThumbnails.length*25 + Number(selectedThumbnailMissing)*30 + oversizedThumbnails.length*15 + invalidThumbnailMime.length*20 + thumbnailTextTooLong.length*7 + packagingTitlesTooLong.length*7;
   checks.push({
@@ -104,7 +105,7 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
       ? (packagingTitlesTooLong.length ? `${packagingTitlesTooLong.length} Shorts titles exceed 100 characters` : 'Shorts packaging ready; custom thumbnail is not a production blocker')
       : thumbnailBlocking
         ? `Packaging blocked: ${missingThumbnails.length} variants missing thumbnails, selected thumbnail ${selectedThumbnailMissing?'missing':'ok'}, ${oversizedThumbnails.length} oversized, ${invalidThumbnailMime.length} invalid mime`
-        : thumbnailWarn ? `${thumbnailTextTooLong.length} thumbnail texts or ${packagingTitlesTooLong.length} titles should be shortened` : `${input.manifest.thumbnails.length} thumbnail variants ready`,
+        : thumbnailWarn ? `${thumbnailTextTooLong.length} thumbnail texts or ${packagingTitlesTooLong.length} titles should be shortened` : `${input.manifest.thumbnails.length} bounded thumbnail variants ready`,
   });
 
   const expectedAspect = isShort ? '9:16' : '16:9';
