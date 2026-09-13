@@ -23,6 +23,8 @@ export default async function VideoPage({params}:{params:Promise<{id:string}>}){
   const releaseSafety=gate?.releaseSafety??null;
   const renderUri=String(run.metadata?.renderUri??'');
   const canPreview=renderUri.startsWith('file://')||renderUri.startsWith('/')||renderUri.startsWith('.');
+  const productionJob=run.metadata?.productionJob??null;
+  const readiness=run.metadata?.productionReadiness??null;
   const fingerprint=run.fingerprint?.fingerprint??run.fingerprint??{};
   const script=run.script??{};
   const analytics=run.analytics??{};
@@ -71,6 +73,29 @@ export default async function VideoPage({params}:{params:Promise<{id:string}>}){
       <section className="section card">
         <div className="section-head"><div><p className="eyebrow">Creative Performance Lab</p><h2>Retention × Timeline</h2></div><span className="fine">Dips y spikes alineados con beats, escenas y recursos visuales</span></div>
         <RetentionTimeline points={run.retention??[]} segments={run.segments??[]}/>
+      </section>
+
+      <section className="section card">
+        <div className="section-head"><div><p className="eyebrow">Production journey</p><h2>De referencia a aprendizaje</h2></div><span className="fine">Cada estado distingue REAL, ESTIMATED, MOCK, UNAVAILABLE y NO_CREDENTIALS.</span></div>
+        <div className="list">
+          {[
+            ['REFERENCE',run.metadata?.referencePack?'REAL':'UNAVAILABLE','Reference Pack'],
+            ['VIRAL TEMPLATE',run.metadata?.viralTemplate?'REAL':'UNAVAILABLE','Formula reusable sin copiar contenido'],
+            ['HOOKS',run.metadata?.hooks?'REAL':'UNAVAILABLE','Hook Engineer'],
+            ['PACKAGING',run.metadata?.packaging?'REAL':'UNAVAILABLE','Title + thumbnail + packaging'],
+            ['SCRIPT',script.beats?.length?'REAL':'UNAVAILABLE','Story Architecture'],
+            ['SHOTS',run.metadata?.shotPlan?'REAL':'UNAVAILABLE','Shot Plan'],
+            ['PRODUCTION',productionJob?.status??(run.assets?.length?'REAL':'UNAVAILABLE'),productionJob?`${productionJob.tasks?.length??0} subtareas`:'Common Production Engine'],
+            ['TIMELINE',run.segments?.length?'REAL':'UNAVAILABLE','Narration ↔ visual ↔ audio ↔ captions'],
+            ['COST',run.costs?.length?'REAL':run.total_cost_usd!=null?'ESTIMATED':'UNAVAILABLE','Cost Ledger'],
+            ['QUALITY',readiness?.readyForRelease?'PASS':run.qa_report?'REAL':'UNAVAILABLE','Production Readiness'],
+            ['ANALYTICS',analytics?.data_mode==='FIXTURE'?'MOCK':analytics?.data_mode==='REAL'?'REAL':analytics?.views!=null?'REAL':'UNAVAILABLE','Actual vs estimated'],
+            ['LEARNINGS',run.metadata?.learning?'REAL':'UNAVAILABLE','Learning Engine'],
+            ['SERIES',run.metadata?.seriesBible?'REAL':'UNAVAILABLE','Series Bible / continuity'],
+          ].map(([name,state,detail])=><div className="list-item" key={name}><div><strong>{name}</strong><div className="fine">{detail}</div></div><span className={`pill ${pill(state)}`}>{state}</span></div>)}
+        </div>
+        {productionJob?.tasks?.length?<div className="fine" style={{marginTop:12}}>Job {productionJob.id} · {productionJob.status} · {productionJob.tasks.filter((task:any)=>task.status==='COMPLETED').length}/{productionJob.tasks.length} subtareas completadas.</div>:null}
+        {readiness?.blockers?.length?<div className="error" style={{marginTop:12}}>{readiness.blockers.slice(0,5).map((blocker:string,index:number)=><div key={`${index}:${blocker}`}>• {blocker}</div>)}</div>:null}
       </section>
 
       <section className="section split">
