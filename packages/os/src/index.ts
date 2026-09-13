@@ -4,6 +4,7 @@ export * from './branding.js';
 export * from './series.js';
 export * from './series-memory.js';
 export * from './content-archetypes.js';
+export * from './channel-profile.js';
 
 export type ChannelDna = {
   id: string;

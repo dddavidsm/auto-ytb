@@ -19,3 +19,5 @@ export * from './reference-pack.js';
 export * from './pattern-mining.js';
 export * from './opportunity-engine.js';
 export * from './engines.js';
+export * from './labs.js';
+export * from './pipeline.js';

@@ -1,4 +1,4 @@
-import { benchmarkFormat, normalizeBenchmarkVideo, SEED_BENCHMARK_CHANNELS, type BenchmarkChannel, type BenchmarkReport, type BenchmarkRequest, type BenchmarkVideo } from '@auto-ytb/core';
+import { normalizeBenchmarkVideo, SEED_BENCHMARK_CHANNELS, type BenchmarkChannel, type BenchmarkReport, type BenchmarkRequest, type BenchmarkVideo } from '@auto-ytb/core';
 import type { YouTubeClient } from '@auto-ytb/youtube';
 
 export type BenchmarkProvider = {
@@ -58,5 +58,3 @@ export async function discoverBenchmark(input: { request: BenchmarkRequest; prov
 export function fixtureBenchmarkProvider(input: { channels: BenchmarkChannel[]; videos: Record<string, BenchmarkVideo[]> }): BenchmarkProvider {
   return { name: 'fixture', async searchChannels() { return input.channels.map((channel) => channel.id); }, async getChannels(ids) { return input.channels.filter((channel) => ids.includes(channel.id)).map((channel) => ({ id: channel.id, handle: channel.handle, name: channel.name, description: channel.description, createdAt: channel.createdAt, subscribers: channel.subscribers, totalViews: channel.totalViews, totalVideos: channel.totalVideos })); }, async getRecentVideos(channelId) { return (input.videos[channelId] ?? []).map((video) => ({ id: video.id, title: video.title, description: video.description, publishDate: video.publishDate, durationSeconds: video.durationSeconds, views: video.views, likes: video.likes, comments: video.comments, thumbnailUrl: video.thumbnailUrl })); } };
 }
-
-void benchmarkFormat;
