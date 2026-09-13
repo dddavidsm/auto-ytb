@@ -64,6 +64,17 @@ export interface ImageProvider {
   generate(input: { prompt: string; aspectRatio: string; referenceUris?: string[] }): Promise<BinaryAsset>;
 }
 
+export type VisionEvaluation = { observedMeaning: string; relevanceScore: number; continuityScore: number; artifactQualityScore: number; issues: string[]; usage?: Usage };
+export interface VisionProvider {
+  readonly name: string;
+  evaluate(input: { prompt: string; imageData: Uint8Array; mimeType: string }): Promise<VisionEvaluation>;
+}
+export type AudioQualityEvaluation = { pronunciation: 'PASS' | 'WARN'; naturalness: 'PASS' | 'WARN'; pace: 'PASS' | 'WARN'; energy: 'PASS' | 'WARN'; pauses: 'PASS' | 'WARN'; issues: string[]; usage?: Usage };
+export interface AudioQualityProvider {
+  readonly name: string;
+  evaluate(input: { prompt: string; audioData: Uint8Array; mimeType: string }): Promise<AudioQualityEvaluation>;
+}
+
 export interface VideoProvider {
   readonly name: string;
   generate(input: { prompt: string; durationSeconds: number; aspectRatio: string; referenceUris?: string[] }): Promise<BinaryAsset>;

@@ -1,4 +1,7 @@
-import type { BinaryAsset, ImageProvider, ObjectStore, SearchProvider, SearchResult, VideoProvider, VoiceAsset, VoiceProvider } from './types.js';
+import type { AudioQualityEvaluation, AudioQualityProvider, BinaryAsset, ImageProvider, ObjectStore, SearchProvider, SearchResult, VideoProvider, VisionEvaluation, VisionProvider, VoiceAsset, VoiceProvider } from './types.js';
+
+const BufferAny:any=Buffer;
+function base64FromBytes(data:any):string{return BufferAny.from(data).toString('base64');}
 
 function sleep(ms:number){return new Promise((resolve)=>setTimeout(resolve,ms));}
 function baseUrl(value?:string){return String(value||'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/,'');}
@@ -21,6 +24,7 @@ async function request(fetchFn:typeof fetch,url:string,apiKey:string,init:Reques
   let last='';for(let i=0;i<attempts;i+=1){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),120000);let response:Response;try{response=await fetchFn(url,{...init,signal:init.signal??controller.signal,headers:{'x-goog-api-key':apiKey,...(init.headers??{})}});}catch(error){if(controller.signal.aborted)throw new Error(`Gemini API request timed out after 120s: ${url}`);throw error;}finally{clearTimeout(timer);}if(response.ok)return response;last=`${response.status}: ${(await response.text()).slice(0,800)}`;if(![429,500,502,503,504].includes(response.status))break;await sleep(Math.min(8000,500*2**i));}throw new Error(`Gemini API request failed ${last}`);
 }
 function findBlocks(json:any,type:string):any[]{const out:any[]=[];const visit=(value:any)=>{if(!value||typeof value!=='object')return;if(value.type===type)out.push(value);if(Array.isArray(value)){for(const item of value)visit(item);return;}for(const child of Object.values(value))visit(child);};visit(json);return out;}
+function textFromResponse(json:any):string{const typed=findBlocks(json,'text').map((block)=>String(block.text??'')).find(Boolean);if(typed)return typed;const values:string[]=[];const visit=(value:any)=>{if(!value||typeof value!=='object')return;if(typeof value.text==='string'&&value.text.trim())values.push(value.text);if(Array.isArray(value)){for(const item of value)visit(item);return;}for(const child of Object.values(value))visit(child);};visit(json);const text=values.find(Boolean);if(text)return text;throw new Error('Gemini quality response contained no text');}
 function wavFromPcm(pcm:Uint8Array,sampleRate=24000,channels=1,bits=16){const out=new Uint8Array(44+pcm.byteLength);const view=new DataView(out.buffer);const text=(offset:number,value:string)=>{for(let i=0;i<value.length;i+=1)out[offset+i]=value.charCodeAt(i);};text(0,'RIFF');view.setUint32(4,36+pcm.byteLength,true);text(8,'WAVE');text(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,channels,true);view.setUint32(24,sampleRate,true);view.setUint32(28,sampleRate*channels*bits/8,true);view.setUint16(32,channels*bits/8,true);view.setUint16(34,bits,true);text(36,'data');view.setUint32(40,pcm.byteLength,true);out.set(pcm,44);return out;}
 function approximateAlignment(text:string,duration:number){const characters=[...text];const step=duration/Math.max(1,characters.length);return{characters,characterStartTimesSeconds:characters.map((_,i)=>i*step),characterEndTimesSeconds:characters.map((_,i)=>(i+1)*step)};}
 function veoDuration(value:number,resolution:string,hasReferences:boolean){if(resolution!=='720p'||hasReferences)return 8;const n=Number(value);if(n<=5)return 4;if(n<=7)return 6;return 8;}
@@ -62,6 +66,25 @@ export class GeminiImageProvider implements ImageProvider{
     const json=await response.json() as any;let encoded:string|undefined;let mimeType='image/png';
     for(const candidate of json?.candidates??[])for(const part of candidate?.content?.parts??[]){const inline=part?.inlineData??part?.inline_data;if(inline?.data){encoded=String(inline.data);mimeType=String(inline.mimeType??inline.mime_type??'image/png');break;}if(part?.image?.data){encoded=String(part.image.data);mimeType=String(part.image.mimeType??part.image.mime_type??'image/png');break;}}
     if(!encoded)throw new Error('Gemini image response contained no image data');const bytes=new Uint8Array(Buffer.from(encoded,'base64'));const ext=mimeType.includes('jpeg')?'jpg':'png';const key=`gemini/image/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;const stored=await this.options.store.put({key,contentType:mimeType,data:bytes});return{id:key.replace(/[^a-z0-9]/gi,'-'),uri:stored.uri,mimeType,bytes:stored.bytes,provider:this.name,model,metadata:{aspectRatio:input.aspectRatio,referenceCount:input.referenceUris?.length??0,synthId:true}};
+  }
+}
+
+const VISION_SCHEMA={type:'object',additionalProperties:false,required:['observedMeaning','relevanceScore','continuityScore','artifactQualityScore','issues'],properties:{observedMeaning:{type:'string'},relevanceScore:{type:'number'},continuityScore:{type:'number'},artifactQualityScore:{type:'number'},issues:{type:'array',items:{type:'string'}}}};
+function qualityScore(value:any):number{const numeric=Number(value);const normalized=numeric>=0&&numeric<=10?numeric*10:numeric;return Math.max(0,Math.min(100,normalized));}
+export class GeminiVisionProvider implements VisionProvider{
+  readonly name='gemini-vision';
+  constructor(private readonly options:{apiKey:string;model?:string;endpoint?:string;fetchFn?:typeof fetch}){}
+  async evaluate(input:{prompt:string;imageData:any;mimeType:string}):Promise<VisionEvaluation>{
+    const fetchFn=this.options.fetchFn??fetch;const model=this.options.model??'gemini-3.8-flash';const base=baseUrl(this.options.endpoint);const response=await request(fetchFn,`${base}/models/${encodeURIComponent(model)}:generateContent`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts:[{text:input.prompt},{inlineData:{mimeType:input.mimeType,data:base64FromBytes(input.imageData)}}]}],generationConfig:{responseMimeType:'application/json',responseJsonSchema:VISION_SCHEMA}})});const json=await response.json() as any;const parsed=JSON.parse(textFromResponse(json));return{observedMeaning:String(parsed.observedMeaning??''),relevanceScore:qualityScore(parsed.relevanceScore),continuityScore:qualityScore(parsed.continuityScore),artifactQualityScore:qualityScore(parsed.artifactQualityScore),issues:Array.isArray(parsed.issues)?parsed.issues.map((item:any)=>String(item)):[],usage:{inputTokens:Number(json?.usageMetadata?.promptTokenCount)||undefined,outputTokens:Number(json?.usageMetadata?.candidatesTokenCount)||undefined}};
+  }
+}
+
+const AUDIO_QUALITY_SCHEMA={type:'object',additionalProperties:false,required:['pronunciation','naturalness','pace','energy','pauses','issues'],properties:{pronunciation:{type:'string',enum:['PASS','WARN']},naturalness:{type:'string',enum:['PASS','WARN']},pace:{type:'string',enum:['PASS','WARN']},energy:{type:'string',enum:['PASS','WARN']},pauses:{type:'string',enum:['PASS','WARN']},issues:{type:'array',items:{type:'string'}}}};
+export class GeminiAudioQualityProvider implements AudioQualityProvider{
+  readonly name='gemini-audio-qc';
+  constructor(private readonly options:{apiKey:string;model?:string;endpoint?:string;fetchFn?:typeof fetch}){}
+  async evaluate(input:{prompt:string;audioData:any;mimeType:string}):Promise<AudioQualityEvaluation>{
+    const fetchFn=this.options.fetchFn??fetch;const model=this.options.model??'gemini-3.8-flash';const base=baseUrl(this.options.endpoint);const response=await request(fetchFn,`${base}/models/${encodeURIComponent(model)}:generateContent`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({contents:[{role:'user',parts:[{text:input.prompt},{inlineData:{mimeType:input.mimeType,data:base64FromBytes(input.audioData)}}]}],generationConfig:{responseMimeType:'application/json',responseJsonSchema:AUDIO_QUALITY_SCHEMA}})});const json=await response.json() as any;const parsed=JSON.parse(textFromResponse(json));return{pronunciation:parsed.pronunciation==='PASS'?'PASS':'WARN',naturalness:parsed.naturalness==='PASS'?'PASS':'WARN',pace:parsed.pace==='PASS'?'PASS':'WARN',energy:parsed.energy==='PASS'?'PASS':'WARN',pauses:parsed.pauses==='PASS'?'PASS':'WARN',issues:Array.isArray(parsed.issues)?parsed.issues.map((item:any)=>String(item)):[],usage:{inputTokens:Number(json?.usageMetadata?.promptTokenCount)||undefined,outputTokens:Number(json?.usageMetadata?.candidatesTokenCount)||undefined}};
   }
 }
 

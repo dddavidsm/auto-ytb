@@ -259,17 +259,24 @@ export class FfmpegRenderer {
     const chunkSize = Math.max(4, Math.ceil(narrationWords.length / 3));
     const progression = narrationWords.slice(Math.min(narrationWords.length - 1, (shotInBeat - 1) * chunkSize), Math.min(narrationWords.length, shotInBeat * chunkSize)).join(' ');
     const title = shotInBeat === 1
-      ? clean(beat?.onScreenText) || clean(asset?.metadata?.instruction) || clean(scene.instruction)
-      : progression || clean(beat?.onScreenText) || clean(scene.instruction);
-    const detail = shotInBeat === 1
-      ? clean(beat?.visualIntent) || clean(scene.instruction)
-      : `Progression ${shotInBeat} of 3: ${clean(beat?.visualIntent) || clean(scene.instruction)}`;
+      ? clean(beat?.onScreenText) || 'DOCUMENTED FINDING'
+      : progression || clean(beat?.onScreenText) || 'DOCUMENTED FINDING';
+    const detail = /sandbox/i.test(`${beat?.onScreenText} ${scene.instruction}`)
+      ? 'Isolated boxes • no outbound path'
+      : /artifactory|cache/i.test(`${beat?.onScreenText} ${scene.instruction}`)
+        ? 'A shared cache becomes a coordination surface'
+        : /answer key|benchmark/i.test(`${beat?.onScreenText} ${scene.instruction}`)
+          ? 'The external path ends at protected answer keys'
+          : /reward hack/i.test(`${beat?.onScreenText} ${scene.instruction}`)
+            ? 'The score becomes the target instead of the task'
+            : 'Original editorial reconstruction • evidence-led visual';
     const purpose = String(beat?.purpose ?? scene.kind).replaceAll('_', ' ').toUpperCase();
     const variant = (index + shotInBeat - 1) % 4;
     const metric = /million/i.test(`${beat?.narration} ${beat?.onScreenText}`) ? '3,000,000' : /thousand|1,000/i.test(`${beat?.narration} ${beat?.onScreenText}`) ? '1,000 / HR' : beat?.purpose === 'reveal' ? 'NOT READY' : beat?.purpose === 'payoff' ? 'NEXT\nHARNESS' : `${shotInBeat}/3`;
     await writeFile(titleFile, textFileSafe(wrap(title, width >= 1000 ? 22 : 18)));
     await writeFile(detailFile, textFileSafe(wrap(detail, width >= 1000 ? 42 : 32)));
-    await writeFile(kindFile, textFileSafe(`${purpose}  //  SHOT ${String(index + 1).padStart(2, '0')}  //  ${shotInBeat}/3`));
+    const kindLabel = scene.kind === 'chart' ? 'EVIDENCE GRAPHIC' : scene.kind === 'source_card' ? 'SOURCE CARD' : 'EDITORIAL VISUAL';
+    await writeFile(kindFile, textFileSafe(kindLabel));
     await writeFile(metricFile, textFileSafe(metric));
     const font = ffmpegFontOption();
     const fontPrefix = font ? `${font}:` : '';

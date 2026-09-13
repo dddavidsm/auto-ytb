@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createDefaultProviderRegistry, ProviderHealthCheck, runProviderProbes, ProviderRouter, buildProviderCredentialRequirements, buildCapabilityActivationReport } from '../packages/providers/dist/index.js';
+import { createDefaultProviderRegistry, ProviderHealthCheck, runProviderProbes, ProviderRouter, buildProviderCredentialRequirements, buildCapabilityActivationReport, GeminiVisionProvider, GeminiAudioQualityProvider } from '../packages/providers/dist/index.js';
 import { FileArtifactStore, RemoteArtifactStore, MemoryLeaseStore, providerReceiptCanBeReused, makeRevisionRun } from '../packages/persistence/dist/index.js';
 import { VisualStrategyPlanner, VisualPromptCompiler, scoreSceneImportance, decideRevision, buildVoiceQualityReport } from '../packages/production/dist/index.js';
 import { FfmpegThumbnailComposer } from '../packages/runtime-node/thumbnail.mjs';
@@ -24,6 +24,9 @@ try {
   const compiled = new VisualPromptCompiler().compile({ shotPlan: { instruction: 'A machine changes state in a dark workshop', durationSec: 5 }, provider: { provider: 'gemini' }, durationSeconds: 5 });
   for (const key of ['SUBJECT', 'ACTION', 'SETTING', 'COMPOSITION', 'CAMERA', 'LIGHTING', 'STYLE', 'CONTINUITY', 'MOTION', 'DURATION', 'AVOID']) assert.ok(compiled.sections[key]);
   assert.match(compiled.prompt, /SUBJECT:/);
+  const qualityFetch = async (_url, init) => { const body = JSON.parse(init.body); const value = body.contents[0].parts[1].inlineData; assert.equal(value.data, 'AQI='); return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ observedMeaning: 'sandbox breach diagram', relevanceScore: 8, continuityScore: 7, artifactQualityScore: 9, pronunciation: 'PASS', naturalness: 'PASS', pace: 'PASS', energy: 'PASS', pauses: 'PASS', issues: [] }) }] } }] }), { status: 200, headers: { 'content-type': 'application/json' } }); };
+  const vision = await new GeminiVisionProvider({ apiKey: 'fixture', fetchFn: qualityFetch }).evaluate({ prompt: 'qc', imageData: new Uint8Array([1, 2]), mimeType: 'image/png' }); assert.equal(vision.relevanceScore, 80); assert.equal(vision.continuityScore, 70);
+  const audio = await new GeminiAudioQualityProvider({ apiKey: 'fixture', fetchFn: qualityFetch }).evaluate({ prompt: 'audio qc', audioData: new Uint8Array([1, 2]), mimeType: 'audio/wav' }); assert.equal(audio.naturalness, 'PASS');
   const report = { sceneId: 'hero', expectedMeaning: 'machine changes', observedMeaning: 'unrelated landscape', relevanceScore: 45, issues: ['semantic mismatch'], decision: 'REGENERATE', evaluationStatus: 'EVALUATED' };
   assert.equal(decideRevision({ report, importance: 'HERO', remainingBudgetUsd: 1, fallbackAvailable: true, currentCostUsd: 1 }).decision, 'REGENERATE');
   assert.equal(decideRevision({ report: { ...report, relevanceScore: 55 }, importance: 'SUPPORT', remainingBudgetUsd: 1, fallbackAvailable: true, currentCostUsd: 1 }).decision, 'USE_FALLBACK');
