@@ -9,7 +9,7 @@ const requirements: Array<{ provider: string; capability: ProviderCapabilityName
   { provider: 'gemini', capability: 'VIDEO', required: ['GEMINI_API_KEY or GOOGLE_API_KEY'], optional: ['GEMINI_MODEL'] },
   { provider: 'gemini', capability: 'VISION', required: ['GEMINI_API_KEY or GOOGLE_API_KEY'], optional: ['GEMINI_MODEL'] },
   { provider: 'gemini', capability: 'TTS', required: ['GEMINI_API_KEY or GOOGLE_API_KEY'], optional: ['GEMINI_MODEL'] },
-  { provider: 'elevenlabs', capability: 'TTS', required: ['ELEVENLABS_API_KEY'] },
+  { provider: 'elevenlabs', capability: 'TTS', required: ['VOICE_API_KEY or ELEVENLABS_API_KEY'], optional: ['VOICE_MODEL', 'VOICE_ID', 'VOICE_TIMESTAMPS'] },
   { provider: 'runway', capability: 'IMAGE', required: ['RUNWAY_API_KEY'], optional: ['RUNWAY_VIDEO_MODEL'] },
   { provider: 'runway', capability: 'VIDEO', required: ['RUNWAY_API_KEY'], optional: ['RUNWAY_VIDEO_MODEL'] },
 ];
