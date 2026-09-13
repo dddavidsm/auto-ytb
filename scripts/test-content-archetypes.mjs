@@ -80,6 +80,10 @@ const real=inferContentArchetype({topic:'The real story of the documented rescue
 assert.equal(real.archetype,'VERIFIED_REAL_STORY');
 assert.equal(real.profile.factClaimMode,'VERIFY_CLAIMS');
 
+const channelBoundExplainer=inferContentArchetype({topic:'China just won the next-gen RAM race',channelNiche:'evidence-led documentary explainer factual research'});
+assert.equal(channelBoundExplainer.archetype,'EXPLAINER_DOCUMENTARY');
+assert.equal(channelBoundExplainer.profile.researchRequired,true);
+
 const explainer=inferContentArchetype({topic:'How AI agents are changing online shopping',channelNiche:'future tech business'});
 assert.equal(explainer.archetype,'EXPLAINER_DOCUMENTARY');
 assert.equal(explainer.profile.voiceMode,'SINGLE_NARRATOR');

@@ -29,7 +29,7 @@ const isShort=contentFormat!=='LONG_HORIZONTAL';
 console.log(`[live-pipeline] start format=${contentFormat} topic=${topic.slice(0,120)}`);
 // Content-archetype inference must see the selected channel domain. Without this context a
 // factual AI/business opportunity can fall through to GENERAL_STORY (creative fiction).
-const runtimeEnv={...process.env,AUTO_YTB_CONTENT_TOPIC:topic,AUTO_YTB_CONTENT_FORMAT:contentFormat,AUTO_YTB_CHANNEL_NICHE:[channel.id,channel.positioning,...(channel.themes??[])].filter(Boolean).join(' ')};
+const runtimeEnv={...process.env,AUTO_YTB_CONTENT_TOPIC:topic,AUTO_YTB_CONTENT_FORMAT:contentFormat,AUTO_YTB_CHANNEL_NICHE:[channel.id,channel.positioning,...(channel.themes??[]),...(channel.channelType==='UMBRELLA_OPPORTUNITY_DRIVEN'?['documentary','explainer','factual','research','evidence-led']:[])].filter(Boolean).join(' ')};
 const runtime=createLiveRuntime(runtimeEnv);
 if(!runtime.db)throw new Error('DATABASE_URL is required for live pipeline durability');
 console.log(`[live-pipeline] runtime ready archetype=${runtime.archetypeDecision?.archetype??'unknown'} db=ready`);
