@@ -29,6 +29,8 @@ export function channelProfileFromConfig(config,channelId){
     characterName:config.identity?.characterName??null,
     themes:Array.isArray(config.themes)?config.themes.map(String):[],
     styleTags:Array.isArray(config.styleTags)?config.styleTags.map(String):[],
+    preferredVisualFormat:config.preferredVisualFormat??null,
+    visualFormatPolicy:config.visualFormatPolicy??{},
     formats:Array.isArray(config.supportedFormats)?config.supportedFormats.map(String):['LONG_HORIZONTAL'],
     enabled:config.portfolio?.enabled!==false,
   };
@@ -44,6 +46,8 @@ function persistedIdentity(config){
     styleTags:Array.isArray(config.styleTags)?config.styleTags:[],
     supportedFormats:Array.isArray(config.supportedFormats)?config.supportedFormats:[],
     preferredFormat:config.preferredFormat??'AUTO',
+    preferredVisualFormat:config.preferredVisualFormat??null,
+    visualFormatPolicy:config.visualFormatPolicy??{},
     portfolio:config.portfolio??{},
     economics:config.economics??{},
     quality:config.quality??{},

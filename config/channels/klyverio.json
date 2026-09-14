@@ -11,6 +11,8 @@
   "targetMarkets": ["global English-speaking"],
   "supportedFormats": ["DOCUMENTARY", "EXPLAINER", "BUSINESS", "SCIENCE", "HISTORY", "MYSTERY", "RANKING", "STORY", "CHARACTER_LED", "SHORT"],
   "preferredFormat": "AUTO",
+  "preferredVisualFormat": "CHARACTER_STORY",
+  "visualFormatPolicy": { "legacyProfile": "LEGACY_DOCUMENTARY_GRAPHIC", "defaultProfile": "CHARACTER_STORY", "legacyRequiresExplicitSelection": true, "visualFirstBlockingGates": ["HOOK", "VISUAL_RELEVANCE", "VISUAL_CONSISTENCY", "FORMAT_ADHERENCE", "COMPETITIVE_VISUAL"] },
   "statisticsStatus": "NO_CREDENTIALS",
   "targetDurationSec": 600,
   "shortTargetDurationSec": 45,
