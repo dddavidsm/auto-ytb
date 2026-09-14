@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import type { AudioQualityEvaluation, AudioQualityProvider, BinaryAsset, ImageProvider, ObjectStore, SearchProvider, SearchResult, VideoProvider, VisionEvaluation, VisionProvider, VoiceAsset, VoiceProvider } from './types.js';
 
 const BufferAny:any=Buffer;
@@ -28,6 +30,20 @@ function textFromResponse(json:any):string{const typed=findBlocks(json,'text').m
 function wavFromPcm(pcm:Uint8Array,sampleRate=24000,channels=1,bits=16){const out=new Uint8Array(44+pcm.byteLength);const view=new DataView(out.buffer);const text=(offset:number,value:string)=>{for(let i=0;i<value.length;i+=1)out[offset+i]=value.charCodeAt(i);};text(0,'RIFF');view.setUint32(4,36+pcm.byteLength,true);text(8,'WAVE');text(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,channels,true);view.setUint32(24,sampleRate,true);view.setUint32(28,sampleRate*channels*bits/8,true);view.setUint16(32,channels*bits/8,true);view.setUint16(34,bits,true);text(36,'data');view.setUint32(40,pcm.byteLength,true);out.set(pcm,44);return out;}
 function approximateAlignment(text:string,duration:number){const characters=[...text];const step=duration/Math.max(1,characters.length);return{characters,characterStartTimesSeconds:characters.map((_,i)=>i*step),characterEndTimesSeconds:characters.map((_,i)=>(i+1)*step)};}
 function veoDuration(value:number,resolution:string,hasReferences:boolean){if(resolution!=='720p'||hasReferences)return 8;const n=Number(value);if(n<=5)return 4;if(n<=7)return 6;return 8;}
+async function referenceImageInputs(uris?:string[]){
+  const blocks:any[]=[];
+  for(const uri of (uris??[]).slice(0,3)){
+    try{
+      let bytes:Uint8Array;
+      let mimeType='image/png';
+      if(String(uri).startsWith('file://'))bytes=new Uint8Array(await readFile(fileURLToPath(String(uri))));
+      else if(!String(uri).startsWith('http'))bytes=new Uint8Array(await readFile(String(uri)));
+      else{const response=await fetch(String(uri));if(!response.ok)continue;mimeType=response.headers.get('content-type')||mimeType;bytes=new Uint8Array(await response.arrayBuffer());}
+      blocks.push({type:'image',data:BufferAny.from(bytes).toString('base64'),mime_type:mimeType});
+    }catch{ /* An unavailable reference must not turn a valid generation into a fake cache hit. */ }
+  }
+  return blocks;
+}
 export class GeminiGoogleSearchProvider implements SearchProvider{
   readonly name='gemini-search';
   constructor(private readonly options:{apiKey:string;model?:string;endpoint?:string;fetchFn?:typeof fetch}){}
@@ -57,7 +73,8 @@ export class GeminiImageProvider implements ImageProvider{
   async generate(input:{prompt:string;aspectRatio:string;referenceUris?:string[]}):Promise<BinaryAsset>{
     const fetchFn=this.options.fetchFn??fetch;const model=this.options.model??'gemini-2.5-flash-image';const base=baseUrl(this.options.endpoint);
     if(model.startsWith('gemini-3.1-')){
-      const response=await request(fetchFn,`${base}/interactions`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json','Api-Revision':'2026-05-20'},body:JSON.stringify({model,input:input.prompt,response_format:{type:'image',aspect_ratio:input.aspectRatio,image_size:this.options.imageSize??'1K'}})});
+      const referenceBlocks=await referenceImageInputs(input.referenceUris); const interactionInput=referenceBlocks.length?[{type:'text',text:input.prompt},...referenceBlocks]:input.prompt;
+      const response=await request(fetchFn,`${base}/interactions`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json','Api-Revision':'2026-05-20'},body:JSON.stringify({model,input:interactionInput,response_format:{type:'image',aspect_ratio:input.aspectRatio,image_size:this.options.imageSize??'1K'}})});
       const json=await response.json() as any;
       // The Interactions API returns the primary image as `output_image`.
       // Keep the recursive block fallback for older/stream-shaped responses.
@@ -76,7 +93,14 @@ export class GeminiImageProvider implements ImageProvider{
 }
 
 const VISION_SCHEMA={type:'object',additionalProperties:false,required:['observedMeaning','relevanceScore','continuityScore','artifactQualityScore','issues'],properties:{observedMeaning:{type:'string'},relevanceScore:{type:'number'},continuityScore:{type:'number'},artifactQualityScore:{type:'number'},issues:{type:'array',items:{type:'string'}}}};
-function qualityScore(value:any):number{const numeric=Number(value);const normalized=numeric>=0&&numeric<=10?numeric*10:numeric;return Math.max(0,Math.min(100,normalized));}
+function qualityScore(value:any):number{
+  const numeric=Number(value);
+  // Gemini sometimes follows the same rubric using 0..1 or 0..10 despite
+  // the schema asking for 0..100. Normalize both representations at the
+  // provider boundary so downstream gates never compare mixed scales.
+  const normalized=numeric>=0&&numeric<=1?numeric*100:numeric>=0&&numeric<=10?numeric*10:numeric;
+  return Math.max(0,Math.min(100,normalized));
+}
 export class GeminiVisionProvider implements VisionProvider{
   readonly name='gemini-vision';
   constructor(private readonly options:{apiKey:string;model?:string;endpoint?:string;fetchFn?:typeof fetch}){}
