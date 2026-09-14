@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { spawn } from 'node:child_process';
 import { runContentPipeline } from '@auto-ytb/orchestrator';
 import { selectStructuralExperiment } from '@auto-ytb/production';
 import { ResearchRepository, ScriptRepository, ProductionRepository, PublicationRepository } from '@auto-ytb/persistence';
@@ -27,6 +28,17 @@ const requestedFormat=String(arg('format',channel.preferredFormat==='SHORT_VERTI
 const contentFormat=['SHORT_VERTICAL','SHORT_HORIZONTAL'].includes(requestedFormat)?requestedFormat:'LONG_HORIZONTAL';
 const isShort=contentFormat!=='LONG_HORIZONTAL';
 console.log(`[live-pipeline] start format=${contentFormat} topic=${topic.slice(0,120)}`);
+
+function archiveProductionRun(runId, channelConfigPath){
+  return new Promise((resolveArchive,rejectArchive)=>{
+    const child=spawn(process.execPath,['scripts/finalize-production.mjs',`--production-run-id=${runId}`,`--channel-config=${channelConfigPath}`],{env:{...process.env},stdio:'inherit',windowsHide:false});
+    child.once('error',rejectArchive);
+    child.once('close',(code,signal)=>{
+      if(code===0)return resolveArchive();
+      rejectArchive(new Error(`Google Drive archive failed${signal?` (${signal})`:''} with exit code ${code}`));
+    });
+  });
+}
 // Content-archetype inference must see the selected channel domain. Without this context a
 // factual AI/business opportunity can fall through to GENERAL_STORY (creative fiction).
 const runtimeEnv={...process.env,AUTO_YTB_CONTENT_TOPIC:topic,AUTO_YTB_CONTENT_FORMAT:contentFormat,AUTO_YTB_CHANNEL_NICHE:[channel.id,channel.positioning,...(channel.themes??[]),...(channel.channelType==='UMBRELLA_OPPORTUNITY_DRIVEN'?['documentary','explainer','factual','research','evidence-led']:[])].filter(Boolean).join(' ')};
@@ -136,5 +148,9 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   if(result.qa)await productionRepo.addQaReport({productionRunId,passed:result.qa.passed,score:result.qa.score,containsSyntheticMedia:result.qa.containsSyntheticMedia,blockers:result.qa.blockers,report:{...result.qa,attention:result.attention??null,finalInspection:result.finalInspection??null,contentArchetype:result.manifest?.contentArchetype??null,executionPlan:result.manifest?.executionPlan??null}});
   if(result.externalId)await new PublicationRepository(db).create({productionRunId,channelId,youtubeVideoId:result.externalId,state:'private',contentFormat,containsSyntheticMedia:result.qa?.containsSyntheticMedia??false,metadata:{renderUri:result.renderUri,contentFormat,contentArchetype:result.manifest?.contentArchetype??null,executionPlan:result.manifest?.executionPlan??null,selectedPackagingId:result.manifest?.selectedPackagingId,packagingGuidance:packagingGuidance??null,productionProfile,packagingSelection:result.manifest?.packagingSelection??null,structuralLearning,creativeLearning,structuralExperiment,attention:result.attention??null,finalInspection:result.finalInspection??null}});
   if(opportunityId&&result.state==='READY_FOR_REVIEW')await db.query(`update opportunities set status='produced',recommended_format=coalesce(recommended_format,$2) where id=$1`,[opportunityId,contentFormat]);
+  if(result.state==='READY_FOR_REVIEW'&&String(process.env.AUTO_ARCHIVE_DRIVE??'true').toLowerCase()!=='false'){
+    console.log('[live-pipeline] render ready; archiving run and artifacts to Google Drive');
+    await archiveProductionRun(productionRunId,configPath);
+  }
   console.log(JSON.stringify({productionRunId,contentFormat,contentArchetype:result.manifest?.contentArchetype?.id??runtime.archetypeDecision?.archetype??null,contentArchetypeDecision:runtime.archetypeDecision??null,executionPlan:result.manifest?.executionPlan??null,state:result.state,qa:result.qa?.score,qaBlockers:result.qa?.blockers??[],attention:result.attention?.score,attentionIssues:result.attention?.issues??[],attentionDimensions:result.attention?.dimensions??[],renderQa:result.finalInspection?.score,costUsd:durableCost,thumbnails:result.manifest?.thumbnails.length??0,renderUri:result.renderUri,youtubeVideoId:result.externalId??null,learnedPackaging:Boolean(packagingGuidance),creativeLearningScope:creativeLearning.scope,creativeGuidanceWinners:creativeLearning.winners,productionProfile,packagingSelection:result.manifest?.packagingSelection??null,structuralLearning,structuralExperiment,events:result.events.slice(-16)},null,2));
 }catch(error){if(productionRunId)await db.query(`update production_runs set state='BLOCKED',total_cost_usd=greatest(total_cost_usd,$3),metadata=metadata||$2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({error:error instanceof Error?error.message:String(error),contentFormat,contentArchetype:runtime.archetypeDecision??null,meter:runtime.meter?.snapshot?.()??null}),Number(runtime.meter?.totalCostUsd??0)]);throw error;}finally{await db.close();}
