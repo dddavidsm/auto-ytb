@@ -28,10 +28,10 @@ export class BlenderProvider {
     }
   }
 
-  async render(input: { blendFile: string; outputPath: string; frame?: number; engine?: 'BLENDER_EEVEE_NEXT' | 'BLENDER_WORKBENCH' }): Promise<BlenderRenderResult> {
+  async render(input: { blendFile: string; outputPath: string; frame?: number; engine?: 'BLENDER_EEVEE' | 'BLENDER_EEVEE_NEXT' | 'BLENDER_WORKBENCH' }): Promise<BlenderRenderResult> {
     const started = Date.now();
     if (!existsSync(input.blendFile)) return { passed: false, elapsedMs: Date.now() - started, reason: `blend file not found: ${input.blendFile}` };
-    const args = ['-b', input.blendFile, '-E', input.engine ?? 'BLENDER_EEVEE_NEXT', '-o', input.outputPath];
+    const args = ['-b', input.blendFile, '-E', input.engine ?? 'BLENDER_EEVEE', '-o', input.outputPath];
     if (input.frame != null) args.push('-f', String(input.frame)); else args.push('-a');
     try {
       const result = await execute(this.executable, args);
