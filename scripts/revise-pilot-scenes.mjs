@@ -12,7 +12,9 @@ if(!runId)throw new Error('Use --run-id=<production-run-id>');
 const selected=new Set(['beat_1-s1','beat_1-s2','beat_5-s1']);
 const sourcePath=resolve('.data/storage/projects',runId,'manifest.json');
 const manifest=JSON.parse(await readFile(sourcePath,'utf8'));
-const revisionRoot=resolve('.data/storage/projects',runId,'revision-1');
+const currentRevision=Number(String(manifest.revision?.version??'v1').match(/v(\d+)/i)?.[1]??1);
+const revisionNumber=currentRevision+1;
+const revisionRoot=resolve('.data/storage/projects',runId,`revision-${revisionNumber-1}`);
 await mkdir(revisionRoot,{recursive:true});
 const run=(command,args)=>new Promise((resolvePromise,reject)=>{const child=spawn(command,args,{stdio:['ignore','ignore','pipe']});let stderr='';child.stderr.on('data',(chunk)=>stderr+=chunk.toString());child.on('error',reject);child.on('close',(code)=>code===0?resolvePromise():reject(new Error(`${command} exited ${code}: ${stderr.slice(-1000)}`)));});
 const reasons={
@@ -57,10 +59,10 @@ for(const scene of manifest.scenes){
 }
 const manifestPath=join(revisionRoot,'manifest.json');
 await writeFile(manifestPath,`${JSON.stringify(manifest,null,2)}\n`,'utf8');
-const rendered=await runtime.renderer.render({manifestUri:pathToFileURL(manifestPath).href,outputKey:`projects/${runId}/revision-1/final-v2.mp4`});
+const rendered=await runtime.renderer.render({manifestUri:pathToFileURL(manifestPath).href,outputKey:`projects/${runId}/revision-${revisionNumber-1}/final-v${revisionNumber}.mp4`});
 const inspection=await runtime.renderer.inspect({fileUri:rendered.uri,expectedWidth:1920,expectedHeight:1080,expectedDurationSeconds:Number(manifest.voice?.durationSeconds??63),requireAudio:true});
 manifest.renderUri=rendered.uri;
-manifest.revision={parentRunId:runId,revisionRunId:randomUUID(),version:'v2',changedScenes:changed,createdAt:new Date().toISOString(),inspection};
+manifest.revision={parentRunId:runId,revisionRunId:randomUUID(),version:`v${revisionNumber}`,changedScenes:changed,createdAt:new Date().toISOString(),inspection};
 await writeFile(manifestPath,`${JSON.stringify(manifest,null,2)}\n`,'utf8');
 await writeFile(sourcePath,`${JSON.stringify(manifest,null,2)}\n`,'utf8');
 const additionalExternalCostUsd=changed.reduce((sum,item)=>sum+Number(item.costUsd??0),0);
