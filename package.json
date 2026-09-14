@@ -40,6 +40,8 @@
     "series:moss-full-video": "npm run build && node --env-file-if-exists=.env.local scripts/moss-full-video.mjs",
     "series:moss-reference-pack": "npm run build && node --env-file-if-exists=.env.local scripts/moss-canonical-reference-pack.mjs",
     "series:moss-prototype": "npm run build && node --env-file-if-exists=.env.local scripts/moss-meshy-prototype-phase2.mjs",
+    "story:first": "npm run build && node --env-file-if-exists=.env.local scripts/moss-story-first-phase.mjs",
+    "test:story-first": "npm run build && node scripts/test-story-first.mjs",
     "quality-iteration:smoke": "npm run build && node scripts/test-real-ai-production.mjs",
     "provider:activation-report": "npm run build && node --env-file-if-exists=.env.local scripts/provider-activation-report.mjs",
     "retention:fixture-test": "npm run build && node scripts/test-production-milestone.mjs",
