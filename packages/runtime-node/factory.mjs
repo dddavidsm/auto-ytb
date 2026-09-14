@@ -61,7 +61,7 @@ export function createLiveRuntime(env=process.env){
     const provider=String(env.VOICE_PROVIDER||'gemini').toLowerCase();
     if(provider==='gemini'){
       const voiceModel=env.VOICE_MODEL||'gemini-3.1-flash-tts-preview';
-      const rawVoice=new GeminiVoiceProvider({apiKey:geminiKey||reqFrom(env,'GEMINI_API_KEY'),store,model:voiceModel,defaultVoice:env.VOICE_ID||'Kore',endpoint:geminiEndpoint});
+      const rawVoice=new GeminiVoiceProvider({apiKey:geminiKey||reqFrom(env,'GEMINI_API_KEY'),store,model:voiceModel,defaultVoice:env.GEMINI_VOICE_ID||env.VOICE_ID||'Kore',endpoint:geminiEndpoint});
       const aligned=withGeminiWordAlignment(rawVoice,{apiKey:geminiKey||reqFrom(env,'GEMINI_API_KEY'),model:env.GEMINI_TRANSCRIBE_MODEL||'gemini-3.5-transcribe',strict:env.VOICE_ALIGNMENT_STRICT!=='false',minCoverage:numFrom(env,'VOICE_ALIGNMENT_MIN_COVERAGE',0.88)});
       const metered=withGeminiAlignmentMeter(meterVoiceProvider(aligned,meter,{model:voiceModel}),meter);voice=bindDialogueVoiceProviderToSeries(metered,seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
     }else if(provider==='elevenlabs'){
