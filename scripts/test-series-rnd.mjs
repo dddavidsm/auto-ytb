@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { assessCrossShotContinuity, assessTemporalContinuity, mossMasterDesign, seriesEconomics, validateCharacterMaster } from '../packages/production/dist/index.js';
+import { assessCrossShotContinuity, assessMossPhase2Readiness, assessTemporalContinuity, mossMasterDesign, seriesEconomics, validateCharacterMaster } from '../packages/production/dist/index.js';
 import { BlenderProvider } from '../packages/providers/dist/index.js';
 
 const missing = validateCharacterMaster(mossMasterDesign);
@@ -21,6 +21,13 @@ const economics = seriesEconomics({ oneTime: [{ name: 'Moss master', costUsd: 2 
 assert.equal(economics.oneTimeCostUsd, 2);
 assert.equal(economics.season10CostUsd, 17);
 
+const blockedWithoutExport = assessMossPhase2Readiness({ referencePack: 'PASS', modelExportAvailable: false, modelQuality: 'NOT_EVALUATED', rig: 'NOT_STARTED', skinning: 'NOT_EVALUATED', facial: 'NOT_STARTED', motion: 'NOT_STARTED' });
+assert.equal(blockedWithoutExport.state, 'BLOCKED');
+assert.ok(blockedWithoutExport.blockers.includes('canonical 3D export is unavailable'));
+
+const ready = assessMossPhase2Readiness({ referencePack: 'PASS', modelExportAvailable: true, modelQuality: 'PASS', rig: 'PASS', skinning: 'PASS', facial: 'READY', motion: 'PASS' });
+assert.equal(ready.state, 'READY_FOR_HERO');
+
 const blender = new BlenderProvider('__missing_blender_for_test__');
 const probe = await blender.probe();
 assert.equal(probe.available, false);
@@ -28,4 +35,5 @@ assert.equal(probe.available, false);
 console.log('✓ CharacterMaster validation fails closed until a canonical 3D model, rig and face exist');
 console.log('✓ temporal and cross-shot continuity reports detect drift and pass stable transitions');
 console.log('✓ series economics separates one-time asset costs from marginal episode costs');
+console.log('✓ Moss Phase 2 readiness blocks honestly until export, rig, skinning, face and motion pass');
 console.log('✓ BlenderProvider probes safely without requiring installed Blender');

@@ -63,7 +63,7 @@ const formatDNA = {
   visualPayoffTimingSeconds: 8,
   textScreenRatio: 0,
   motionDensity: 'HIGH',
-  palette: ['warm russet', 'moss green', 'cream', 'acorn gold', 'soft woodland blue'],
+  palette: ['warm russet', 'cobalt blue', 'cream', 'golden yellow', 'soft woodland blue'],
   notes: ['Measure against multi-shot footage after Hero Scene; the 8-second proof is not sufficient to claim series continuity.'],
 };
 

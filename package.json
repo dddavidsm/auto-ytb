@@ -36,6 +36,8 @@
     "test:professional-series": "npm run build && node scripts/test-professional-series-quality.mjs",
     "test:series-rnd": "npm run build && node scripts/test-series-rnd.mjs",
     "series:rnd": "npm run build && node --env-file-if-exists=.env.local scripts/series-rnd-phase2.mjs",
+    "series:moss-reference-pack": "npm run build && node --env-file-if-exists=.env.local scripts/moss-canonical-reference-pack.mjs",
+    "series:moss-prototype": "npm run build && node --env-file-if-exists=.env.local scripts/moss-meshy-prototype-phase2.mjs",
     "quality-iteration:smoke": "npm run build && node scripts/test-real-ai-production.mjs",
     "provider:activation-report": "npm run build && node --env-file-if-exists=.env.local scripts/provider-activation-report.mjs",
     "retention:fixture-test": "npm run build && node scripts/test-production-milestone.mjs",

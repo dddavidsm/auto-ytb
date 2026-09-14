@@ -46,6 +46,16 @@ export type CrossShotContinuityReport = {
   checks: Array<{ fromShot: string; toShot: string; character: number; clothing: number; prop: number; location: number; lighting: number }>;
 };
 
+export type MossPhase2ReadinessInput = {
+  referencePack: 'PASS' | 'FAIL';
+  modelExportAvailable: boolean;
+  modelQuality: 'NOT_EVALUATED' | 'FAIL' | 'PASS';
+  rig: 'NOT_STARTED' | 'FAIL' | 'PASS';
+  skinning: 'NOT_EVALUATED' | 'FAIL' | 'PASS';
+  facial: 'NOT_STARTED' | 'FAIL' | 'READY';
+  motion: 'NOT_STARTED' | 'FAIL' | 'PASS';
+};
+
 const clamp = (value: number) => Math.max(0, Math.min(10, Number(value)));
 const REQUIRED_BONES = ['root', 'spine', 'head', 'upper_arm.L', 'upper_arm.R', 'forearm.L', 'forearm.R', 'thigh.L', 'thigh.R', 'shin.L', 'shin.R'];
 const REQUIRED_VISEMES = ['REST', 'MBP', 'A', 'E', 'I', 'O', 'U', 'FV', 'L', 'WQ', 'SZ'];
@@ -95,8 +105,20 @@ export function seriesEconomics(input: { oneTime: Array<{ name: string; costUsd:
   return { oneTimeCostUsd: Number(oneTimeCostUsd.toFixed(2)), perEpisodeCostUsd: Number(perEpisodeCostUsd.toFixed(2)), durationFactor, season10CostUsd: Number((oneTimeCostUsd + perEpisodeCostUsd * 10).toFixed(2)) };
 }
 
+export function assessMossPhase2Readiness(input: MossPhase2ReadinessInput) {
+  const blockers: string[] = [];
+  if (input.referencePack !== 'PASS') blockers.push('canonical reference pack is not approved');
+  if (!input.modelExportAvailable) blockers.push('canonical 3D export is unavailable');
+  if (input.modelQuality !== 'PASS') blockers.push('3D model quality is not approved');
+  if (input.rig !== 'PASS') blockers.push('rig proof is not approved');
+  if (input.skinning !== 'PASS') blockers.push('skinning proof is not approved');
+  if (input.facial !== 'READY') blockers.push('facial strategy is not ready');
+  if (input.motion !== 'PASS') blockers.push('motion proof is not approved');
+  return { state: blockers.length ? 'BLOCKED' as const : 'READY_FOR_HERO' as const, blockers };
+}
+
 export const mossMasterDesign: CharacterMaster = {
   id: 'MOSS_MASTER_DESIGN_V1', name: 'Moss', species: 'red-panda-inspired anthropomorphic forest adventurer', structure: 'HUMANOID_BIPED', version: '1.0.0', modelUri: 'PENDING_MESHY_OR_BLENDER_EXPORT',
   canonicalViews: ['front-reference', 'three-quarter-reference', 'side-reference', 'rear-reference', 'full-body-reference', 'close-up-reference'],
-  rig: { status: 'MISSING', bones: [] }, face: { status: 'MISSING', blendShapes: [], visemes: [] }, palette: ['red-panda russet', 'warm cream', 'deep forest green', 'golden acorn'], materials: ['short groomed fur', 'woven scarf', 'matte leather satchel'], proportions: { headToBody: 0.42, torsoToLegs: 0.55, earHeight: 0.12 }, accessories: ['striped scarf'], forbiddenChanges: ['species silhouette', 'ear shape', 'scarf stripe order', 'eye spacing', 'body proportions', 'palette drift'],
+  rig: { status: 'MISSING', bones: [] }, face: { status: 'MISSING', blendShapes: [], visemes: [] }, palette: ['red-panda russet', 'warm cream', 'cobalt blue', 'golden yellow'], materials: ['short groomed fur', 'woven blue-and-gold striped scarf'], proportions: { headToBody: 0.42, torsoToLegs: 0.55, earHeight: 0.12 }, accessories: ['blue-and-gold striped scarf'], forbiddenChanges: ['species silhouette', 'ear shape', 'blue-and-gold scarf stripe order', 'eye spacing', 'body proportions', 'palette drift'],
 };
