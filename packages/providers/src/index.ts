@@ -7,3 +7,4 @@ export * from './gemini-unified.js';
 export * from './registry.js';
 export * from './health.js';
 export * from './credentials.js';
+export * from './blender.js';
