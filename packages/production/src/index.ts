@@ -12,3 +12,4 @@ export * from './recipe.js';
 export * from './cost-ledger.js';
 export * from './quality-iteration.js';
 export * from './visual-format.js';
+export * from './dialogue-format.js';
