@@ -58,7 +58,13 @@ export class GeminiImageProvider implements ImageProvider{
     const fetchFn=this.options.fetchFn??fetch;const model=this.options.model??'gemini-2.5-flash-image';const base=baseUrl(this.options.endpoint);
     if(model.startsWith('gemini-3.1-')){
       const response=await request(fetchFn,`${base}/interactions`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json','Api-Revision':'2026-05-20'},body:JSON.stringify({model,input:input.prompt,response_format:{type:'image',aspect_ratio:input.aspectRatio,image_size:this.options.imageSize??'1K'}})});
-      const json=await response.json() as any;const block=findBlocks(json,'image').find((candidate)=>candidate?.data||candidate?.image_data||candidate?.inlineData);const encoded=String(block?.data??block?.image_data??block?.inlineData?.data??'');const mimeType=String(block?.mime_type??block?.mimeType??block?.inlineData?.mimeType??'image/png');
+      const json=await response.json() as any;
+      // The Interactions API returns the primary image as `output_image`.
+      // Keep the recursive block fallback for older/stream-shaped responses.
+      const outputImage=json?.output_image??json?.outputImage;
+      const block=outputImage??findBlocks(json,'image').find((candidate)=>candidate?.data||candidate?.image_data||candidate?.inlineData);
+      const encoded=String(block?.data??block?.image_data??block?.inlineData?.data??'');
+      const mimeType=String(block?.mime_type??block?.mimeType??block?.inlineData?.mimeType??'image/png');
       if(!encoded)throw new Error('Gemini image interaction contained no image data');const bytes=new Uint8Array(Buffer.from(encoded,'base64'));const ext=mimeType.includes('jpeg')?'jpg':'png';const key=`gemini/image/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;const stored=await this.options.store.put({key,contentType:mimeType,data:bytes});return{id:key.replace(/[^a-z0-9]/gi,'-'),uri:stored.uri,mimeType,bytes:stored.bytes,provider:this.name,model,metadata:{aspectRatio:input.aspectRatio,imageSize:this.options.imageSize??'1K',referenceCount:input.referenceUris?.length??0,synthId:true}};
     }
     const imageConfig:any={aspectRatio:geminiImageAspectRatio(input.aspectRatio)};if(model.startsWith('gemini-3.1-'))imageConfig.imageSize=this.options.imageSize??'1K';
