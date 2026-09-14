@@ -37,6 +37,7 @@
     "test:series-rnd": "npm run build && node scripts/test-series-rnd.mjs",
     "test:series-meshy6lite": "npm run build && node scripts/test-meshy6lite-phase2.mjs",
     "series:rnd": "npm run build && node --env-file-if-exists=.env.local scripts/series-rnd-phase2.mjs",
+    "series:moss-full-video": "npm run build && node --env-file-if-exists=.env.local scripts/moss-full-video.mjs",
     "series:moss-reference-pack": "npm run build && node --env-file-if-exists=.env.local scripts/moss-canonical-reference-pack.mjs",
     "series:moss-prototype": "npm run build && node --env-file-if-exists=.env.local scripts/moss-meshy-prototype-phase2.mjs",
     "quality-iteration:smoke": "npm run build && node scripts/test-real-ai-production.mjs",
