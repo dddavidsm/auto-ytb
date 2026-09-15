@@ -24,7 +24,7 @@ const narration = `Here's the weirdest part about sleeping in space: astronauts 
 const runtime = createLiveRuntime(env);
 const voice = await runtime.voice.synthesize({
   text: narration,
-  voice: env.VOICE_ID || 'Kore',
+  voice: env.VOICE_PROVIDER === 'elevenlabs' ? (env.ELEVENLABS_VOICE_ID || env.VOICE_ID) : (env.GEMINI_VOICE_ID || env.VOICE_ID || 'Kore'),
   language: 'en',
 });
 

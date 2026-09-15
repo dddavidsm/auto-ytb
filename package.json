@@ -47,6 +47,8 @@
     "test:flow-primary": "npm run build && node scripts/test-flow-primary.mjs",
     "test:director-brain": "npm run build && node scripts/test-director-brain.mjs",
     "test:runway-continuity": "npm run build && node scripts/test-runway-continuity.mjs",
+    "test:universal-studio": "npm run build && node scripts/test-universal-studio-v4.mjs",
+    "proof:sourced-v1": "npm run build && node scripts/create-sourced-proof-v1.mjs",
     "flow:ledger": "npm run build && node scripts/record-flow-session.mjs",
     "story:finish:flow": "npm run build && node scripts/moss-story-first-flow-finish.mjs",
     "flow:qc": "npm run build && node scripts/flow-temporal-qc.mjs",
