@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { buildCausalityChainReport, buildStoryQualityReport, evaluateNegativeStoryFixture, scoreNarrativeRandomness, scoreStoryPitch, trackNarrativeObjects } from '../packages/production/dist/index.js';
+import { buildCausalityChainReport, buildStoryQualityReport, detectStoryFirstPlaceholders, evaluateNegativeStoryFixture, evaluateStoryFirstFinalGate, scoreNarrativeRandomness, scoreStoryPitch, separateStoryFirstScores, trackNarrativeObjects } from '../packages/production/dist/index.js';
 
 const pitch = scoreStoryPitch({ id: 'test', title: 'The Little Light', oneSentence: 'Moss follows a runaway lantern into a tunnel and discovers it is leading a lost firefly home.', hook: 'A lantern rolls into darkness.', goal: 'Moss wants his lantern back.', obstacle: 'Every grab sends it farther into the tunnel.', payoff: 'Moss guides the firefly out and the lantern returns.', ageFit: 'KIDS_4_7', visualPotential: 9, seriesFit: 8, originality: 8, feasibility: 9 });
 assert.equal(pitch.status, 'PASS');
@@ -15,4 +15,7 @@ assert.equal(trackNarrativeObjects(beats).lantern.appearances, 5);
 assert.equal(scoreNarrativeRandomness(beats).status, 'PASS');
 assert.equal(buildStoryQualityReport({ pitch, beats, audioDurationSeconds: 31, animaticDurationSeconds: 31 }).status, 'PASS');
 assert.equal(evaluateNegativeStoryFixture().status, 'FAIL');
+assert.equal(detectStoryFirstPlaceholders([{ provider: 'gemini-video' }, { provider: 'local-storyboard-fallback-after-429' }]).status, 'PARTIAL_RENDER');
+assert.equal(separateStoryFirstScores({ storyScore: 9, executionScore: 2, placeholders: 3, visualQcComplete: false }).finalContentScore, 2);
+assert.deepEqual(evaluateStoryFirstFinalGate({ placeholders: 3, storyComplete: true, audioFinal: true, captionsFinal: true, visualQcComplete: false }).blockers, ['PLACEHOLDER_SHOTS', 'VISUAL_QC_INCOMPLETE']);
 console.log('✓ story-first scoring, causality, object tracking, randomness and negative fixture');

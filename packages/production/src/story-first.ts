@@ -113,3 +113,41 @@ export function evaluateNegativeStoryFixture() {
     blockers: ['unclear premise', 'weak goal clarity', 'disconnected scene chain', 'weak escalation', 'low viewer continuation motivation'],
   } as const;
 }
+
+export function detectStoryFirstPlaceholders(shots: Array<{ provider?: string; path?: string }> = []) {
+  const placeholders = shots.filter((shot) => /fallback|storyboard|placeholder/i.test(`${shot.provider ?? ''} ${shot.path ?? ''}`));
+  return {
+    placeholderCount: placeholders.length,
+    placeholderIds: placeholders.map((shot) => shot.path ?? shot.provider ?? 'unknown'),
+    status: placeholders.length === 0 ? 'COMPLETE_VISUALS' : 'PARTIAL_RENDER',
+  } as const;
+}
+
+export function separateStoryFirstScores(input: {
+  storyScore: number;
+  executionScore: number;
+  placeholders: number;
+  visualQcComplete: boolean;
+}) {
+  const storyScore = Math.max(0, Math.min(9, Number(input.storyScore)));
+  const executionScore = Math.max(0, Math.min(9, Number(input.executionScore)));
+  const finalContentScore = input.placeholders > 0 || !input.visualQcComplete ? executionScore : Number(((storyScore + executionScore) / 2).toFixed(2));
+  return { storyScore, executionScore, finalContentScore, status: input.placeholders > 0 || !input.visualQcComplete ? 'PARTIAL_RENDER' : 'READY_FOR_HUMAN_REVIEW' } as const;
+}
+
+export function evaluateStoryFirstFinalGate(input: {
+  placeholders: number;
+  storyComplete: boolean;
+  audioFinal: boolean;
+  captionsFinal: boolean;
+  visualQcComplete: boolean;
+}) {
+  const blockers = [
+    input.placeholders > 0 ? 'PLACEHOLDER_SHOTS' : null,
+    !input.storyComplete ? 'STORY_INCOMPLETE' : null,
+    !input.audioFinal ? 'AUDIO_NOT_FINAL' : null,
+    !input.captionsFinal ? 'CAPTIONS_NOT_FINAL' : null,
+    !input.visualQcComplete ? 'VISUAL_QC_INCOMPLETE' : null,
+  ].filter(Boolean) as string[];
+  return { status: blockers.length === 0 ? 'READY_FOR_HUMAN_REVIEW' : 'PARTIAL_RENDER', blockers } as const;
+}
