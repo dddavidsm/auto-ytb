@@ -151,3 +151,34 @@ export function evaluateStoryFirstFinalGate(input: {
   ].filter(Boolean) as string[];
   return { status: blockers.length === 0 ? 'READY_FOR_HUMAN_REVIEW' : 'PARTIAL_RENDER', blockers } as const;
 }
+
+export type StoryFirstVideoPath = 'GOOGLE_FLOW' | 'GEMINI_API' | 'BLOCKED';
+
+/**
+ * Flow is a browser-operated production resource, not a pretend HTTP provider.
+ * Keep the decision pure so the worker can persist it before any generation.
+ */
+export function chooseStoryFirstVideoPath(input: {
+  storyApproved: boolean;
+  visualGenerationNeeded: boolean;
+  flowAvailable: boolean;
+  geminiApiAvailable: boolean;
+}) {
+  const path: StoryFirstVideoPath = !input.storyApproved || !input.visualGenerationNeeded
+    ? 'BLOCKED'
+    : input.flowAvailable
+      ? 'GOOGLE_FLOW'
+      : input.geminiApiAvailable
+        ? 'GEMINI_API'
+        : 'BLOCKED';
+  const reason = path === 'GOOGLE_FLOW'
+    ? 'approved story and Flow account available; use Flow before Gemini API quota'
+    : path === 'GEMINI_API'
+      ? 'Flow unavailable; Gemini API is the secondary video path'
+      : !input.storyApproved
+        ? 'story gate is not approved'
+        : !input.visualGenerationNeeded
+          ? 'no visual generation is needed'
+          : 'no approved video generation path is available';
+  return { path, reason } as const;
+}
