@@ -148,6 +148,57 @@ export function rankGenerationByValuePerPoint(candidates: CreditCandidate[]) {
   })).sort((a, b) => b.valuePerPoint - a.valuePerPoint);
 }
 
+export type QualityExperimentCandidate = CreditCandidate & {
+  stage: 'CHARACTER_LOCK' | 'MOTION_PHYSICS' | 'ACTING' | 'CONTINUITY' | 'STORY' | 'FINAL_SHORT';
+  prerequisitesMet: boolean;
+  confidence: number;
+  rationale: string;
+};
+
+export function chooseNextQualityExperiment(candidates: QualityExperimentCandidate[], availablePoints: number, protectedReserve = 100) {
+  const spendable = Math.max(0, availablePoints - protectedReserve);
+  return [...candidates]
+    .filter((candidate) => candidate.prerequisitesMet && candidate.creditCost > 0 && candidate.creditCost <= spendable)
+    .map((candidate) => ({
+      ...candidate,
+      valuePerPoint: Number(((Math.max(0, candidate.expectedInformationGain) * Math.max(0, candidate.expectedProductionValue) * Math.max(0.05, candidate.confidence)) / candidate.creditCost).toFixed(4)),
+    }))
+    .sort((a, b) => b.valuePerPoint - a.valuePerPoint)[0] ?? null;
+}
+
+export type AdversarialQualitySignals = {
+  humanScore?: number;
+  automatedScore?: number;
+  identityDrift?: boolean;
+  bodyDrift?: boolean;
+  propDrift?: boolean;
+  floatingMotion?: boolean;
+  weakStory?: boolean;
+  overNarrated?: boolean;
+  unresolvedContinuity?: boolean;
+};
+
+export function runAdversarialQualityCritic(signals: AdversarialQualitySignals) {
+  const blockers: string[] = [];
+  if (signals.identityDrift) blockers.push('character identity drift');
+  if (signals.bodyDrift) blockers.push('body proportion or locomotion drift');
+  if (signals.propDrift) blockers.push('prop identity drift');
+  if (signals.floatingMotion) blockers.push('floating or sliding motion');
+  if (signals.weakStory) blockers.push('weak entertainment/story premise');
+  if (signals.overNarrated) blockers.push('narration carrying character action');
+  if (signals.unresolvedContinuity) blockers.push('cross-shot continuity unresolved');
+  const calibrationGap = signals.humanScore != null && signals.automatedScore != null
+    ? Number((signals.automatedScore - signals.humanScore).toFixed(2))
+    : null;
+  return {
+    status: blockers.length ? 'BLOCKED' as const : 'NO_BLOCKER_FOUND' as const,
+    blockers,
+    calibrationGap,
+    humanOverridesAutomation: signals.humanScore != null,
+    recommendation: blockers.length ? 'repair the highest-impact blocker before spending on a full short' : 'run a bounded next experiment and review temporal evidence',
+  };
+}
+
 export function createDirectorBrainSummary(input: { humanScore: number; automatedScore: number; evidence: GenerationEvidence[]; creditCandidates: CreditCandidate[] }) {
   return {
     humanCalibration: { humanScore: input.humanScore, automatedScore: input.automatedScore, error: Number((input.automatedScore - input.humanScore).toFixed(2)), humanIsAuthoritative: true },

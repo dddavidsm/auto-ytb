@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import {
   buildCompetencyProfile,
   calibrateAutomatedScore,
+  chooseNextQualityExperiment,
   createHumanGroundTruthFeedback,
   evaluateMotionPhysics,
   rankGenerationByValuePerPoint,
+  runAdversarialQualityCritic,
   validateMossCharacterMaster,
   validateSceneStateContinuity,
 } from '../packages/production/dist/index.js';
@@ -29,4 +31,10 @@ const candidates = rankGenerationByValuePerPoint([{ id: 'character-continuation'
 assert.equal(candidates[0].id, 'character-continuation');
 const profiles = buildCompetencyProfile([{ provider: 'google-flow', model: 'Omni 1.1 Flash', mode: 'CHARACTER_ENTITY', shotType: 'identity-motion', referenceMethod: 'Moss-character-entity', motionType: 'biped-walk', identityConsistency: 8, bodyConsistency: 7, propConsistency: 7, motionPhysics: 6, dialoguePerformance: 5, lipSync: 4, promptAdherence: 8, cameraControl: 7, temporalStability: 7, storyAccuracy: 8, costPerGeneration: 0, creditCost: 12, latencySeconds: 60, kept: true }]);
 assert.equal(Object.values(profiles)[0].sampleCount, 1);
+const selectedExperiment = chooseNextQualityExperiment([
+  { id: 'prop-anchor', stage: 'CHARACTER_LOCK', expectedInformationGain: 9, expectedProductionValue: 8, creditCost: 12, prerequisitesMet: true, confidence: 0.8, rationale: 'test reference-grounded prop continuity' },
+  { id: 'random-clip', stage: 'FINAL_SHORT', expectedInformationGain: 2, expectedProductionValue: 2, creditCost: 12, prerequisitesMet: true, confidence: 0.2, rationale: 'unbounded generation' },
+], 833, 100);
+assert.equal(selectedExperiment?.id, 'prop-anchor');
+assert.equal(runAdversarialQualityCritic({ humanScore: 5, automatedScore: 8.7, identityDrift: true, floatingMotion: true }).status, 'BLOCKED');
 console.log('✓ director brain preserves human calibration, character lock, scene state, physics and credit intelligence');
