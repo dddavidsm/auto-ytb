@@ -94,7 +94,7 @@ export function withGeminiWordAlignment(provider,options={}){
       const converted=wordTimestampsToCharacterAlignment(input.text,words,asset.durationSeconds??words.at(-1)?.end);
       if(converted.coverage<minCoverage)throw new Error(`Gemini word alignment coverage ${Math.round(converted.coverage*100)}% is below required ${Math.round(minCoverage*100)}%`);
       const duration=Math.max(Number(asset.durationSeconds??0),Number(words.at(-1)?.end??0));const transcriptionCostUsd=round6(duration/60*usdPerMinute);
-      return{...asset,durationSeconds:duration,alignment:converted.alignment,metadata:{...(asset.metadata??{}),alignmentSource:'gemini-word-timestamps',alignmentCoverage:round6(converted.coverage),transcriptionModel:model,transcriptionWordCount:words.length,transcriptionUsdPerMinute:usdPerMinute,transcriptionCostUsd}};
+      return{...asset,durationSeconds:duration,alignment:converted.alignment,metadata:{...(asset.metadata??{}),alignmentSource:'gemini-word-timestamps',alignmentCoverage:round6(converted.coverage),transcriptionModel:model,transcriptionWordCount:words.length,wordTimestamps:words.map(({text,start,end})=>({word:text,startTime:start,endTime:end,confidence:1})),transcriptionUsdPerMinute:usdPerMinute,transcriptionCostUsd}};
     }catch(error){
       if(strict)throw error;
       return{...asset,metadata:{...(asset.metadata??{}),alignmentSource:'approximate-fallback',alignmentError:error instanceof Error?error.message:String(error)}};
