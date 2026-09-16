@@ -96,20 +96,24 @@ export function evaluateTopicGreenlight(input: TopicGreenlightInput): TopicGreen
   return { topic: input.topic, passed: blockers.length === 0 && score >= 68, score, reasons, blockers };
 }
 
-export type KaraokeWord = { word: string; startTime: number; endTime: number; confidence: number };
+export type KaraokeWord = { word: string; startTime: number; endTime: number; confidence?: number | null };
 export type KaraokeChunk = { words: KaraokeWord[]; startTime: number; endTime: number };
 
 export function validateWordAlignment(words: KaraokeWord[]): boolean {
-  return words.length > 0 && words.every((word, index) => word.word.trim() && Number.isFinite(word.startTime) && Number.isFinite(word.endTime) && word.endTime > word.startTime && word.confidence >= 0 && word.confidence <= 1 && (index === 0 || word.startTime >= words[index - 1].startTime));
+  return words.length > 0 && words.every((word, index) => word.word.trim() && Number.isFinite(word.startTime) && Number.isFinite(word.endTime) && word.endTime > word.startTime && (word.confidence == null || (word.confidence >= 0 && word.confidence <= 1)) && (index === 0 || word.startTime >= words[index - 1].startTime));
 }
 
 export function buildKaraokeChunks(words: KaraokeWord[], maxWords = 5): KaraokeChunk[] {
   if (!validateWordAlignment(words)) throw new Error('Invalid word alignment');
   const chunks: KaraokeChunk[] = [];
-  for (let index = 0; index < words.length; index += maxWords) {
-    const group = words.slice(index, index + maxWords);
-    chunks.push({ words: group, startTime: group[0].startTime, endTime: group.at(-1)!.endTime });
+  let group: KaraokeWord[] = [];
+  const flush = () => { if (group.length) { chunks.push({ words: group, startTime: group[0].startTime, endTime: group.at(-1)!.endTime }); group = []; } };
+  for (const word of words) {
+    group.push(word);
+    const punctuationBoundary = /[.!?,;:]$/.test(word.word);
+    if (group.length >= maxWords || (group.length >= 2 && punctuationBoundary)) flush();
   }
+  flush();
   return chunks;
 }
 

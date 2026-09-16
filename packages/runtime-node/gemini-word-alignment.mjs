@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
 const round6=(value)=>Math.round(Number(value||0)*1_000_000)/1_000_000;
 const normalizeWord=(value)=>String(value??'').normalize('NFKD').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu,'');
+const numberTens={twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
+const numberUnits={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9};
 const parseOffset=(value)=>{const n=Number(String(value??'').replace(/s$/i,''));return Number.isFinite(n)?Math.max(0,n):null;};
 
 async function request(fetchFn,url,apiKey,init={},attempts=4){
@@ -57,11 +59,27 @@ export function wordTimestampsToCharacterAlignment(text,words,durationSeconds){
   for(const word of words){
     if(!word.normalized)continue;
     let matchIndex=-1;
-    for(let i=tokenCursor;i<Math.min(tokens.length,tokenCursor+7);i+=1){if(tokens[i].normalized===word.normalized){matchIndex=i;break;}}
+    for(let i=tokenCursor;i<Math.min(tokens.length,tokenCursor+7);i+=1){
+      const exact=tokens[i].normalized===word.normalized;
+      const numericValue=/^\d{2}$/.test(word.normalized)?Number(word.normalized):null;
+      const tensValue=numberTens[tokens[i].normalized];
+      const numeric= numericValue!=null && tensValue!=null && numericValue>=tensValue && numericValue<tensValue+10 && numberUnits[tokens[i+1]?.normalized];
+      if(exact||numeric){matchIndex=i;break;}
+    }
     if(matchIndex<0)continue;
-    const token=tokens[matchIndex];tokenCursor=matchIndex+1;
-    const span=Math.max(1,token.end-token.start),step=Math.max(0.001,(word.end-word.start)/span);
-    for(let i=token.start;i<token.end&&i<characters.length;i+=1){starts[i]=word.start+(i-token.start)*step;ends[i]=Math.min(word.end,word.start+(i-token.start+1)*step);matchedCharacters+=1;}
+    const token=tokens[matchIndex];
+    const numericValue=/^\d{2}$/.test(word.normalized)?Number(word.normalized):null;
+    const nextToken=tokens[matchIndex+1];
+    const nextNumericUnit=nextToken&&numberUnits[nextToken.normalized];
+    const tensValue=numberTens[token.normalized];
+    const matchedTokens=(numericValue!=null&&tensValue!=null&&numericValue>=tensValue&&numericValue<tensValue+10&&nextNumericUnit)?[token,nextToken]:[token];
+    tokenCursor=matchIndex+matchedTokens.length;
+    const totalSpan=Math.max(1,matchedTokens.reduce((sum,item)=>sum+item.end-item.start,0));
+    let tokenOffset=0;
+    for(const matchedToken of matchedTokens){
+      const span=Math.max(1,matchedToken.end-matchedToken.start),step=Math.max(0.001,(word.end-word.start)/totalSpan);
+      for(let i=matchedToken.start;i<matchedToken.end&&i<characters.length;i+=1){starts[i]=word.start+tokenOffset*step;ends[i]=Math.min(word.end,word.start+(tokenOffset+1)*step);matchedCharacters+=1;tokenOffset+=1;}
+    }
   }
   const duration=Math.max(0.1,Number(durationSeconds??words.at(-1)?.end??0.1));
   let lastKnownEnd=0;
@@ -94,7 +112,7 @@ export function withGeminiWordAlignment(provider,options={}){
       const converted=wordTimestampsToCharacterAlignment(input.text,words,asset.durationSeconds??words.at(-1)?.end);
       if(converted.coverage<minCoverage)throw new Error(`Gemini word alignment coverage ${Math.round(converted.coverage*100)}% is below required ${Math.round(minCoverage*100)}%`);
       const duration=Math.max(Number(asset.durationSeconds??0),Number(words.at(-1)?.end??0));const transcriptionCostUsd=round6(duration/60*usdPerMinute);
-      return{...asset,durationSeconds:duration,alignment:converted.alignment,metadata:{...(asset.metadata??{}),alignmentSource:'gemini-word-timestamps',alignmentCoverage:round6(converted.coverage),transcriptionModel:model,transcriptionWordCount:words.length,wordTimestamps:words.map(({text,start,end})=>({word:text,startTime:start,endTime:end,confidence:1})),transcriptionUsdPerMinute:usdPerMinute,transcriptionCostUsd}};
+      return{...asset,durationSeconds:duration,alignment:converted.alignment,metadata:{...(asset.metadata??{}),alignmentSource:'gemini-word-timestamps',alignmentCoverage:round6(converted.coverage),transcriptionModel:model,transcriptionWordCount:words.length,wordTimestamps:words.map(({text,start,end})=>({word:text,startTime:start,endTime:end,confidence:null})),transcriptionUsdPerMinute:usdPerMinute,transcriptionCostUsd}};
     }catch(error){
       if(strict)throw error;
       return{...asset,metadata:{...(asset.metadata??{}),alignmentSource:'approximate-fallback',alignmentError:error instanceof Error?error.message:String(error)}};

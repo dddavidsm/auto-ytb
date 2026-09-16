@@ -5,6 +5,8 @@
   "type": "module",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
+    "test:editorial-intelligence": "npm run build && node scripts/test-editorial-intelligence.mjs",
+    "test:editorial-cutover": "node scripts/test-editorial-cutover-regressions.mjs",
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty false",
     "test": "npm run build && node scripts/test-core.mjs",

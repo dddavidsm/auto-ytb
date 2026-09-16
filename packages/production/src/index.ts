@@ -25,3 +25,4 @@ export * from './video-dna.js';
 export * from './footage-first.js';
 export * from './footage-providers.js';
 export * from './reference-style.js';
+export * from './editorial-intelligence.js';

@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { NodeLocalObjectStore, FfmpegRenderer } from '../packages/runtime-node/index.mjs';
 import { GeminiVoiceProvider } from '../packages/providers/dist/index.js';
 import { withGeminiWordAlignment } from '../packages/runtime-node/gemini-word-alignment.mjs';
-import { searchPexelsVideo, searchPixabayVideo, searchWikimediaVideo, scoreNativeVideoAvailability, evaluateFootagePro, evaluateTopicGreenlight, buildKaraokeChunks } from '../packages/production/dist/index.js';
+import { searchPexelsVideo, searchPixabayVideo, searchWikimediaVideo, scoreNativeVideoAvailability, evaluateFootagePro, buildKaraokeChunks, buildNarrationUnits, matchSemanticFootage, coverageFromTimeline, timelineMediaRatios, evaluateCreativeGreenlightEvidence, normalizeVisualIntent, parseShotBoundaries, segmentMediaRange } from '../packages/production/dist/index.js';
 
 // Canonical generic runtime. Run-specific topics, sources and decisions are
 // always artifacts; this file contains no production fixture content.
@@ -14,6 +14,7 @@ const ROOT = resolve('.data/autonomous-production');
 const MEMORY = resolve('.data/production-memory/creative-history.json');
 const API_KEY = process.env.GEMINI_API_KEY;
 const SEARCH_MODEL = process.env.GEMINI_SEARCH_MODEL || process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+const VISION_MODEL = process.env.VISION_MODEL || process.env.GEMINI_VISION_MODEL || 'gemini-3.6-flash';
 const TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
 const TTS_VOICE = process.env.GEMINI_VOICE_ID || 'Kore';
 let legacyTerms = [];
@@ -27,6 +28,7 @@ const mode = arg('mode', 'prompt');
 const requestedPrompt = arg('prompt');
 const requestedDuration = Number(arg('duration', mode === 'radar' ? 150 : 90));
 const runId = arg('run-id', `studio-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 7)}`);
+const resumeRun = process.argv.includes('--resume') || String(arg('resume', 'false')).toLowerCase() === 'true';
 const runRoot = join(ROOT, runId);
 const mediaRoot = join(runRoot, 'media');
 const renderRoot = join(runRoot, 'render');
@@ -84,7 +86,7 @@ async function downloadMovingCandidate(candidate, targetRoot, index) {
   const extension = String(candidate.metadata?.mime || '').includes('webm') ? '.webm' : '.mp4';
   const target = join(targetRoot, `${String(index).padStart(2, '0')}-${safeFileName(candidate.metadata?.title || candidate.id)}${extension}`);
   if (!existsSync(target)) {
-    const response = await fetch(url, { headers: { 'user-agent': 'AUTO-YTB FootagePro/1.0 (rights-aware media client)' } });
+    const response = await fetchTimed(url, { headers: { 'user-agent': 'AUTO-YTB FootagePro/1.0 (rights-aware media client)' } }, 90000);
     if (!response.ok) throw new Error(`Moving media download failed ${response.status}: ${url}`);
     await writeFile(target, Buffer.from(await response.arrayBuffer()));
   }
@@ -123,6 +125,9 @@ function broadenArchiveQueries(candidate) {
 }
 
 async function scoutMovingTopics(history) {
+  const cachedScout = await readJson(join(reportRoot, 'FootageScoutReport.json'), null);
+  const cachedWinner = cachedScout?.reports?.find((item) => item.estimatedSegmentCount >= 15 && item.nativeVideo?.grade !== 'POOR' && item.nativeVideo?.actionCount >= 1);
+  if (cachedWinner) return { winner: cachedWinner, reports: cachedScout.reports, resumedFromCache: true };
   const live = await readNewsTitles();
   const recent = history.productions.slice(-12).map((item) => `${item.topic} (${item.domain || 'unknown'})`).join('\n');
   const generated = await geminiJson(`Generate exactly 20 genuinely different YouTube opportunity candidates for a 45-75 second English FOOTAGE_PRO video. Favor subjects with abundant searchable real moving footage: people doing things, food preparation, sports action, vehicles moving, products being demonstrated, machines operating, transformations, competitions or visible experiments. Prefer broad concrete visual worlds over obscure processes. Return JSON array only with compact objects: [{topic,angle,domain,viewerPromise,hookIdea,entities,catalogQuery,thumbnailPromise}]. catalogQuery must be a broad 2-4 word public-archive phrase relevant to the topic, not a long title or abstract phrase. Do not invent metrics. Avoid excluded historical terms. EXCLUDED: ${legacyTerms.join(', ')}. RECENT HISTORY: ${recent || 'none'}. LIVE SIGNALS: ${live.slice(0, 10).map((item) => item.title).join(' | ')}`);
@@ -130,12 +135,12 @@ async function scoutMovingTopics(history) {
   const reports = [];
   const scoutCandidate = async (candidate) => {
     assertNovel(JSON.stringify(candidate), 'moving footage scout');
-    const initialQueries = [...new Set([candidate.catalogQuery || `${candidate.domain || 'people action'} video`])].slice(0, 1);
+    const initialQueries = [...new Set([candidate.catalogQuery || `${candidate.domain || 'people action'} video`, candidate.entities?.[0] ? `${candidate.entities[0]} demonstration` : '', `${candidate.domain || 'people'} action video`].map(clean).filter(Boolean))].slice(0, 2);
     const searched = [];
     for (const query of initialQueries) searched.push(await searchMovingTopic(query, 12));
     let pool = [...new Map(searched.flatMap((item) => item.candidates).map((item) => [item.sourceKey || item.id, item])).values()];
     if (pool.filter((item) => movingCandidateRelevance(item, candidate) >= 2).length < 15) {
-      for (const query of broadenArchiveQueries(candidate).slice(0, 1)) {
+      for (const query of broadenArchiveQueries(candidate).slice(0, 2)) {
         if (initialQueries.includes(query)) continue;
         searched.push(await searchMovingTopic(query, 12));
 
@@ -144,21 +149,9 @@ async function scoutMovingTopics(history) {
       }
     }
     const relevantPool = pool.filter((item) => movingCandidateRelevance(item, candidate) >= 2);
-    const estimated = relevantPool.map((item) => ({ ...item, usableDurationSeconds: Number(item.usableDurationSeconds || item.durationSeconds || 6), actions: item.actions?.length ? item.actions : titleActions(item) }));
-    const estimatedSegments = estimated.flatMap((item) => {
-      const duration = Number(item.usableDurationSeconds || 6);
-      const count = Math.min(4, Math.max(1, Math.floor(duration / 6)));
-      return Array.from({ length: count }, (_, segmentIndex) => ({
-        ...item,
-        id: `${item.id}-segment-${segmentIndex + 1}`,
-        sourceKey: `${item.sourceKey || item.id}:segment:${segmentIndex + 1}`,
-        visualFingerprint: `${item.visualFingerprint || item.id}:segment:${segmentIndex + 1}`,
-        usableDurationSeconds: Math.min(6, Math.max(2, duration / count)),
-        segmentIndex,
-      }));
-    });
-    const score = scoreNativeVideoAvailability(estimatedSegments, candidate.entities || []);
-    return { ...candidate, scoutQueries: searched.map((item) => item.query), providerCapabilities: searched.flatMap((item) => item.providers), candidates: relevantPool, estimatedSegmentCount: estimatedSegments.length, nativeVideo: score, rejectionReason: estimatedSegments.length < 15 ? 'fewer than 15 relevant estimated moving segments in quick scout' : score.grade === 'POOR' ? 'native moving-video grade is poor' : null, scoutedAt: now() };
+    const scoutAssets = relevantPool.map((item) => ({ ...item, usableDurationSeconds: Number(item.usableDurationSeconds || item.durationSeconds || 0), actions: item.actions?.length ? item.actions : titleActions(item) }));
+    const score = scoreNativeVideoAvailability(scoutAssets, candidate.entities || []);
+    return { ...candidate, scoutQueries: searched.map((item) => item.query), providerCapabilities: searched.flatMap((item) => item.providers), candidates: relevantPool, estimatedSegmentCount: scoutAssets.length, nativeVideo: score, rejectionReason: scoutAssets.length < 15 ? 'fewer than 15 relevant moving assets in quick scout' : score.grade === 'POOR' ? 'native moving-video grade is poor' : null, scoutedAt: now() };
   };
   const selectedCandidates = candidates.slice(0, 20);
   for (let offset = 0; offset < selectedCandidates.length; offset += 4) {
@@ -170,7 +163,7 @@ async function scoutMovingTopics(history) {
     return actionDelta + audioDelta || (b.nativeVideo.score - a.nativeVideo.score) || (b.nativeVideo.publishableCandidateCount - a.nativeVideo.publishableCandidateCount);
   });
   await writeJson(join(reportRoot, 'FootageScoutReport.json'), { version: 1, candidateCount: reports.length, reports, credentials: { pexels: Boolean(process.env.PEXELS_API_KEY), pixabay: Boolean(process.env.PIXABAY_API_KEY) }, generatedAt: now() });
-  const winner = reports.find((item) => item.estimatedSegmentCount >= 15 && item.nativeVideo.grade !== 'POOR' && item.nativeVideo.actionCount >= 2);
+  const winner = reports.find((item) => item.estimatedSegmentCount >= 15 && item.nativeVideo.grade !== 'POOR' && item.nativeVideo.actionCount >= 1);
   if (!winner) throw new Error(`FOOTAGE_SCOUT_BLOCKED: no topic reached 15 estimated moving segments; best=${reports[0]?.topic || 'none'} count=${reports[0]?.estimatedSegmentCount || 0}`);
   return { winner, reports };
 }
@@ -180,6 +173,15 @@ const run = (command, args, options = {}) => new Promise((resolvePromise, reject
   child.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
   child.on('error', reject);
   child.on('close', (code) => code === 0 ? resolvePromise() : reject(new Error(`${command} exited ${code}: ${stderr.slice(-5000)}`)));
+});
+
+const captureCommand = (command, args) => new Promise((resolvePromise, reject) => {
+  const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = ''; let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+  child.on('error', reject);
+  child.on('close', (code) => code === 0 ? resolvePromise({ stdout, stderr }) : reject(new Error(`${command} exited ${code}: ${stderr.slice(-5000)}`)));
 });
 
 function assertNovel(text, label) {
@@ -229,6 +231,63 @@ async function geminiJson(prompt) {
     const retry = await request(`${prompt}\nYour previous output was invalid JSON. Return only one syntactically valid JSON array or object. Do not use markdown fences, comments, trailing commas, or unescaped newlines inside strings.`);
     try { return parseJsonText(retry); } catch { throw error; }
   }
+}
+
+async function geminiVisualJson(framePaths, context = '', frameTimes = []) {
+  if (!API_KEY) throw new Error('GEMINI_API_KEY is required for visual segment analysis');
+  const temporalGuide = frameTimes.length ? `Frame timestamps in source seconds, in order: ${frameTimes.map((value, index) => `F${index + 1}=${Number(value).toFixed(3)}s`).join(', ')}. Use these timestamps when estimating the first moment of the main action.` : '';
+  const parts = [{ text: `Analyze the actual video frames below, not the filename or source title. ${context}
+${temporalGuide}
+Return JSON only with these fields: entities (array of exact named entities visibly present), people, objects, actions (observable actions only), environment, location, visibleText, cameraDistance, cameraMovement, motionLevel (NONE|LOW|MEDIUM|HIGH|UNKNOWN), visualQuality (POOR|FAIR|GOOD|EXCELLENT|UNKNOWN), sourceAudioUseful (UNKNOWN unless independently verified), semanticDescription (one concrete sentence), confidence (0 to 1), temporal (object with actionOnsetTime, actionPeakTime, recommendedStartTime, recommendedEndTime, confidence, evidence). The temporal fields must be absolute source seconds when the frames show an action; otherwise use null for the action fields and the shot bounds for recommendedStartTime/recommendedEndTime. Do not guess an entity that cannot be visually identified. If the frames disagree, describe the sequence conservatively. A recommended range should begin shortly before the first visible action and end only after the action's useful visual resolution; never recommend a static lead-in merely because it is the first frame.` }];
+  for (const framePath of framePaths) parts.push({ inlineData: { mimeType: 'image/jpeg', data: (await readFile(framePath)).toString('base64') } });
+  const response = await fetchTimed(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(VISION_MODEL)}:generateContent`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': API_KEY },
+    body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 1800 } }),
+  }, 60000);
+  if (!response.ok) throw new Error(`Gemini visual analysis ${response.status}: ${(await response.text()).slice(0, 700)}`);
+  const parsed = parseJsonText(await response.json());
+  const list = (value) => Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+  const temporal = parsed.temporal && typeof parsed.temporal === 'object' ? parsed.temporal : {};
+  const finiteOrNull = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+  return { entities: list(parsed.entities), people: list(parsed.people), objects: list(parsed.objects), actions: list(parsed.actions), environment: list(parsed.environment), location: list(parsed.location), visibleText: list(parsed.visibleText), cameraDistance: clean(parsed.cameraDistance || 'UNKNOWN'), cameraMovement: clean(parsed.cameraMovement || 'UNKNOWN'), motionLevel: ['NONE', 'LOW', 'MEDIUM', 'HIGH', 'UNKNOWN'].includes(parsed.motionLevel) ? parsed.motionLevel : 'UNKNOWN', visualQuality: ['POOR', 'FAIR', 'GOOD', 'EXCELLENT', 'UNKNOWN'].includes(parsed.visualQuality) ? parsed.visualQuality : 'UNKNOWN', sourceAudioUseful: ['NONE', 'AMBIENCE', 'MECHANICAL', 'DIALOGUE', 'IMPACT', 'MUSIC', 'NOISY', 'UNKNOWN'].includes(parsed.sourceAudioUseful) ? parsed.sourceAudioUseful : 'UNKNOWN', semanticDescription: clean(parsed.semanticDescription || 'Unknown visual content'), confidence: Number.isFinite(Number(parsed.confidence)) ? Math.max(0, Math.min(1, Number(parsed.confidence))) : 0.35, temporal: { actionOnsetTime: finiteOrNull(temporal.actionOnsetTime), actionPeakTime: finiteOrNull(temporal.actionPeakTime), recommendedStartTime: finiteOrNull(temporal.recommendedStartTime), recommendedEndTime: finiteOrNull(temporal.recommendedEndTime), confidence: Number.isFinite(Number(temporal.confidence)) ? Math.max(0, Math.min(1, Number(temporal.confidence))) : 0, evidence: clean(temporal.evidence || '') } };
+}
+
+async function extractFrame(videoPath, seconds, targetPath) {
+  await mkdir(dirname(targetPath), { recursive: true });
+  await run('ffmpeg', ['-y', '-ss', String(Math.max(0, seconds)), '-i', videoPath, '-frames:v', '1', '-vf', 'scale=1280:1280:force_original_aspect_ratio=decrease', '-pix_fmt', 'yuvj420p', '-threads', '1', '-q:v', '3', targetPath], { quiet: true });
+  return targetPath;
+}
+
+async function detectRealShots(videoPath, duration) {
+  const detected = await captureCommand('ffmpeg', ['-i', videoPath, '-vf', "select='gt(scene,0.28)',showinfo", '-an', '-f', 'null', '-']);
+  return parseShotBoundaries(detected.stderr, duration, 0.8);
+}
+
+function unknownSemanticProfile(asset, shot, frames, error = null) {
+  return { segmentId: `${asset.id}-shot-${Math.round(shot.startTime * 1000)}`, assetId: asset.id, startTime: shot.startTime, endTime: shot.endTime, duration: shot.duration, representativeFrames: frames, entities: [], people: [], objects: [], actions: [], environment: [], location: [], visibleText: [], cameraDistance: 'UNKNOWN', cameraMovement: 'UNKNOWN', motionLevel: 'UNKNOWN', visualQuality: 'UNKNOWN', sourceAudioUseful: asset.sourceAudio ? 'UNKNOWN' : 'NONE', semanticDescription: 'Unknown visual content; semantic analysis failed', confidence: 0, provenance: { method: 'multiframe-vision-failed', model: VISION_MODEL, sampledFrames: frames.length, analyzedAt: now(), ...(error ? { error: String(error) } : {}) }, rightsTier: asset.rightsTier, sourceKey: asset.sourceKey, sourceUrl: asset.sourceUrl };
+}
+
+async function analyzeMovingAsset(asset, index) {
+  const shots = await detectRealShots(asset.localPath, Number(asset.durationSeconds || 0));
+  const profiles = [];
+  const frameRoot = join(runRoot, 'segment-frames', safeFileName(asset.id));
+  for (const [shotIndex, shot] of shots.entries()) {
+    const points = [...new Set([shot.startTime + Math.min(0.12, shot.duration * 0.08), shot.startTime + shot.duration * 0.28, shot.startTime + shot.duration * 0.5, shot.startTime + shot.duration * 0.72, Math.max(shot.startTime, shot.endTime - Math.min(0.12, shot.duration * 0.08))].map((value) => Number(value.toFixed(3))))];
+    const frames = [];
+    for (const [frameIndex, point] of points.entries()) frames.push(await extractFrame(asset.localPath, point, join(frameRoot, `${String(shotIndex).padStart(2, '0')}-${frameIndex}.jpg`)));
+    let semantic;
+    try { semantic = await geminiVisualJson(frames, `This is shot ${shotIndex + 1} from source asset ${asset.id}. Source metadata is only a lead: ${clean(asset.metadata?.title || asset.id)}. Shot bounds are ${shot.startTime.toFixed(3)}-${shot.endTime.toFixed(3)} seconds. Duration ${shot.duration.toFixed(2)} seconds.`, points); } catch (error) { semantic = unknownSemanticProfile(asset, shot, frames, error); }
+    const temporal = semantic.temporal || {};
+    const recommendedStart = Number(temporal.recommendedStartTime);
+    const recommendedEnd = Number(temporal.recommendedEndTime);
+    const temporalConfidence = Number(temporal.confidence || 0);
+    const usableStartTime = temporalConfidence >= 0.5 && Number.isFinite(recommendedStart) ? Math.max(shot.startTime, Math.min(shot.endTime - 0.25, recommendedStart)) : shot.startTime;
+    const usableEndTime = temporalConfidence >= 0.5 && Number.isFinite(recommendedEnd) ? Math.min(shot.endTime, Math.max(usableStartTime + 0.25, recommendedEnd)) : shot.endTime;
+    const actionOnsetTime = Number.isFinite(Number(temporal.actionOnsetTime)) ? Math.max(shot.startTime, Math.min(shot.endTime, Number(temporal.actionOnsetTime))) : null;
+    const actionPeakTime = Number.isFinite(Number(temporal.actionPeakTime)) ? Math.max(shot.startTime, Math.min(shot.endTime, Number(temporal.actionPeakTime))) : null;
+    profiles.push({ ...semantic, segmentId: `${asset.id}-shot-${shotIndex + 1}`, assetId: asset.id, startTime: shot.startTime, endTime: shot.endTime, duration: shot.duration, usableStartTime, usableEndTime, actionOnsetTime, actionPeakTime, temporalConfidence, temporalEvidence: clean(temporal.evidence || ''), provenance: semantic.provenance?.method ? { ...semantic.provenance, sampledFrames: frames.length, temporalAnalysis: 'gemini-frame-sequence-with-source-timestamps' } : { method: 'gemini-multiframe-vision', model: VISION_MODEL, sampledFrames: frames.length, analyzedAt: now(), temporalAnalysis: 'gemini-frame-sequence-with-source-timestamps' }, rightsTier: asset.rightsTier, sourceKey: asset.sourceKey, sourceUrl: asset.sourceUrl, localPath: asset.localPath, provider: asset.provider, mime: asset.mime, metadata: asset.metadata, visualFingerprint: `${asset.visualFingerprint || asset.id}:shot:${shotIndex + 1}`, sourceAudio: asset.sourceAudio });
+  }
+  return { asset, shots, profiles, index };
 }
 
 async function geminiResearch(query, options = {}) {
@@ -344,7 +403,7 @@ async function makeScript(opportunity, research, media) {
   const duration = Math.max(45, Math.min(240, requestedDuration));
   const beatTarget = Math.max(6, Math.min(16, Math.round(duration / 12)));
   const sourceDigest = media.slice(0, 24).map((asset) => `${asset.title} | ${asset.pageUrl} | ${asset.license}`).join('\n');
-  const prompt = `Write an original, natural English YouTube script for a ${duration}-second ${duration > 120 ? '16:9 documentary explainer' : 'fast explainer'} about: ${opportunity.topic}. Angle: ${opportunity.angle}. Audience: ${opportunity.audience || 'general audience'}. Use only claims supported by the research below. The narration must progress through new information, concrete evidence, contrast or consequence; no filler, no generic welcome, no repeated thesis. Start with a value-first hook. End with a payoff or useful answer. Return JSON: {title, hookMechanism, narration, beats:[{id,narration,entities,claimIds,visualIntent,mediaQuery,editorialForm,importance}], claims:[{id,text,type,sourceUrls,confidence}], entities:[{name,type,aliases}], packaging:{title,thumbnailText,thumbnailConcept,description}}. Need ${beatTarget} meaningfully different beats. Keep the narration long enough for the requested duration but never pad. Every beat must name an exact visual intention and query.\nRESEARCH:\n${research.synthesis.slice(0, 16000)}\nSOURCES:\n${research.sources.map((source) => `${source.title} | ${source.url}`).join('\n')}\nMEDIA RECONNAISSANCE:\n${sourceDigest}`;
+  const prompt = `Write an original, natural English YouTube script for a ${duration}-second ${duration > 120 ? '16:9 documentary explainer' : 'fast explainer'} about: ${opportunity.topic}. Angle: ${opportunity.angle}. Audience: ${opportunity.audience || 'general audience'}. Use only claims supported by the research below. The narration must progress through new information, concrete evidence, contrast or consequence; no filler, no generic welcome, no repeated thesis. Start with a value-first hook. End with a payoff or useful answer. Return JSON: {title, hookMechanism, narration, beats:[{id,narration,entities,claimIds,visualIntent:{requiredEntities,preferredEntities,requiredActions,preferredActions,location,shotPreferences,semanticGoal,avoid,queries},editorialForm,importance}], claims:[{id,text,type,sourceUrls,confidence}], entities:[{name,type,aliases}], packaging:{title,thumbnailText,thumbnailConcept,description}}. Need ${beatTarget} meaningfully different beats. Keep the narration long enough for the requested duration but never pad. Every beat must name an exact structured visual intention and query list.\nRESEARCH:\n${research.synthesis.slice(0, 16000)}\nSOURCES:\n${research.sources.map((source) => `${source.title} | ${source.url}`).join('\n')}\nMEDIA RECONNAISSANCE:\n${sourceDigest}`;
   const script = await geminiJson(prompt);
   if (!script.beats?.length || !script.narration) throw new Error('Script generation returned no usable beats');
   assertNovel(JSON.stringify(script), 'script');
@@ -357,20 +416,8 @@ function makeAlignment(text, duration) {
   return { characters, characterStartTimesSeconds: characters.map((_, index) => index * step), characterEndTimesSeconds: characters.map((_, index) => (index + 1) * step) };
 }
 
-async function makeMusic(duration, variant) {
-  const target = join(runRoot, 'audio', 'music.wav');
-  await mkdir(dirname(target), { recursive: true });
-  const base = 180 + (variant % 5) * 37;
-  await run('ffmpeg', ['-y', '-f', 'lavfi', '-i', `sine=frequency=${base}:sample_rate=48000`, '-f', 'lavfi', '-i', `sine=frequency=${base * 1.5}:sample_rate=48000`, '-filter_complex', '[0:a]volume=0.035[a];[1:a]volume=0.018[b];[a][b]amix=inputs=2:duration=longest,lowpass=f=1200,afade=t=in:st=0:d=1,afade=t=out:st=' + Math.max(1, duration - 2) + ':d=2', '-t', String(duration), '-ac', '2', target], { quiet: true });
-  return target;
-}
-
 async function buildThumbnail(imagePath, text) {
-  const target = join(finalRoot, 'thumbnail.jpg');
-  const titleFile = join(runRoot, 'thumbnail-title.txt');
-  await writeFile(titleFile, clean(text).slice(0, 70));
-  await run('ffmpeg', ['-y', '-i', imagePath, '-vf', `scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,drawbox=x=0:y=0:w=iw:h=ih:color=black@0.25:t=fill,drawtext=textfile='${titleFile.replaceAll('\\', '/').replaceAll(':', '\\:')}':fontcolor=white:fontsize=58:line_spacing=8:borderw=3:bordercolor=black:x=70:y=h-190`, '-frames:v', '1', '-q:v', '2', target], { quiet: true });
-  return target;
+  throw new Error('LEGACY_THUMBNAIL_DISABLED: use buildThumbnailDirector with a semantically selected editorial frame');
 }
 
 async function renderRun(script, assets, assignments = assets) {
@@ -396,11 +443,11 @@ async function renderRun(script, assets, assignments = assets) {
     voice = { ...voice, uri: fileUri(stretchedPath), durationSeconds: duration, metadata: { ...(voice.metadata || {}), alignment: 'ESTIMATED_ALIGNMENT_STRETCHED_TO_TARGET' } };
     actualDuration = duration;
   }
-  const music = await makeMusic(actualDuration, hash(script.title).charCodeAt(0));
+  const music = null;
   const count = Math.max(1, assignments.length);
   const scenes = beats.map((beat, index) => ({ id: `${beat.id}-s${index + 1}`, startSec: beat.startSec, durationSec: beat.targetDurationSec, kind: 'image', instruction: beat.visualIntent, sourceIds: [assignments[index % count].id], generated: false }));
   const timelineAssets = scenes.map((scene, index) => { const asset = assignments[index % count]; return { id: `${asset.id}-${index}`, uri: fileUri(asset.localPath), mimeType: extname(asset.localPath).toLowerCase() === '.png' ? 'image/png' : 'image/jpeg', provider: asset.provider, model: 'commons-segment-index-v1', costUsd: 0, sceneId: scene.id, generated: false, sourceIds: [asset.id], sourceUrl: asset.pageUrl, license: asset.license, metadata: { sourceUrl: asset.pageUrl, rightsStatus: asset.rightsStatus, attribution: asset.attribution, entityMatch: asset.entityMatch, segment: { startSec: 0, endSec: null }, repeatedSource: index >= new Set(assignments.map((item) => item.id)).size } }; });
-  const renderManifest = { projectId: runId, createdAt: now(), contentFormat: 'LONG_HORIZONTAL', aspectRatio: '16:9', frame: { width: 1280, height: 720 }, engineeringResolution: '1280x720', contentArchetype: { version: 1, id: 'AUTONOMOUS_SOURCED_NARRATIVE', label: 'Autonomous sourced narrative', confidence: 70, reasons: ['selected from live input and media reconnaissance'], voiceMode: 'SINGLE_NARRATOR', realityMode: 'FACTUAL', cameraProfile: 'EDITORIAL_DOCUMENTARY', syntheticDisclosurePolicy: 'Synthetic voice only; visuals are rights-cleared source material.', profile: {} }, executionPlan: { archetypeId: 'AUTONOMOUS_SOURCED_NARRATIVE', researchMode: 'FACTUAL_RESEARCH', researchRequired: true, factClaimMode: 'VERIFY_CLAIMS', scriptMode: 'NARRATION', voiceMode: 'SINGLE_NARRATOR', voiceRequired: true, allowIntegratedNarrator: false, requiresCanonicalCast: false, audioMode: 'NARRATION_LED', captionMode: 'FULL_SPEECH', visualMode: 'EVIDENCE_FIRST', realityMode: 'FACTUAL', cameraProfile: 'EDITORIAL_DOCUMENTARY', syntheticDisclosurePolicy: 'Synthetic voice only; visuals are rights-cleared source material.', preferredFormats: ['LONG_HORIZONTAL'], targetSceneDurationSec: { long: 12 }, generativeSpendBias: 0, requiredCapabilities: { search: true, voice: true, image: false, video: false } }, captionPlan: { enabled: true, burnIn: false, preset: 'EDITORIAL_CLEAN', source: 'VOICE_ALIGNMENT', mode: 'FULL_SPEECH', maxChars: 48, maxDurationSeconds: 4.2, maxLines: 2 }, editPlan: { preset: 'DOCUMENTARY', transitionMode: 'MOTIVATED', filmLook: false, punchInAnchors: true, preserveAudioTiming: true }, script: { title: script.title, targetDurationSec: actualDuration, beats }, scenes, assets: timelineAssets, voice: { id: `voice-${runId}`, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: actualDuration, costUsd: 0, alignment: makeAlignment(script.narration, actualDuration) }, music: { assetId: 'music-local', kind: 'music', uri: fileUri(music), startSec: 0, gain: 0.16, loop: true, endSec: actualDuration, license: 'original-local-procedural', rightsStatus: 'CLEARED', costUsd: 0 }, estimatedCostUsd: 0, actualCostUsd: 0, containsSyntheticMedia: true };
+  const renderManifest = { projectId: runId, createdAt: now(), contentFormat: 'LONG_HORIZONTAL', aspectRatio: '16:9', frame: { width: 1280, height: 720 }, engineeringResolution: '1280x720', contentArchetype: { version: 1, id: 'AUTONOMOUS_SOURCED_NARRATIVE', label: 'Autonomous sourced narrative', confidence: 70, reasons: ['selected from live input and media reconnaissance'], voiceMode: 'SINGLE_NARRATOR', realityMode: 'FACTUAL', cameraProfile: 'EDITORIAL_DOCUMENTARY', syntheticDisclosurePolicy: 'Synthetic voice only; visuals are rights-cleared source material.', profile: {} }, executionPlan: { archetypeId: 'AUTONOMOUS_SOURCED_NARRATIVE', researchMode: 'FACTUAL_RESEARCH', researchRequired: true, factClaimMode: 'VERIFY_CLAIMS', scriptMode: 'NARRATION', voiceMode: 'SINGLE_NARRATOR', voiceRequired: true, allowIntegratedNarrator: false, requiresCanonicalCast: false, audioMode: 'NARRATION_LED', captionMode: 'FULL_SPEECH', visualMode: 'EVIDENCE_FIRST', realityMode: 'FACTUAL', cameraProfile: 'EDITORIAL_DOCUMENTARY', syntheticDisclosurePolicy: 'Synthetic voice only; visuals are rights-cleared source material.', preferredFormats: ['LONG_HORIZONTAL'], targetSceneDurationSec: { long: 12 }, generativeSpendBias: 0, requiredCapabilities: { search: true, voice: true, image: false, video: false } }, captionPlan: { enabled: true, burnIn: false, preset: 'EDITORIAL_CLEAN', source: 'VOICE_ALIGNMENT', mode: 'FULL_SPEECH', maxChars: 48, maxDurationSeconds: 4.2, maxLines: 2 }, editPlan: { preset: 'DOCUMENTARY', transitionMode: 'MOTIVATED', filmLook: false, punchInAnchors: true, preserveAudioTiming: true }, script: { title: script.title, targetDurationSec: actualDuration, beats }, scenes, assets: timelineAssets, voice: { id: `voice-${runId}`, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: actualDuration, costUsd: 0, alignment: makeAlignment(script.narration, actualDuration) }, music: null, estimatedCostUsd: 0, actualCostUsd: 0, containsSyntheticMedia: true };
   await writeJson(join(runRoot, 'timeline', 'MasterTimeline.json'), renderManifest);
   const manifestPath = join(runRoot, 'timeline', 'render-manifest.json');
   await writeJson(manifestPath, renderManifest);
@@ -421,6 +468,7 @@ function assTime(seconds) {
 function assText(value) { return String(value ?? '').replace(/[{}]/g, '').replace(/\\/g, '\\\\').replace(/\r?\n/g, ' '); }
 
 async function writeKaraokeAss(words, path, width = 1280, height = 720) {
+  await mkdir(dirname(path), { recursive: true });
   const safeWords = words.filter((word) => word.word && Number.isFinite(word.startTime) && Number.isFinite(word.endTime) && word.endTime > word.startTime);
   const chunks = buildKaraokeChunks(safeWords, 5);
   const events = chunks.flatMap((chunk) => chunk.words.map((activeWord, activeIndex) => {
@@ -434,68 +482,185 @@ async function writeKaraokeAss(words, path, width = 1280, height = 720) {
 }
 
 async function makeFootageScript(opportunity, research, segments) {
-  const sourceDigest = segments.slice(0, 36).map((asset) => `${asset.id} | ${asset.metadata?.title || asset.id} | ${asset.sourceUrl} | ${asset.metadata?.license || asset.license || ''} | actions=${(asset.actions || []).join(',')}`).join('\n');
-  const script = await geminiJson(`Write an original, natural English YouTube SHORT script for 45-75 seconds about ${opportunity.topic}. Angle: ${opportunity.angle || opportunity.viewerPromise}. Viewer promise: ${opportunity.viewerPromise || opportunity.thumbnailPromise}. Use only claims supported by the research below. This is FOOTAGE_PRO: write around the available moving footage. Start on the most surprising visible action in the first sentence. No intro, no essay language, no repeated thesis, no generic conclusion. Every beat must add new information, a new question, a visible action or a consequence. End with a concrete payoff/callback. Return JSON only: {title, hookMechanism, narration, beats:[{id,narration,entities,claimIds,visualIntent,mediaQuery,editorialForm,importance}],claims:[{id,text,type,sourceUrls,confidence}],packaging:{title,thumbnailText,thumbnailConcept,description}}. Use 7-10 beats with materially varied visual intentions. FOOTAGE POOL:\n${sourceDigest}\nRESEARCH:\n${research.synthesis.slice(0, 14000)}\nSOURCES:\n${research.sources.map((source) => `${source.title} | ${source.url}`).join('\n')}`);
+  const sourceDigest = segments.slice(0, 48).map((asset) => `${asset.segmentId || asset.id} | ${asset.sourceUrl} | ${asset.startTime?.toFixed?.(2) ?? asset.clipStartSec ?? 0}-${asset.endTime?.toFixed?.(2) ?? asset.clipEndSec ?? ''}s | entities=${(asset.entities || []).join(',')} | actions=${(asset.actions || []).join(',')} | motion=${asset.motionLevel} | description=${asset.semanticDescription || 'UNKNOWN'}`).join('\n');
+  const script = await geminiJson(`Write an original, natural English YouTube SHORT script for 45-75 seconds about ${opportunity.topic}. Angle: ${opportunity.angle || opportunity.viewerPromise}. Viewer promise: ${opportunity.viewerPromise || opportunity.thumbnailPromise}. Use only claims supported by the research below. This is FOOTAGE_PRO: write around the semantically analyzed moving footage below, and do not claim actions that the footage cannot show. Start on the most surprising visible action in the first sentence. No intro, no essay language, no repeated thesis, no generic conclusion. Every phrase must add new information, a new question, a visible action or a consequence. End with a concrete payoff/callback. Return JSON only: {title, hookMechanism, narration, beats:[{id,narration,entities,claimIds,visualIntent:{requiredEntities,preferredEntities,requiredActions,preferredActions,location,shotPreferences,semanticGoal,avoid,queries},editorialForm,importance}],claims:[{id,text,type,sourceUrls,confidence}],packaging:{title,thumbnailText,thumbnailConcept,description}}. Use 7-10 beats with materially varied visual intentions. Do not return asset IDs or preselected segment references. A visualIntent must be structured, specific, and phrase-level. FOOTAGE POOL (actual multiframe visual analysis):\n${sourceDigest}\nRESEARCH:\n${research.synthesis.slice(0, 14000)}\nSOURCES:\n${research.sources.map((source) => `${source.title} | ${source.url}`).join('\n')}`);
   if (!script?.narration || !Array.isArray(script.beats) || script.beats.length < 5) throw new Error('FOOTAGE_PRO script failed beat-density gate');
   const wordCount = script.narration.split(/\s+/).filter(Boolean).length;
   if (wordCount < 85 || wordCount > 190) throw new Error(`FOOTAGE_PRO script word count ${wordCount} is outside 45-75s range`);
   return { ...script, targetDurationSec: 60, generatedAt: now(), alignmentMethod: 'GEMINI_WORD_TIMESTAMPS_REQUIRED', wordCount };
 }
 
-async function renderFootageProRun(opportunity, research, segments) {
-  const script = await makeFootageScript(opportunity, research, segments);
+function selectSemanticMatches(units, segments) {
+  const selected = []; const sourceCounts = {}; const usedSources = []; const usedFingerprints = [];
+  for (const unit of units) {
+    const ranked = matchSemanticFootage(unit, segments, { usedSourceKeys: usedSources, usedFingerprints, sourceCounts });
+    const usable = ranked.find((candidate) => ['EXACT', 'STRONG'].includes(candidate.classification) && candidate.segment.localPath);
+    const match = usable || ranked[0];
+    if (!match || (unit.importance === 'CRITICAL' && !['EXACT', 'STRONG'].includes(match.classification))) throw new Error(`EDITORIAL_MATCH_BLOCKED: no strong visual for ${unit.id}: ${unit.text}`);
+    selected.push({ unitId: unit.id, match, topCandidates: ranked.slice(0, 3) });
+    const source = match.segment.sourceKey || match.segment.sourceUrl || match.segment.assetId;
+    sourceCounts[source] = (sourceCounts[source] || 0) + 1; usedSources.push(source); usedFingerprints.push(match.segment.visualFingerprint || match.segment.segmentId);
+  }
+  return selected;
+}
+
+function detectDefaultMotionEffects(manifest) {
+  const auditText = JSON.stringify({ editPlan: manifest.editPlan, scenes: manifest.scenes, assets: manifest.assets });
+  return /vibration|jitter|ken.?burns|random\s+(translate|scale)|shake/i.test(auditText);
+}
+
+async function buildThumbnailDirector(matches, text) {
+  const candidates = [...new Map(matches.flatMap((item) => item.topCandidates).filter((candidate) => ['EXACT', 'STRONG'].includes(candidate.classification) && candidate.segment.localPath).map((candidate) => [candidate.segment.segmentId, candidate])).values()].slice(0, 3);
+  if (candidates.length === 0) throw new Error('THUMBNAIL_BLOCKED: no semantically strong moving segment available');
+  const out = [];
+  for (const [index, candidate] of candidates.entries()) {
+    const segment = candidate.segment; const range = segmentMediaRange(segment); const frame = join(runRoot, 'thumbnail', `candidate-${index + 1}-source.jpg`); const target = join(finalRoot, `thumbnail-candidate-${index + 1}.jpg`);
+    await extractFrame(segment.localPath, range.startTime + range.duration / 2, frame);
+    const titleFile = join(runRoot, 'thumbnail', `title-${index + 1}.txt`); await writeFile(titleFile, clean(text).slice(0, 68));
+    await run('ffmpeg', ['-y', '-i', frame, '-vf', `scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,drawbox=x=0:y=0:w=iw:h=ih:color=black@0.28:t=fill,drawtext=textfile='${titleFile.replaceAll('\\', '/').replaceAll(':', '\\:')}':fontcolor=white:fontsize=58:line_spacing=8:borderw=3:bordercolor=black:x=70:y=h-190`, '-frames:v', '1', '-q:v', '2', target], { quiet: true });
+    out.push({ path: target, segmentId: segment.segmentId, sourceUrl: segment.sourceUrl, score: candidate.score, classification: candidate.classification, frameTime: range.startTime + range.duration / 2, sourceTimecode: [range.startTime, range.endTime] });
+  }
+  const selected = out.toSorted((a, b) => b.score - a.score)[0];
+  await copyFile(selected.path, join(finalRoot, 'thumbnail.jpg'));
+  return { selected: join(finalRoot, 'thumbnail.jpg'), candidates: out, method: 'semantic-action-frame-midpoint-plus-title-composition' };
+}
+
+async function inspectEditorialVideo(videoPath, units, selected) {
+  const rows = [];
+  const renderedDuration = Number((await probeVideoFile(videoPath)).durationSeconds || 0);
+  const safeLastFrame = Math.max(0.05, renderedDuration - 0.05);
+  const entries = [...units.entries()];
+  for (let offset = 0; offset < entries.length; offset += 3) {
+    const batch = await Promise.all(entries.slice(offset, offset + 3).map(async ([index, unit]) => {
+      const match = selected[index]?.match; if (!match) return null;
+      const rawTimes = [unit.startTime + Math.min(0.15, Math.max(0.05, unit.endTime - unit.startTime) * 0.15), (unit.startTime + unit.endTime) / 2, Math.max(unit.startTime, unit.endTime - 0.15)];
+      const times = [...new Set(rawTimes.map((time) => Math.max(0.05, Math.min(safeLastFrame, time))))];
+      const frames = [];
+      for (const [frameIndex, time] of times.entries()) frames.push(await extractFrame(videoPath, time, join(runRoot, 'qc', 'editorial', `${String(index).padStart(2, '0')}-${frameIndex}.jpg`)));
+      let observation;
+      try { observation = await geminiVisualJson(frames, `This is the FINAL RENDERED VIDEO at ${unit.startTime.toFixed(2)}-${unit.endTime.toFixed(2)} seconds. Narration phrase: "${unit.text}". Required visual intent: ${JSON.stringify(unit.visualIntent)}. Decide whether the rendered frames show the phrase: EXACT, STRONG, CONTEXTUAL, WEAK, or WRONG. Mention the observed action and whether it arrives in time.`); } catch (error) { observation = { semanticDescription: `Editorial visual inspection failed: ${error}`, confidence: 0 }; }
+      const observed = clean(observation.semanticDescription || ''); const lower = observed.toLowerCase(); const inspectionFailed = Number(observation.confidence ?? 0) <= 0 || /inspection failed|enoent|error:/i.test(lower); const wrong = /\bwrong\b|does not|not show|unrelated|mismatch|cannot see/i.test(lower); const weak = /\bweak\b|unclear|barely|generic|static/i.test(lower);
+      const defect = inspectionFailed ? 'EDITORIAL_INSPECTION_FAILED' : wrong ? 'WRONG_VISUAL' : weak ? 'WEAK_VISUAL' : null;
+      return { unitId: unit.id, narration: unit.text, startTime: unit.startTime, endTime: unit.endTime, selectedSegmentId: match.segment.segmentId, selectedSourceUrl: match.segment.sourceUrl, renderedFrames: frames, observation, defect };
+    }));
+    rows.push(...batch.filter(Boolean));
+  }
+  const critical = rows.filter((row) => row.defect === 'WRONG_VISUAL' || row.defect === 'WEAK_VISUAL' || row.defect === 'EDITORIAL_INSPECTION_FAILED');
+  return { method: 'multiframe-vision-on-final-rendered-intervals', inspectedUnits: rows.length, defects: critical, rows, status: critical.length ? 'INTERNAL_REPAIR_REQUIRED' : 'PASS', reviewedAt: now() };
+}
+
+async function visualRewritePass(script, semanticSegments, failure) {
+  const digest = semanticSegments.slice(0, 48).map((segment) => `${segment.segmentId} | ${segment.semanticDescription} | entities=${segment.entities.join(',')} | actions=${segment.actions.join(',')} | location=${segment.location.join(',')}`).join('\n');
+  const rewritten = await geminiJson(`Perform a VisualRewritePass on this short-video script. The previous phrase could not be matched to a strong real moving segment: ${failure}. Rewrite the complete script so every important phrase is concretely shown by the analyzed footage below. Remove or replace unsupported abstractions; do not invent a visual. Preserve the strongest hook, factual claims, natural English, 45-75 second length, and a clear payoff. Return JSON only in the same schema: {title,hookMechanism,narration,beats:[{id,narration,entities,claimIds,visualIntent:{requiredEntities,preferredEntities,requiredActions,preferredActions,location,shotPreferences,semanticGoal,avoid,queries},editorialForm,importance}],claims,packaging}. FOOTAGE THAT CAN ACTUALLY BE SHOWN:\n${digest}\nORIGINAL SCRIPT:\n${JSON.stringify(script)}`);
+  if (!rewritten?.narration || !Array.isArray(rewritten.beats) || rewritten.beats.length < 5) throw new Error('VISUAL_REWRITE_BLOCKED: rewritten script is incomplete');
+  return { ...rewritten, targetDurationSec: 60, generatedAt: now(), alignmentMethod: 'GEMINI_WORD_TIMESTAMPS_REQUIRED', visualRewritePass: true };
+}
+
+async function renderFootageProRun(opportunity, research, semanticSegments) {
+  const cachedScript = await readJson(join(reportRoot, 'script.json'), null);
+  let script = cachedScript?.narration && Array.isArray(cachedScript.beats) ? cachedScript : await makeFootageScript(opportunity, research, semanticSegments);
   await writeJson(join(reportRoot, 'script.json'), script);
   const store = new NodeLocalObjectStore(join(runRoot, 'storage'));
-  const rawVoiceProvider = new GeminiVoiceProvider({ apiKey: API_KEY, store, model: TTS_MODEL, defaultVoice: TTS_VOICE, protocol: 'generateContent' });
-  const voiceProvider = withGeminiWordAlignment(rawVoiceProvider, { apiKey: API_KEY, strict: true, minCoverage: 0.88 });
-  const voice = await voiceProvider.synthesize({ text: script.narration, voice: TTS_VOICE, language: 'en-US' });
-  const wordTimestamps = voice.metadata?.wordTimestamps || [];
-  if (wordTimestamps.length < 30) throw new Error('FOOTAGE_PRO blocked: real word timestamps were not returned');
-  const actualDuration = Number(voice.durationSeconds || wordTimestamps.at(-1)?.endTime || 0);
+  const voiceStatePath = join(reportRoot, 'voice-state.json');
+  const cachedVoice = await readJson(voiceStatePath, null);
+  const synthesizeVoice = async (text) => {
+    const rawVoiceProvider = new GeminiVoiceProvider({ apiKey: API_KEY, store, model: TTS_MODEL, defaultVoice: TTS_VOICE, protocol: 'generateContent' });
+    const voiceProvider = withGeminiWordAlignment(rawVoiceProvider, { apiKey: API_KEY, strict: true, minCoverage: 0.88 });
+    const synthesized = await voiceProvider.synthesize({ text, voice: TTS_VOICE, language: 'en-US' });
+    await writeJson(voiceStatePath, { ...synthesized, sourceText: text });
+    return synthesized;
+  };
+  let voice = cachedVoice?.sourceText === script.narration && cachedVoice?.uri?.startsWith('file://') && existsSync(cachedVoice.uri.replace(/^file:\/\//, '')) && Array.isArray(cachedVoice.metadata?.wordTimestamps) ? cachedVoice : await synthesizeVoice(script.narration);
+  let wordTimestamps = voice.metadata?.wordTimestamps || [];
+  if (wordTimestamps.length < 30 || wordTimestamps.some((word) => !Number.isFinite(word.startTime) || !Number.isFinite(word.endTime) || word.endTime <= word.startTime)) throw new Error('FOOTAGE_PRO blocked: validated real word timestamps were not returned');
+  let actualDuration = Number(voice.durationSeconds || wordTimestamps.at(-1)?.endTime || 0);
   if (actualDuration < 45 || actualDuration > 75) throw new Error(`FOOTAGE_PRO voice duration ${actualDuration.toFixed(2)}s outside 45-75s`);
-  const totalWords = script.narration.split(/\s+/).filter(Boolean).length;
-  let cursor = 0;
-  const beats = script.beats.map((beat, index) => {
-    const words = clean(beat.narration).split(/\s+/).filter(Boolean).length;
-    const durationSec = index === script.beats.length - 1 ? Math.max(1.5, actualDuration - cursor) : Math.max(1.4, (words / Math.max(1, totalWords)) * actualDuration);
-    const item = { ...beat, id: beat.id || `beat-${index + 1}`, startSec: Number(cursor.toFixed(3)), targetDurationSec: Number(durationSec.toFixed(3)) };
-    cursor += durationSec; return item;
-  });
-  const music = await makeMusic(actualDuration, hash(script.title).charCodeAt(0) + 17);
-  const assignments = beats.map((beat, index) => segments.find((segment) => beat.mediaQuery && segment.id.startsWith(String(beat.mediaQuery))) || segments[index % segments.length]);
-  const scenes = beats.map((beat, index) => ({ id: `${beat.id}-s${index + 1}`, startSec: beat.startSec, durationSec: beat.targetDurationSec, kind: 'video', instruction: beat.visualIntent, sourceIds: [assignments[index].id], generated: false }));
-  const timelineAssets = scenes.map((scene, index) => {
-    const asset = assignments[index];
-    const clipStartSec = Number(asset.clipStartSec || 0);
-    const clipEndSec = Number(asset.clipEndSec || (clipStartSec + scene.durationSec));
-    return { id: `${asset.id}-${index}`, uri: fileUri(asset.localPath), mimeType: asset.mime || 'video/webm', provider: asset.provider, model: 'footage-pro-segment-v1', costUsd: 0, sceneId: scene.id, generated: false, sourceIds: [asset.id], sourceUrl: asset.sourceUrl, license: asset.metadata?.license || null, metadata: { sourceUrl: asset.sourceUrl, rightsStatus: asset.rightsTier, attribution: asset.metadata?.creator || null, title: asset.metadata?.title || asset.id, clipStartSec, clipEndSec, sourceAudio: asset.sourceAudio, visualMatch: 'FOOTAGE_POOL_SEGMENT' } };
-  });
-  const renderManifest = { projectId: runId, createdAt: now(), contentFormat: 'SHORT_HORIZONTAL', aspectRatio: '16:9', frame: { width: 1280, height: 720 }, engineeringResolution: '1280x720', contentArchetype: { version: 1, id: 'FOOTAGE_PRO_SOURCED_NARRATIVE', label: 'Footage-first sourced narrative', confidence: 82, reasons: ['native moving-video preflight passed', 'dynamic source segment selection'], voiceMode: 'SINGLE_NARRATOR', realityMode: 'FACTUAL', cameraProfile: 'EDITORIAL_DOCUMENTARY', syntheticDisclosurePolicy: 'Synthetic voice only; source video provenance retained.', profile: {} }, captionPlan: { enabled: false, burnIn: false, preset: 'KARAOKE_BOLD', source: 'GEMINI_WORD_TIMESTAMPS', mode: 'WORD_KARAOKE' }, editPlan: { preset: 'FOOTAGE_PRO', transitionMode: 'CLEAN_CUTS', filmLook: false, punchInAnchors: false, preserveAudioTiming: true }, script: { title: script.title, targetDurationSec: actualDuration, beats }, scenes, assets: timelineAssets, voice: { id: `voice-${runId}`, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: actualDuration, alignment: voice.alignment, wordTimestamps }, music: { assetId: 'music-local', kind: 'music', uri: fileUri(music), startSec: 0, gain: 0.10, loop: true, endSec: actualDuration, license: 'original-local-procedural', rightsStatus: 'CLEARED', costUsd: 0 }, estimatedCostUsd: 0, actualCostUsd: Number(voice.metadata?.transcriptionCostUsd || 0), containsSyntheticMedia: true };
+  await writeJson(join(reportRoot, 'raw-word-timestamps.json'), { method: voice.metadata?.alignmentSource || 'unknown', words: wordTimestamps });
+  let units;
+  try { units = buildNarrationUnits(script.beats.map((beat, index) => ({ ...beat, id: beat.id || `beat-${index + 1}` })), wordTimestamps); } catch (error) { await writeJson(join(reportRoot, 'alignment-error.json'), { error: String(error), wordCount: wordTimestamps.length }); throw error; }
+  if (units.length < 8) throw new Error(`EDITORIAL_TIMELINE_BLOCKED: only ${units.length} phrase-level units were aligned`);
+  let selected;
+  try { selected = selectSemanticMatches(units, semanticSegments); } catch (error) {
+    script = await visualRewritePass(script, semanticSegments, String(error));
+    await writeJson(join(reportRoot, 'script-rewritten.json'), script); await writeJson(join(reportRoot, 'script.json'), script);
+    voice = await synthesizeVoice(script.narration); wordTimestamps = voice.metadata?.wordTimestamps || []; actualDuration = Number(voice.durationSeconds || wordTimestamps.at(-1)?.endTime || 0); await writeJson(join(reportRoot, 'raw-word-timestamps.json'), { method: voice.metadata?.alignmentSource || 'unknown', words: wordTimestamps });
+    if (wordTimestamps.length < 30) throw new Error('FOOTAGE_PRO blocked after VisualRewritePass: word timestamps unavailable');
+    if (actualDuration < 45 || actualDuration > 75) throw new Error(`FOOTAGE_PRO VisualRewritePass voice duration ${actualDuration.toFixed(2)}s outside 45-75s`);
+    units = buildNarrationUnits(script.beats.map((beat, index) => ({ ...beat, id: beat.id || `beat-${index + 1}` })), wordTimestamps);
+    if (units.length < 8) throw new Error(`EDITORIAL_TIMELINE_BLOCKED after VisualRewritePass: only ${units.length} phrase-level units were aligned`);
+    selected = selectSemanticMatches(units, semanticSegments);
+  }
+  const coverage = coverageFromTimeline(units, selected);
+  const thumbnail = await buildThumbnailDirector(selected, script.packaging?.thumbnailText || script.title);
+  const noveltySimilarity = Number((await readJson(join(reportRoot, 'novelty.json'), { maxSimilarity: 0 })).maxSimilarity || 0);
+  const greenlight = evaluateCreativeGreenlightEvidence({ promise: opportunity.viewerPromise || opportunity.angle || script.title, hook: { match: selected[0]?.match || null, firstFrameEvidence: 'first editorial unit uses a semantically selected moving segment' }, units, coverage, semanticSegments, noveltySimilarity, thumbnailEvidence: thumbnail.method });
+  await writeJson(join(reportRoot, 'TopicGreenlightReport.json'), greenlight);
+  if (greenlight.status !== 'PASS') throw new Error(`CREATIVE_GREENLIGHT_BLOCKED: ${greenlight.blockers.join('; ')}`);
+  const timelineItems = units.map((unit) => ({ startTime: unit.startTime, endTime: unit.endTime, visualType: 'REAL_VIDEO' }));
+  const mediaRatios = timelineMediaRatios(timelineItems);
+  const scenes = selected.map((item, index) => { const unit = units[index]; return { id: `${unit.id}-s${index + 1}`, startSec: unit.startTime, durationSec: Math.max(0.2, unit.endTime - unit.startTime), kind: 'video', instruction: unit.visualIntent, sourceIds: [item.match.segment.segmentId], generated: false }; });
+  const timelineAssets = selected.map((item, index) => { const segment = item.match.segment; const range = segmentMediaRange(segment); const scene = scenes[index]; return { id: `${segment.segmentId}-${index}`, uri: fileUri(segment.localPath), mimeType: segment.mime || 'video/mp4', provider: segment.provider, model: 'multiframe-semantic-segment-v1', costUsd: 0, sceneId: scene.id, generated: false, sourceIds: [segment.segmentId], sourceUrl: segment.sourceUrl, license: segment.metadata?.license || null, metadata: { sourceUrl: segment.sourceUrl, rightsStatus: segment.rightsTier, attribution: segment.metadata?.creator || null, title: segment.metadata?.title || segment.segmentId, clipStartSec: range.startTime, clipEndSec: range.endTime, sourceAudio: segment.sourceAudio, visualMatch: item.match.classification, matchExplanation: item.match.explanation, semanticProfile: segment.provenance, shotTimecode: [segment.startTime, segment.endTime], usableTimecode: [range.startTime, range.endTime], temporalEvidence: segment.temporalEvidence || null } }; });
+  const renderManifest = { projectId: runId, createdAt: now(), contentFormat: 'SHORT_HORIZONTAL', aspectRatio: '16:9', frame: { width: 1280, height: 720 }, engineeringResolution: '1280x720', contentArchetype: { version: 1, id: 'FOOTAGE_PRO_SOURCED_NARRATIVE', label: 'Footage-first sourced narrative', confidence: 82, reasons: ['multiframe segment understanding', 'phrase-level semantic footage matching'], voiceMode: 'SINGLE_NARRATOR', realityMode: 'FACTUAL', cameraProfile: 'EDITORIAL_DOCUMENTARY', syntheticDisclosurePolicy: 'Synthetic voice only; source video provenance retained.', profile: {} }, captionPlan: { enabled: true, burnIn: false, preset: 'KARAOKE_BOLD', source: 'GEMINI_WORD_TIMESTAMPS', mode: 'WORD_KARAOKE' }, editPlan: { preset: 'FOOTAGE_PRO', transitionMode: 'CLEAN_CUTS', filmLook: false, punchInAnchors: false, preserveAudioTiming: true, defaultMotionEffects: [] }, script: { title: script.title, targetDurationSec: actualDuration, beats: units.map((unit) => ({ id: unit.id, narration: unit.text, entities: unit.visualIntent.requiredEntities, visualIntent: unit.visualIntent, startSec: unit.startTime, targetDurationSec: unit.endTime - unit.startTime, importance: unit.importance })) }, scenes, assets: timelineAssets, voice: { id: `voice-${runId}`, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: actualDuration, alignment: voice.alignment, wordTimestamps }, music: null, estimatedCostUsd: 0, actualCostUsd: Number(voice.metadata?.transcriptionCostUsd || 0), containsSyntheticMedia: true };
   await writeJson(join(runRoot, 'timeline', 'MasterTimeline.json'), renderManifest);
+  const matchingReceipts = selected.map((item, index) => ({ editorialUnit: units[index], topCandidates: item.topCandidates.map((candidate) => { const range = segmentMediaRange(candidate.segment); return { segmentId: candidate.segment.segmentId, sourceUrl: candidate.segment.sourceUrl, shotTimecode: [candidate.segment.startTime, candidate.segment.endTime], sourceTimecode: [range.startTime, range.endTime], classification: candidate.classification, score: candidate.score, components: candidate.components, explanation: candidate.explanation }; }), selectedSegment: item.match.segment.segmentId, selectedSourceTimecode: [segmentMediaRange(item.match.segment).startTime, segmentMediaRange(item.match.segment).endTime] }));
+  await writeJson(join(reportRoot, 'matching-receipts.json'), matchingReceipts);
+  await writeJson(join(reportRoot, 'NarrationUnits.json'), units);
+  await writeJson(join(reportRoot, 'segment-semantic-profiles.json'), semanticSegments);
+  await writeJson(join(reportRoot, 'VisualCoverageReport.json'), coverage);
+  await writeJson(join(reportRoot, 'MediaRatios.json'), mediaRatios);
   const manifestPath = join(runRoot, 'timeline', 'render-manifest.json'); await writeJson(manifestPath, renderManifest);
   const renderer = new FfmpegRenderer({ outputRoot: renderRoot, width: 1280, height: 720, fps: 30, targetLufs: -16, truePeakDb: -1.5, loudnessRange: 7 });
   const rendered = await renderer.render({ manifestUri: fileUri(manifestPath), outputKey: 'v1-base.mp4' });
   const basePath = rendered.uri.replace(/^file:\/\//, '');
-  const assPath = join(runRoot, 'audio', 'karaoke.ass');
-  const karaoke = await writeKaraokeAss(wordTimestamps, assPath);
+  const assPath = join(runRoot, 'audio', 'karaoke.ass'); const karaoke = await writeKaraokeAss(wordTimestamps, assPath);
   const v1 = join(finalRoot, 'video-v1.mp4');
   await run('ffmpeg', ['-y', '-i', basePath, '-vf', `subtitles='${assPath.replaceAll('\\', '/').replaceAll(':', '\\:')}'`, '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-movflags', '+faststart', v1], { quiet: true });
-  const thumbnail = await buildThumbnail(segments[0].localPath, script.packaging?.thumbnailText || script.title);
-  const preflight = evaluateFootagePro({ mode: 'FOOTAGE_PRO', targetDurationSeconds: actualDuration, movingVideoSeconds: actualDuration, stillImageSeconds: 0, candidates: segments, requiredEntities: opportunity.entities || [], topicGreenlit: true, wordAlignmentAvailable: true, defaultMotionEffectDetected: false, minimumCandidates: 15 });
-  const qc = await inspectVideo(v1);
-  const report = { version: 1, runId, status: preflight.passed && qc.status === 'PASS' ? 'READY_FOR_HUMAN_REVIEW' : 'INTERNAL_REVIEW_REQUIRED', input: { mode, opportunity }, output: { video: v1, thumbnail, durationSeconds: actualDuration, format: '16:9', title: script.packaging?.title || script.title }, voice: { provider: voice.provider, model: voice.model, alignmentMethod: voice.metadata?.alignmentSource, wordCount: wordTimestamps.length, karaoke }, footage: { preflight, movingVideoRatio: 1, stillImageRatio: 0, uniqueMovingSegments: segments.length, uniqueSources: new Set(segments.map((item) => item.sourceKey)).size, topSourceShare: Math.max(...[...new Set(segments.map((item) => item.sourceKey))].map((key) => segments.filter((item) => item.sourceKey === key).length / Math.max(1, segments.length))), selected: segments.map((item) => ({ id: item.id, title: item.metadata?.title, sourceUrl: item.sourceUrl, clipStartSec: item.clipStartSec, clipEndSec: item.clipEndSec, license: item.metadata?.license, creator: item.metadata?.creator })) }, qc, cost: { externalPaidUsd: 'UNKNOWN_PROVIDER_BILLING_NOT_EXPOSED', localRenderUsd: 0, alignmentUsd: Number(voice.metadata?.transcriptionCostUsd || 0) }, limitations: ['Source audio is not mixed into this first candidate because the available public clips were not individually auditioned for editorial use.', 'Human review remains required.'] };
+  const wordAlignmentReport = { valid: true, method: voice.metadata?.alignmentSource || 'gemini-word-timestamps', confidence: 'NOT_SUPPLIED_BY_PROVIDER', wordCount: wordTimestamps.length, coverage: voice.metadata?.alignmentCoverage ?? null };
+  await writeJson(join(reportRoot, 'WordAlignmentReport.json'), wordAlignmentReport);
+  const candidatesForPreflight = semanticSegments.map((segment) => ({ ...segment, id: segment.segmentId, durationSeconds: segment.duration, usableDurationSeconds: segment.duration, sourceAudio: segment.sourceAudioUseful !== 'NONE', actions: segment.actions, entities: segment.entities, visualFingerprint: segment.visualFingerprint || segment.segmentId }));
+  const preflight = evaluateFootagePro({ mode: 'FOOTAGE_PRO', targetDurationSeconds: actualDuration, movingVideoSeconds: mediaRatios.seconds.REAL_VIDEO, stillImageSeconds: mediaRatios.seconds.IMAGE + mediaRatios.seconds.DOCUMENT + mediaRatios.seconds.GRAPHIC + mediaRatios.seconds.GENERATED_VIDEO, candidates: candidatesForPreflight, requiredEntities: opportunity.entities || [], topicGreenlit: greenlight.status === 'PASS', wordAlignmentAvailable: wordAlignmentReport.valid, defaultMotionEffectDetected: detectDefaultMotionEffects(renderManifest), minimumCandidates: 15 });
+  const qc = await inspectVideo(v1); const editorialQc = await inspectEditorialVideo(v1, units, selected);
+  await writeJson(join(reportRoot, 'EditorialCritic-v1.json'), editorialQc);
+  let finalVideo = v1; let finalEditorialQc = editorialQc; let finalSelected = selected; let repair = { applied: false, reason: editorialQc.defects.length ? 'No semantically stronger local replacement was available' : 'No critical editorial defect found', contentChanged: false };
+  const firstDefect = editorialQc.defects[0];
+  if (firstDefect) {
+    const defectIndex = units.findIndex((unit) => unit.id === firstDefect.unitId); const current = finalSelected[defectIndex];
+    const alternative = current?.topCandidates?.find((candidate) => candidate.segment.segmentId !== current.match.segment.segmentId && ['EXACT', 'STRONG'].includes(candidate.classification));
+    if (alternative) {
+      const repairedSelected = finalSelected.map((item, index) => index === defectIndex ? { ...item, match: alternative } : item);
+      const alternativeRange = segmentMediaRange(alternative.segment);
+      const repairedManifest = { ...renderManifest, scenes: renderManifest.scenes.map((scene, index) => index === defectIndex ? { ...scene, sourceIds: [alternative.segment.segmentId], instruction: units[index].visualIntent } : scene), assets: renderManifest.assets.map((asset, index) => index === defectIndex ? { ...asset, id: `${alternative.segment.segmentId}-${index}-repair`, uri: fileUri(alternative.segment.localPath), sourceIds: [alternative.segment.segmentId], sourceUrl: alternative.segment.sourceUrl, metadata: { ...asset.metadata, clipStartSec: alternativeRange.startTime, clipEndSec: alternativeRange.endTime, shotTimecode: [alternative.segment.startTime, alternative.segment.endTime], usableTimecode: [alternativeRange.startTime, alternativeRange.endTime], semanticProfile: alternative.segment.provenance, visualMatch: alternative.classification, repair: 'LOCALIZED_SEMANTIC_REPLACEMENT' } } : asset) };
+      const repairManifestPath = join(runRoot, 'timeline', 'repair-manifest.json'); await writeJson(repairManifestPath, repairedManifest);
+      const repairRenderer = new FfmpegRenderer({ outputRoot: join(renderRoot, 'repair'), width: 1280, height: 720, fps: 30, targetLufs: -16, truePeakDb: -1.5, loudnessRange: 7 });
+      const repaired = await repairRenderer.render({ manifestUri: fileUri(repairManifestPath), outputKey: 'v2-base.mp4' });
+      const v2 = join(finalRoot, 'video-v2.mp4'); const repairedBase = repaired.uri.replace(/^file:\/\//, '');
+      await run('ffmpeg', ['-y', '-i', repairedBase, '-vf', `subtitles='${assPath.replaceAll('\\', '/').replaceAll(':', '\\:')}'`, '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-movflags', '+faststart', v2], { quiet: true });
+      const beforeHash = hash(await readFile(v1)); const afterHash = hash(await readFile(v2));
+      finalVideo = v2; finalSelected = repairedSelected; finalEditorialQc = await inspectEditorialVideo(v2, units, finalSelected);
+      repair = { applied: true, defect: firstDefect, oldSegmentId: current.match.segment.segmentId, newSegmentId: alternative.segment.segmentId, oldSourceTimecode: [segmentMediaRange(current.match.segment).startTime, segmentMediaRange(current.match.segment).endTime], newSourceTimecode: [alternativeRange.startTime, alternativeRange.endTime], affectedOutputInterval: [units[defectIndex].startTime, units[defectIndex].endTime], beforeHash, afterHash, contentChanged: beforeHash !== afterHash, postRepairCritic: finalEditorialQc };
+      await writeJson(join(reportRoot, 'RepairPlan.json'), repair);
+    }
+  }
+  const finalCoverage = coverageFromTimeline(units, finalSelected);
+  await writeJson(join(reportRoot, 'VisualCoverageReport-final.json'), finalCoverage);
+  const matchingReceiptsFinal = finalSelected.map((item, index) => { const range = segmentMediaRange(item.match.segment); return { editorialUnit: units[index], selectedSegment: item.match.segment.segmentId, selectedClassification: item.match.classification, shotTimecode: [item.match.segment.startTime, item.match.segment.endTime], selectedSourceTimecode: [range.startTime, range.endTime], temporalEvidence: item.match.segment.temporalEvidence || null }; });
+  await writeJson(join(reportRoot, 'matching-receipts-final.json'), matchingReceiptsFinal);
+  const finalQc = finalVideo === v1 ? qc : await inspectVideo(finalVideo);
+  const report = { version: 2, runId, status: preflight.passed && finalQc.status === 'PASS' && finalEditorialQc.status === 'PASS' ? 'READY_FOR_HUMAN_REVIEW' : 'INTERNAL_REVIEW_REQUIRED', input: { mode, opportunity }, output: { video: finalVideo, thumbnail: thumbnail.selected, durationSeconds: actualDuration, format: '16:9', title: script.packaging?.title || script.title }, voice: { provider: voice.provider, model: voice.model, alignmentMethod: wordAlignmentReport.method, wordCount: wordTimestamps.length, karaoke, wordAlignmentReport }, footage: { preflight, mediaRatios, coverage: finalCoverage, uniqueMovingSegments: semanticSegments.length, uniqueSources: new Set(semanticSegments.map((item) => item.sourceKey)).size, topSourceShare: Math.max(...[...new Set(semanticSegments.map((item) => item.sourceKey))].map((key) => semanticSegments.filter((item) => item.sourceKey === key).length / Math.max(1, semanticSegments.length))), selected: finalSelected.map((item) => { const range = segmentMediaRange(item.match.segment); return { id: item.match.segment.segmentId, sourceUrl: item.match.segment.sourceUrl, shotTimecode: [item.match.segment.startTime, item.match.segment.endTime], sourceTimecode: [range.startTime, range.endTime], classification: item.match.classification, temporalEvidence: item.match.segment.temporalEvidence || null }; }) }, greenlight, qc: { v1: { technical: qc, editorial: editorialQc }, repair, final: { technical: finalQc, editorial: finalEditorialQc } }, cost: { externalPaidUsd: 'UNKNOWN_PROVIDER_BILLING_NOT_EXPOSED', localRenderUsd: 0, alignmentUsd: Number(voice.metadata?.transcriptionCostUsd || 0) }, limitations: ['No procedural music was used; the current render intentionally relies on narration and source audio availability rather than a synthetic tone bed.', 'Human review remains required.'] };
   await writeJson(join(reportRoot, 'production-run.json'), report);
-  return { script, voice, segments, preflight, qc, video: v1, thumbnail, report };
+  return { script, voice, segments: semanticSegments, preflight, qc: { technical: finalQc, editorial: finalEditorialQc }, video: finalVideo, thumbnail: thumbnail.selected, report, units, selected: finalSelected, renderManifest, wordTimestamps };
 }
 
 async function runFootageProProduction(history) {
-  const scouting = await scoutMovingTopics(history);
-  const opportunity = { ...scouting.winner, inputMode: mode === 'radar' ? 'RADAR_AUTONOMOUS' : 'USER_PROMPT', selectedAt: now() };
+  const cachedOpportunity = await readJson(join(reportRoot, 'opportunity.json'), null);
+  const scouting = resumeRun && cachedOpportunity?.topic ? { winner: cachedOpportunity } : await scoutMovingTopics(history);
+  const opportunity = { ...scouting.winner, inputMode: mode === 'radar' ? 'RADAR_AUTONOMOUS' : 'USER_PROMPT', selectedAt: cachedOpportunity?.selectedAt || now() };
   const scoutScore = scouting.winner.nativeVideo;
-  const greenlight = evaluateTopicGreenlight({ topic: opportunity.topic, hookStrength: 78, viewerPromiseClarity: 78, storyProgression: 72, visualAction: Math.min(95, 60 + scoutScore.actionCount * 5), thumbnailStrength: 76, nativeVideo: scoutScore, historicalSimilarity: 0 });
+  const novelty = resumeRun && cachedOpportunity?.topic ? { ...(await readJson(join(reportRoot, 'novelty.json'), {})), maxSimilarity: 0, method: 'RESUME_EXISTING_OPPORTUNITY' } : await noveltyAgainstHistory(opportunity, history);
   await writeJson(join(reportRoot, 'opportunity.json'), opportunity);
-  await writeJson(join(reportRoot, 'TopicGreenlightReport.json'), { ...greenlight, evidence: { nativeVideo: scoutScore, scoutQueries: opportunity.scoutQueries } });
-  if (!greenlight.passed) throw new Error(`CREATIVE_GREENLIGHT_BLOCKED: ${greenlight.blockers.join('; ')}`);
+  await writeJson(join(reportRoot, 'novelty.json'), novelty);
+  await writeJson(join(reportRoot, 'TopicGreenlightReport.json'), { status: 'PENDING_EVIDENCE', evidence: { nativeVideoScout: scoutScore, scoutQueries: opportunity.scoutQueries, novelty }, generatedAt: now() });
+  if (!resumeRun && novelty.maxSimilarity >= 0.55) throw new Error(`NOVELTY_GATE_BLOCKED similarity=${novelty.maxSimilarity}`);
   const research = await geminiResearch(opportunity.topic, { recencyDays: 30 });
   await writeJson(join(reportRoot, 'research-pack.json'), research);
   const focusedQueries = [...new Set([
@@ -503,7 +668,9 @@ async function runFootageProProduction(history) {
     ...(opportunity.entities || []).slice(0, 2),
     clean(opportunity.topic).split(/[:—-]/)[0],
   ].map(clean).filter(Boolean))].slice(0, 4);
-  const focusedSearches = await Promise.all(focusedQueries.map((query) => searchMovingTopic(query, 20)));
+  const focusedSearchCache = await readJson(join(reportRoot, 'focused-searches.json'), null);
+  const focusedSearches = Array.isArray(focusedSearchCache) && focusedSearchCache.length === focusedQueries.length ? focusedSearchCache : await Promise.all(focusedQueries.map((query) => searchMovingTopic(query, 20)));
+  await writeJson(join(reportRoot, 'focused-searches.json'), focusedSearches);
   const discoveredCandidates = [...new Map([
     ...scouting.winner.candidates,
     ...focusedSearches.flatMap((result) => result.candidates),
@@ -514,27 +681,36 @@ async function runFootageProProduction(history) {
   const allCandidates = relevanceRanked.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
   if (allCandidates.length < 15) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_RELEVANCE: only ${allCandidates.length} moving candidates match the selected topic's source metadata`);
   const downloaded = [];
-  for (const [index, candidate] of allCandidates.slice(0, 14).entries()) {
-    try { downloaded.push(await downloadMovingCandidate(candidate, mediaRoot, index)); } catch (error) { await writeJson(join(reportRoot, 'download-failures.json'), [...(await readJson(join(reportRoot, 'download-failures.json'), [])), { candidate: candidate.id, error: String(error), at: now() }]); }
+  const downloadCandidates = allCandidates.slice(0, 16);
+  for (let offset = 0; offset < downloadCandidates.length; offset += 4) {
+    const batch = await Promise.all(downloadCandidates.slice(offset, offset + 4).map(async (candidate, index) => {
+      try { return await downloadMovingCandidate(candidate, mediaRoot, offset + index); } catch (error) { await writeJson(join(reportRoot, 'download-failures.json'), [...(await readJson(join(reportRoot, 'download-failures.json'), [])), { candidate: candidate.id, error: String(error), at: now() }]); return null; }
+    }));
+    downloaded.push(...batch.filter(Boolean));
   }
-  const segments = [];
-  for (const asset of downloaded) {
-    const duration = Number(asset.durationSeconds || 0);
-    if (duration < 2.5) continue;
-    const usable = Math.max(2.1, Math.min(4.0, duration * 0.34));
-    const starts = duration >= 18 ? [0, Math.max(0, duration * 0.46), Math.max(0, duration - usable)] : duration >= 8 ? [0, Math.max(0, duration * 0.46)] : [0];
-    for (const [part, start] of starts.entries()) {
-      const end = Math.min(duration, start + usable);
-      if (end - start < 1.8) continue;
-      segments.push({ ...asset, id: `${asset.id}-segment-${part + 1}`, visualFingerprint: `${asset.visualFingerprint}-${part + 1}`, clipStartSec: Number(start.toFixed(3)), clipEndSec: Number(end.toFixed(3)), usableDurationSeconds: Number((end - start).toFixed(3)), metadata: { ...(asset.metadata || {}), segmentTitle: `${asset.metadata?.title || asset.id} [${start.toFixed(1)}-${end.toFixed(1)}s]` } });
+  if (downloaded.length < 15) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_AFTER_DOWNLOAD: only ${downloaded.length} real moving assets survived download/probe`);
+  const cachedMediaPack = await readJson(join(reportRoot, 'MediaResourcePack.json'), null);
+  let semanticSegments;
+  if (Array.isArray(cachedMediaPack?.semanticSegments) && cachedMediaPack.semanticSegments.length >= 15 && cachedMediaPack.semanticSegments.every((segment) => Number(segment.confidence) > 0 && segment.provenance?.method === 'gemini-multiframe-vision' && segment.provenance?.temporalAnalysis === 'gemini-frame-sequence-with-source-timestamps' && Number.isFinite(Number(segment.usableStartTime)) && Number.isFinite(Number(segment.usableEndTime)))) {
+    semanticSegments = cachedMediaPack.semanticSegments;
+  } else {
+    const analyzed = [];
+    for (let offset = 0; offset < downloaded.length; offset += 3) {
+      const batch = await Promise.all(downloaded.slice(offset, offset + 3).map((asset, index) => analyzeMovingAsset(asset, offset + index)));
+      analyzed.push(...batch);
     }
+    semanticSegments = analyzed.flatMap((item) => item.profiles);
+    await writeJson(join(reportRoot, 'shot-detection.json'), analyzed.map((item) => ({ assetId: item.asset.id, sourceUrl: item.asset.sourceUrl, shots: item.shots })));
+    await writeJson(join(reportRoot, 'MediaResourcePack.json'), { version: 2, opportunity: opportunity.topic, semanticSegments, sourceCount: new Set(semanticSegments.map((item) => item.sourceKey)).size, generatedAt: now(), understanding: { method: 'actual-shot-boundaries-plus-multiframe-gemini-vision', model: VISION_MODEL } });
   }
-  if (segments.length < 15) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_AFTER_DOWNLOAD: only ${segments.length} real moving segments survived download/probe`);
-  const validatedScore = scoreNativeVideoAvailability(segments, opportunity.entities || []);
-  await writeJson(join(reportRoot, 'MediaResourcePack.json'), { opportunity: opportunity.topic, segments, sourceCount: new Set(segments.map((item) => item.sourceKey)).size, score: validatedScore, generatedAt: now() });
-  const result = await renderFootageProRun(opportunity, research, segments.slice(0, 24));
-  history.productions.push({ runId, topic: opportunity.topic, angle: opportunity.angle, entities: opportunity.entities, domain: opportunity.domain, inputMode: opportunity.inputMode, sourceUrls: [...new Set(result.segments.map((item) => item.sourceUrl))], providers: [...new Set(result.segments.map((item) => item.provider))], titlePattern: result.script.packaging?.title || result.script.title, thumbnailPattern: result.script.packaging?.thumbnailConcept, storyStructure: result.script.hookMechanism, visualStyle: 'FOOTAGE_PRO moving video with source-segment editorial cuts', voice: TTS_VOICE, musicStyle: 'local procedural bed', status: result.report.status, humanStatus: 'PENDING_HUMAN_REVIEW', positiveTrainingExample: false, createdAt: now(), novelty: { maxSimilarity: 0 } });
-  history.learning.push({ runId, observed: { duration: result.qc.durationSeconds, nativeVideoScore: validatedScore, movingVideoRatio: 1, uniqueSegments: result.segments.length, sourceCount: new Set(result.segments.map((item) => item.sourceKey)).size, alignmentMethod: result.voice.metadata?.alignmentSource, critic: result.qc.critic }, confidence: 'LOW_SINGLE_SAMPLE', recordedAt: now() });
+  if (semanticSegments.length < 15) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_AFTER_ANALYSIS: only ${semanticSegments.length} real shot segments were understood`);
+  const actionful = semanticSegments.filter((item) => item.actions.length > 0 && item.motionLevel !== 'NONE' && item.confidence >= 0.35);
+  if (actionful.length < 10) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_SEMANTIC_DEPTH: only ${actionful.length} actionful understood segments survived`);
+  const validatedScore = scoreNativeVideoAvailability(semanticSegments.map((item) => ({ ...item, id: item.segmentId, durationSeconds: item.duration, usableDurationSeconds: item.duration, actions: item.actions, entities: item.entities, sourceAudio: item.sourceAudioUseful !== 'NONE', visualFingerprint: item.visualFingerprint || item.segmentId })), opportunity.entities || []);
+  if (validatedScore.grade === 'POOR') throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_SEMANTIC_NATIVE_SCORE: ${validatedScore.grade}`);
+  const result = await renderFootageProRun(opportunity, research, semanticSegments);
+  history.productions.push({ runId, topic: opportunity.topic, angle: opportunity.angle, entities: opportunity.entities, domain: opportunity.domain, inputMode: opportunity.inputMode, sourceUrls: [...new Set(result.segments.map((item) => item.sourceUrl))], providers: [...new Set(result.segments.map((item) => item.provider))], titlePattern: result.script.packaging?.title || result.script.title, thumbnailPattern: result.script.packaging?.thumbnailConcept, storyStructure: result.script.hookMechanism, visualStyle: 'FOOTAGE_PRO moving video with semantic phrase-level cuts', voice: TTS_VOICE, musicStyle: 'NO_MUSIC_UNTIL_PROPER_LIBRARY_AVAILABLE', status: result.report.status, humanStatus: 'PENDING_HUMAN_REVIEW', positiveTrainingExample: false, createdAt: now(), novelty });
+  history.learning.push({ runId, observed: { duration: result.qc.technical.durationSeconds, nativeVideoScore: validatedScore, movingVideoRatio: result.report.footage.mediaRatios.ratios.REAL_VIDEO, uniqueSegments: result.segments.length, sourceCount: new Set(result.segments.map((item) => item.sourceKey)).size, alignmentMethod: result.voice.metadata?.alignmentSource, critic: result.qc.editorial }, confidence: 'LOW_SINGLE_SAMPLE', recordedAt: now() });
   await writeJson(MEMORY, history);
   await writeJson(join(runRoot, 'run-manifest.json'), { runId, inputMode: mode, createdAt: now(), stages: ['FOOTAGE_SCOUT', 'TOPIC_GREENLIGHT', 'RESEARCH', 'MEDIA_DOWNLOAD', 'SEGMENT_INDEX', 'SCRIPT', 'VOICE_WORD_ALIGNMENT', 'EDITORIAL_TIMELINE', 'RENDER', 'RENDERED_VIDEO_QC'], artifacts: result.report });
   console.log(JSON.stringify(result.report, null, 2));
@@ -626,7 +802,7 @@ async function main() {
   const script = await makeScript(opportunity, research, media);
   await writeJson(join(reportRoot, 'opportunity.json'), opportunity); await writeJson(join(reportRoot, 'novelty.json'), novelty); await writeJson(join(reportRoot, 'research-pack.json'), research); await writeJson(join(reportRoot, 'script.json'), script);
   const scoreMedia = (beat, asset) => {
-    const tokens = new Set(`${beat.mediaQuery || ''} ${(beat.entities || []).join(' ')} ${opportunity.topic}`.toLowerCase().split(/\W+/).filter((token) => token.length > 3));
+    const tokens = new Set(`${beat.visualIntent?.queries?.join(' ') || ''} ${(beat.entities || []).join(' ')} ${opportunity.topic}`.toLowerCase().split(/\W+/).filter((token) => token.length > 3));
     const titleTokens = new Set(clean(asset?.title).toLowerCase().split(/\W+/).filter((token) => token.length > 3));
     return [...tokens].filter((token) => titleTokens.has(token));
   };
@@ -640,7 +816,7 @@ async function main() {
   const selectedAssets = [...new Map(assignments.map((asset) => [asset.pageUrl, asset])).values()];
   const coverage = script.beats.map((beat, index) => {
     const asset = assignments[index];
-    const tokens = new Set(`${beat.mediaQuery || ''} ${(beat.entities || []).join(' ')} ${opportunity.topic}`.toLowerCase().split(/\W+/).filter((token) => token.length > 3));
+    const tokens = new Set(`${beat.visualIntent?.queries?.join(' ') || ''} ${(beat.entities || []).join(' ')} ${opportunity.topic}`.toLowerCase().split(/\W+/).filter((token) => token.length > 3));
     const titleTokens = new Set(clean(asset?.title).toLowerCase().split(/\W+/).filter((token) => token.length > 3));
     const overlap = [...tokens].filter((token) => titleTokens.has(token));
     const genericVisualTokens = new Set(['bridge', 'river', 'road', 'view', 'aerial', 'photo', 'image', 'file', 'jpg', '2022', '2016', '2014', 'official', 'historical', 'detail', 'steel', 'structure', 'engineering']);
@@ -648,7 +824,7 @@ async function main() {
     const entityMatches = concreteEntities.map((tokens) => tokens.filter((token) => titleTokens.has(token)));
     const distinctiveEntityOverlap = [...new Set(entityMatches.flat())];
     const exact = concreteEntities.length > 0 && entityMatches.every((matches, index) => matches.length === concreteEntities[index].length);
-    return { beatId: beat.id, narration: beat.narration, entity: beat.entities, selectedAsset: asset?.title, class: exact ? 'EXACT' : 'CONTEXTUAL', confidence: exact ? 'PROVENANCE_PLUS_TITLE_ENTITY_MATCH' : 'PROVENANCE_ONLY_CONTEXTUAL', query: beat.mediaQuery, titleOverlap: overlap.slice(0, 8), distinctiveEntityOverlap };
+    return { beatId: beat.id, narration: beat.narration, entity: beat.entities, selectedAsset: asset?.title, class: exact ? 'EXACT' : 'CONTEXTUAL', confidence: exact ? 'PROVENANCE_PLUS_ENTITY_TITLE_MATCH' : 'PROVENANCE_ONLY_CONTEXTUAL', queries: beat.visualIntent?.queries || [], titleOverlap: overlap.slice(0, 8), distinctiveEntityOverlap };
   });
   const contextualRatio = coverage.filter((item) => item.class === 'CONTEXTUAL').length / Math.max(1, coverage.length);
   const coverageGate = contextualRatio > 0.35 ? { status: 'INTERNAL_REVIEW_REQUIRED', contextualRatio, reason: 'Critical narration intervals remain contextual rather than entity-exact.' } : { status: 'PASS', contextualRatio };
