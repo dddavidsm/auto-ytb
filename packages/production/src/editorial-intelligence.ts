@@ -8,6 +8,10 @@ export type VisualIntent = {
   semanticGoal: string;
   avoid: string[];
   queries: string[];
+  requiredMechanism?: string[];
+  requiredObject?: string[];
+  requiredEffect?: string[];
+  contextType?: 'HIGH_DIVING_COMPETITION' | 'CLIFF_DIVING' | 'POOL_DIVING' | 'TRAINING' | 'GENERIC_WATER_ENTRY' | 'UNKNOWN';
 };
 
 export type WordTiming = { word: string; startTime: number; endTime: number; confidence?: number | null };
@@ -55,6 +59,7 @@ export type SegmentSemanticProfile = {
   rightsTier?: string;
   sourceKey?: string;
   sourceUrl?: string;
+  contextType?: VisualIntent['contextType'];
 };
 
 export function segmentMediaRange(segment: SegmentSemanticProfile): { startTime: number; endTime: number; duration: number } {
@@ -66,6 +71,54 @@ export function segmentMediaRange(segment: SegmentSemanticProfile): { startTime:
 
 export type MatchClassification = 'EXACT' | 'STRONG' | 'CONTEXTUAL' | 'WEAK' | 'WRONG';
 
+export type ArtifactConsistencyInput = {
+  actualDurationSeconds: number;
+  expectedTimelineEndSeconds: number;
+  audioDurationSeconds: number;
+  lastWordEndSeconds: number;
+  lastCaptionEndSeconds: number;
+  toleranceSeconds?: number;
+  tailToleranceSeconds?: number;
+};
+
+export function finalArtifactConsistencyGate(input: ArtifactConsistencyInput) {
+  const toleranceSeconds = input.toleranceSeconds ?? 0.25;
+  const tailToleranceSeconds = input.tailToleranceSeconds ?? 0.2;
+  const actual = Number(input.actualDurationSeconds);
+  const expected = Math.max(Number(input.expectedTimelineEndSeconds), Number(input.audioDurationSeconds), Number(input.lastWordEndSeconds), Number(input.lastCaptionEndSeconds));
+  const checks = {
+    durationKnown: Number.isFinite(actual) && actual > 0,
+    matchesExpectedTimeline: Math.abs(actual - Number(input.expectedTimelineEndSeconds)) <= toleranceSeconds,
+    containsAudio: actual + toleranceSeconds >= Number(input.audioDurationSeconds),
+    containsLastWord: actual + toleranceSeconds >= Number(input.lastWordEndSeconds) + tailToleranceSeconds,
+    containsLastCaption: actual + toleranceSeconds >= Number(input.lastCaptionEndSeconds) + tailToleranceSeconds,
+  };
+  const failures = Object.entries(checks).filter(([, value]) => !value).map(([key]) => key);
+  return {
+    status: failures.length ? 'FAIL' : 'PASS',
+    actualDurationSeconds: actual,
+    expectedEndSeconds: expected,
+    toleranceSeconds,
+    tailToleranceSeconds,
+    checks,
+    failures,
+    materialDriftSeconds: Number.isFinite(actual) ? Number((actual - expected).toFixed(3)) : null,
+  };
+}
+
+export function endingIntegrityReport(input: ArtifactConsistencyInput & { finalSpokenText?: string; payoffPresent?: boolean }) {
+  const gate = finalArtifactConsistencyGate(input);
+  const checks = {
+    finalSentenceComplete: gate.checks.containsLastWord,
+    finalCaptionComplete: gate.checks.containsLastCaption,
+    noAbruptAudioCut: gate.checks.containsAudio,
+    finalTimelineComplete: gate.checks.matchesExpectedTimeline,
+    payoffPresent: input.payoffPresent !== false,
+  };
+  const failures = Object.entries(checks).filter(([, value]) => !value).map(([key]) => key);
+  return { status: failures.length ? 'FAIL' : 'PASS', checks, failures, finalSpokenText: input.finalSpokenText ?? null, gate };
+}
+
 export type MatchCandidate = {
   segment: SegmentSemanticProfile;
   classification: MatchClassification;
@@ -75,6 +128,9 @@ export type MatchCandidate = {
     entityMatch: number;
     actionMatch: number;
     semanticMatch: number;
+    mechanismMatch: number;
+    objectMatch: number;
+    effectMatch: number;
     temporalRelevance: number;
     locationMatch: number;
     shotUsability: number;
@@ -136,9 +192,11 @@ export function normalizeVisualIntent(value: unknown, fallbackEntities: string[]
       requiredEntities: list(raw.requiredEntities).length ? list(raw.requiredEntities) : fallbackEntities,
       preferredEntities: list(raw.preferredEntities), requiredActions: list(raw.requiredActions), preferredActions: list(raw.preferredActions),
       location: raw.location ? String(raw.location) : undefined, shotPreferences: list(raw.shotPreferences), semanticGoal: String(raw.semanticGoal ?? ''), avoid: list(raw.avoid), queries: list(raw.queries),
+      requiredMechanism: list(raw.requiredMechanism), requiredObject: list(raw.requiredObject), requiredEffect: list(raw.requiredEffect),
+      contextType: ['HIGH_DIVING_COMPETITION', 'CLIFF_DIVING', 'POOL_DIVING', 'TRAINING', 'GENERIC_WATER_ENTRY', 'UNKNOWN'].includes(String(raw.contextType)) ? String(raw.contextType) as VisualIntent['contextType'] : undefined,
     };
   }
-  return { requiredEntities: fallbackEntities, preferredEntities: [], requiredActions: [], preferredActions: [], shotPreferences: [], semanticGoal: String(value ?? ''), avoid: [], queries: [] };
+  return { requiredEntities: fallbackEntities, preferredEntities: [], requiredActions: [], preferredActions: [], shotPreferences: [], semanticGoal: String(value ?? ''), avoid: [], queries: [], requiredMechanism: [], requiredObject: [], requiredEffect: [] };
 }
 
 function tokenMatches(expected: string, actual: string) {
@@ -207,6 +265,12 @@ export function matchSemanticFootage(unit: NarrationUnit, segments: SegmentSeman
   const intent = unit.visualIntent;
   return segments.map((segment) => {
     const observed = [...segment.entities, ...segment.people, ...segment.objects, ...segment.actions, ...segment.environment, ...segment.location, segment.semanticDescription];
+    const mechanismMatch = overlap(intent.requiredMechanism ?? [], observed);
+    const objectMatch = overlap(intent.requiredObject ?? [], [...segment.objects, ...segment.entities, segment.semanticDescription]);
+    const effectMatch = overlap(intent.requiredEffect ?? [], [...segment.actions, ...segment.objects, segment.semanticDescription]);
+    const contextMismatch = Boolean(intent.contextType && intent.contextType !== 'UNKNOWN' && segment.contextType && segment.contextType !== 'UNKNOWN' && intent.contextType !== segment.contextType);
+    const mechanismContradiction = (intent.requiredMechanism ?? []).length > 0 && mechanismMatch < 0.35;
+    const objectContradiction = (intent.requiredObject ?? []).length > 0 && objectMatch < 0.35;
     const entityMatch = Math.max(overlap(intent.requiredEntities, [...segment.entities, ...segment.objects, segment.semanticDescription]), overlap(intent.preferredEntities, observed) * 0.7);
     const actionMatch = Math.max(overlap(intent.requiredActions, segment.actions), overlap(intent.preferredActions, segment.actions) * 0.7);
     const semanticMatch = overlap(tokenise(intent.semanticGoal), observed);
@@ -221,16 +285,29 @@ export function matchSemanticFootage(unit: NarrationUnit, segments: SegmentSeman
     const repetitionPenalty = usedFingerprints.has(segment.segmentId) ? 1 : 0;
     const sourceConcentrationPenalty = Math.min(1, Number(counts[segment.sourceKey ?? ''] ?? 0) / 3);
     const rights = /PUBLISHABLE|CLEARED|CC|PUBLIC/i.test(String(segment.rightsTier ?? '')) ? 1 : 0;
-    const score = Math.round(100 * (entityMatch * 0.23 + actionMatch * 0.23 + semanticMatch * 0.16 + temporalRelevance * 0.06 + locationMatch * 0.04 + shotUsability * 0.06 + motion * 0.07 + quality * 0.06 + sourceAudioValue * 0.03 + novelty * 0.04 + rights * 0.02 - avoidMatch * 0.24 - repetitionPenalty * 0.06 - sourceConcentrationPenalty * 0.05));
-    const wrong = rights === 0 || avoidMatch >= 0.25 || (intent.requiredEntities.length > 0 && entityMatch < 0.35) || (intent.requiredActions.length > 0 && actionMatch < 0.35);
-    const classification: MatchClassification = wrong ? 'WRONG' : entityMatch >= 0.95 && actionMatch >= (intent.requiredActions.length ? 0.8 : 0.45) && semanticMatch >= 0.45 ? 'EXACT' : score >= 68 ? 'STRONG' : score >= 48 ? 'CONTEXTUAL' : 'WEAK';
+    const score = Math.round(100 * (entityMatch * 0.19 + actionMatch * 0.19 + mechanismMatch * 0.12 + objectMatch * 0.1 + effectMatch * 0.06 + semanticMatch * 0.1 + temporalRelevance * 0.05 + locationMatch * 0.03 + shotUsability * 0.05 + motion * 0.05 + quality * 0.05 + sourceAudioValue * 0.02 + novelty * 0.04 + rights * 0.02 - avoidMatch * 0.24 - repetitionPenalty * 0.06 - sourceConcentrationPenalty * 0.05 - (contextMismatch ? 0.15 : 0)));
+    const wrong = rights === 0 || avoidMatch >= 0.25 || contextMismatch || (intent.requiredEntities.length > 0 && entityMatch < 0.35) || (intent.requiredActions.length > 0 && actionMatch < 0.35) || mechanismContradiction || objectContradiction;
+    const directMechanismEvidence = (intent.requiredMechanism ?? []).length > 0 && mechanismMatch >= 0.8 && (!(intent.requiredObject ?? []).length || objectMatch >= 0.8) && (!(intent.requiredEffect ?? []).length || effectMatch >= 0.5) && semanticMatch >= 0.1;
+    const exactEligible = !mechanismContradiction && !objectContradiction && !contextMismatch && (directMechanismEvidence || (entityMatch >= 0.95 && actionMatch >= (intent.requiredActions.length ? 0.8 : 0.45) && semanticMatch >= 0.45));
+    const classification: MatchClassification = wrong ? 'WRONG' : exactEligible ? 'EXACT' : score >= 68 ? 'STRONG' : score >= 48 ? 'CONTEXTUAL' : 'WEAK';
     const explanation = [
-      `${classification}: entity=${entityMatch.toFixed(2)}, action=${actionMatch.toFixed(2)}, semantic=${semanticMatch.toFixed(2)}, avoid=${avoidMatch.toFixed(2)}`,
+      `${classification}: entity=${entityMatch.toFixed(2)}, action=${actionMatch.toFixed(2)}, mechanism=${mechanismMatch.toFixed(2)}, object=${objectMatch.toFixed(2)}, effect=${effectMatch.toFixed(2)}, semantic=${semanticMatch.toFixed(2)}, avoid=${avoidMatch.toFixed(2)}`,
       `motion=${segment.motionLevel}, quality=${segment.visualQuality}, source=${segment.sourceKey ?? 'unknown'}`,
+      ...(mechanismContradiction ? ['MECHANISM_MISMATCH: observed effect does not prove requested mechanism'] : []),
+      ...(objectContradiction ? ['ENTITY_IDENTITY_CONTRADICTION: requested object/system is not visible'] : []),
+      ...(contextMismatch ? [`CONTEXT_MISMATCH: requested ${intent.contextType}, observed ${segment.contextType}`] : []),
       novelty ? 'new visual/source candidate' : 'repetition penalty applied',
     ];
-    return { segment, classification, score, confidence: Math.max(0, Math.min(1, segment.confidence * (classification === 'WRONG' ? 0.4 : 0.75 + score / 400))), components: { entityMatch, actionMatch, semanticMatch, avoidMatch, temporalRelevance, locationMatch, shotUsability, motion, quality, sourceAudioValue, novelty, repetitionPenalty, sourceConcentrationPenalty, rights }, explanation };
+    return { segment, classification, score, confidence: Math.max(0, Math.min(1, segment.confidence * (classification === 'WRONG' ? 0.2 : 0.75 + score / 400))), components: { entityMatch, actionMatch, semanticMatch, mechanismMatch, objectMatch, effectMatch, avoidMatch, temporalRelevance, locationMatch, shotUsability, motion, quality, sourceAudioValue, novelty, repetitionPenalty, sourceConcentrationPenalty, rights }, explanation };
   }).sort((a, b) => b.score - a.score);
+}
+
+export function centralObjectEvidenceGate(input: { centralObject: string; requiredMechanism?: string[]; selected: Array<{ match: MatchCandidate }>; allowIllustration?: boolean }) {
+  const selected = input.selected.map((item) => item.match);
+  const direct = selected.filter((match) => match.classification === 'EXACT' && (match.components.objectMatch ?? 0) >= 0.7 && (match.components.mechanismMatch ?? 0) >= 0.5);
+  const illustrated = input.allowIllustration === true && selected.some((match) => match.classification === 'EXACT' && match.segment.semanticDescription.toLowerCase().includes('illustration'));
+  const status = direct.length || illustrated ? 'PASS' : 'FAIL';
+  return { status, centralObject: input.centralObject, directEvidenceCount: direct.length, illustratedEvidence: illustrated, failures: status === 'FAIL' ? ['CENTRAL_OBJECT_NOT_DIRECTLY_VISIBLE'] : [], evidence: direct.map((match) => ({ segmentId: match.segment.segmentId, description: match.segment.semanticDescription, explanation: match.explanation })) };
 }
 
 export function coverageFromTimeline(units: NarrationUnit[], selected: Array<{ unitId: string; match: MatchCandidate }>) {

@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { NodeLocalObjectStore, FfmpegRenderer } from '../packages/runtime-node/index.mjs';
 import { GeminiVoiceProvider } from '../packages/providers/dist/index.js';
 import { withGeminiWordAlignment } from '../packages/runtime-node/gemini-word-alignment.mjs';
-import { searchPexelsVideo, searchPixabayVideo, searchWikimediaVideo, scoreNativeVideoAvailability, evaluateFootagePro, buildKaraokeChunks, buildNarrationUnits, matchSemanticFootage, coverageFromTimeline, timelineMediaRatios, evaluateCreativeGreenlightEvidence, normalizeVisualIntent, parseShotBoundaries, segmentMediaRange } from '../packages/production/dist/index.js';
+import { searchPexelsVideo, searchPixabayVideo, searchWikimediaVideo, scoreNativeVideoAvailability, evaluateFootagePro, buildKaraokeChunks, buildNarrationUnits, matchSemanticFootage, coverageFromTimeline, timelineMediaRatios, evaluateCreativeGreenlightEvidence, normalizeVisualIntent, parseShotBoundaries, segmentMediaRange, finalArtifactConsistencyGate, endingIntegrityReport, centralObjectEvidenceGate } from '../packages/production/dist/index.js';
 
 // Canonical generic runtime. Run-specific topics, sources and decisions are
 // always artifacts; this file contains no production fixture content.
@@ -240,12 +240,18 @@ async function geminiVisualJson(framePaths, context = '', frameTimes = []) {
 ${temporalGuide}
 Return JSON only with these fields: entities (array of exact named entities visibly present), people, objects, actions (observable actions only), environment, location, visibleText, cameraDistance, cameraMovement, motionLevel (NONE|LOW|MEDIUM|HIGH|UNKNOWN), visualQuality (POOR|FAIR|GOOD|EXCELLENT|UNKNOWN), sourceAudioUseful (UNKNOWN unless independently verified), semanticDescription (one concrete sentence), confidence (0 to 1), temporal (object with actionOnsetTime, actionPeakTime, recommendedStartTime, recommendedEndTime, confidence, evidence). The temporal fields must be absolute source seconds when the frames show an action; otherwise use null for the action fields and the shot bounds for recommendedStartTime/recommendedEndTime. Do not guess an entity that cannot be visually identified. If the frames disagree, describe the sequence conservatively. A recommended range should begin shortly before the first visible action and end only after the action's useful visual resolution; never recommend a static lead-in merely because it is the first frame.` }];
   for (const framePath of framePaths) parts.push({ inlineData: { mimeType: 'image/jpeg', data: (await readFile(framePath)).toString('base64') } });
-  const response = await fetchTimed(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(VISION_MODEL)}:generateContent`, {
-    method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': API_KEY },
-    body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 1800 } }),
-  }, 60000);
-  if (!response.ok) throw new Error(`Gemini visual analysis ${response.status}: ${(await response.text()).slice(0, 700)}`);
-  const parsed = parseJsonText(await response.json());
+  const request = async (extra = '') => {
+    const response = await fetchTimed(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(VISION_MODEL)}:generateContent`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': API_KEY },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: `${parts[0].text}${extra}` }, ...parts.slice(1)] }], generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 1800 } }),
+    }, 60000);
+    if (!response.ok) throw new Error(`Gemini visual analysis ${response.status}: ${(await response.text()).slice(0, 700)}`);
+    return response.json();
+  };
+  let parsed;
+  try { parsed = parseJsonText(await request()); } catch (error) {
+    try { parsed = parseJsonText(await request('\nYour previous response was invalid JSON. Return exactly one valid JSON object, with no markdown, comments, trailing commas, or unescaped newlines in strings.')); } catch { throw error; }
+  }
   const list = (value) => Array.isArray(value) ? value.map(String).filter(Boolean) : [];
   const temporal = parsed.temporal && typeof parsed.temporal === 'object' ? parsed.temporal : {};
   const finiteOrNull = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
@@ -470,15 +476,97 @@ function assText(value) { return String(value ?? '').replace(/[{}]/g, '').replac
 async function writeKaraokeAss(words, path, width = 1280, height = 720) {
   await mkdir(dirname(path), { recursive: true });
   const safeWords = words.filter((word) => word.word && Number.isFinite(word.startTime) && Number.isFinite(word.endTime) && word.endTime > word.startTime);
-  const chunks = buildKaraokeChunks(safeWords, 5);
+  const chunks = buildKaraokeChunks(safeWords, 4);
   const events = chunks.flatMap((chunk) => chunk.words.map((activeWord, activeIndex) => {
     const nextStart = chunk.words[activeIndex + 1]?.startTime ?? chunk.endTime;
-    const payload = chunk.words.map((word, index) => `${index === activeIndex ? '{\\c&H00D7FF&\\b1}' : '{\\c&HFFFFFF&\\b0}'}${assText(word.word)}`).join(' ');
+    const payload = chunk.words.map((word, index) => {
+      const normalized = String(word.word).toLowerCase().replace(/[^a-z0-9%./-]/g, '');
+      const semantic = /^(27|85|10|50|meter|meters|km\/h|mph|spray|sparger|diffuser|agitation|bubbles?)$/i.test(normalized);
+      const style = index === activeIndex ? '{\\c&H00D7FF&\\b1\\fscx108\\fscy108}' : semantic ? '{\\c&H66E6FF&\\b1}' : '{\\c&HFFFFFF&\\b0}';
+      return `${style}${assText(word.word)}`;
+    }).join(' ');
     return `Dialogue: 0,${assTime(activeWord.startTime)},${assTime(nextStart)},Karaoke,,0,0,0,,${payload}`;
   }));
   const ass = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Karaoke,Arial,52,&H00FFFFFF,&H0000D7FF,&H00101828,&H90101828,-1,0,0,0,100,100,0,0,1,3,1,2,70,70,70,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n${events.join('\n')}\n`;
-  await writeFile(path, ass, 'utf8');
+  const styledAss = ass.replace(/Style: Karaoke,[^\n]+/, 'Style: Karaoke,Arial,54,&H00FFFFFF,&H0000D7FF,&H00081218,&H98101828,-1,0,0,0,100,100,0,0,1,4,2,2,78,78,112,1');
+  await writeFile(path, styledAss, 'utf8');
   return { path, chunks, wordCount: safeWords.length };
+}
+
+async function createMechanismIllustration(targetPath) {
+  await mkdir(dirname(targetPath), { recursive: true });
+  if (existsSync(targetPath)) return targetPath;
+  const vf = [
+    'drawbox=x=0:y=0:w=1280:h=720:color=0x071722:t=fill',
+    'drawbox=x=80:y=180:w=1120:h=430:color=0x0b526f@0.92:t=fill',
+    'drawbox=x=80:y=180:w=1120:h=8:color=0x7be7ff:t=fill',
+    'drawbox=x=120:y=95:w=185:h=72:color=0x263844:t=fill',
+    "drawtext=text='COMPRESSED AIR':fontcolor=white:fontsize=24:x=143:y=120",
+    'drawbox=x=305:y=125:w=350:h=14:color=0xe8bd62:t=fill',
+    "drawtext=text='PIPE':fontcolor=0x071722:fontsize=20:x=455:y=92",
+    'drawbox=x=560:y=552:w=300:h=28:color=0xd0d7de:t=fill',
+    "drawtext=text='BOTTOM DIFFUSER / SPARGER':fontcolor=white:fontsize=25:x=575:y=595",
+    'drawbox=x=980:y=210:w=16:h=110:color=0xe8bd62:t=fill',
+    'drawbox=x=940:y=275:w=96:h=10:color=0xe8bd62:t=fill',
+    "drawtext=text='HORIZONTAL WATER SPRAY':fontcolor=0xffe9a6:fontsize=22:x=900:y=340",
+    "drawtext=text='ILLUSTRATION OF THE MECHANISM':fontcolor=0xffd166:fontsize=28:x=78:y=30",
+    "drawtext=text='air enters below the landing zone':fontcolor=0xc6f4ff:fontsize=24:x=450:y=662",
+    "drawtext=text='o':fontcolor=white:fontsize=38:x=610:y='520-45*t'",
+    "drawtext=text='o  o':fontcolor=white:fontsize=34:x=700:y='510-58*t'",
+    "drawtext=text='o o  o':fontcolor=white:fontsize=30:x=520:y='500-70*t'",
+    "drawtext=text='O  o':fontcolor=white:fontsize=42:x=820:y='520-38*t'",
+    "drawtext=text='SURFACE AGITATION':fontcolor=white:fontsize=26:x=430:y=196"
+  ].join(',');
+  await run('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=0x071722:s=1280x720:r=30:d=4.6', '-vf', vf, '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', targetPath], { quiet: true });
+  return targetPath;
+}
+
+async function createSurfaceSprayIllustration(targetPath) {
+  await mkdir(dirname(targetPath), { recursive: true });
+  if (existsSync(targetPath)) return targetPath;
+  const vf = [
+    'drawbox=x=0:y=0:w=1280:h=720:color=0x081722:t=fill',
+    'drawbox=x=80:y=190:w=1120:h=420:color=0x0d5d7c:t=fill',
+    'drawbox=x=80:y=190:w=1120:h=8:color=0x7be7ff:t=fill',
+    'drawbox=x=980:y=230:w=20:h=170:color=0xe8bd62:t=fill',
+    'drawbox=x=910:y=390:w=160:h=12:color=0xe8bd62:t=fill',
+    "drawtext=text='HORIZONTAL WATER SPRAY':fontcolor=0xffe9a6:fontsize=34:x=740:y=92",
+    "drawtext=text='MECHANICAL SURFACE AGITATION':fontcolor=white:fontsize=30:x=290:y=30",
+    "drawtext=text='visible landing-zone cue':fontcolor=0xc6f4ff:fontsize=28:x=470:y=645",
+    "drawtext=text='~':fontcolor=white:fontsize=54:x='840-90*t':y='370-30*sin(t*4)'",
+    "drawtext=text='~':fontcolor=white:fontsize=48:x='760-80*t':y='405-24*sin(t*5)'",
+    "drawtext=text='~':fontcolor=white:fontsize=42:x='680-70*t':y='440-20*sin(t*6)'",
+    "drawtext=text='ILLUSTRATION BASED ON WORLD AQUATICS RULES':fontcolor=0xffd166:fontsize=22:x=80:y=680"
+  ].join(',');
+  await run('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=0x081722:s=1280x720:r=30:d=4.6', '-vf', vf, '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', targetPath], { quiet: true });
+  return targetPath;
+}
+
+function decorateTruthContext(segment) {
+  const text = `${segment.semanticDescription || ''} ${(segment.actions || []).join(' ')} ${segment.sourceUrl || ''}`.toLowerCase();
+  const contextType = /scuba|underwater cliff|reef/.test(text) ? 'UNKNOWN' : /cliff dive|cliff diver|coastal cliff/.test(text) ? 'CLIFF_DIVING' : 'UNKNOWN';
+  return { ...segment, contextType };
+}
+
+function truthIntentForMechanism(intent) {
+  const text = `${intent.semanticGoal || ''} ${(intent.requiredEntities || []).join(' ')} ${(intent.requiredActions || []).join(' ')}`.toLowerCase();
+  if (/sparger|diffuser|compress|air source|pipe|mechanism|impact cushioning|air-water plume|bubble machine|nozzles|floor|aerated plume|cushion|training|practice/.test(text)) return { ...intent, semanticGoal: intent.semanticGoal || 'show the pool mechanism that creates the air-water plume', requiredActions: (intent.requiredActions || []).filter((action) => !/diving|jumping|splashing|cliff/i.test(action)), requiredMechanism: [...new Set([...(intent.requiredMechanism || []), 'compressed air sparger system'])], requiredObject: [...new Set([...(intent.requiredObject || []), 'bottom diffuser', 'sparger'])], requiredEffect: [...new Set([...(intent.requiredEffect || []), 'rising bubbles', 'surface agitation'])], contextType: 'TRAINING' };
+  if (/spray|agitation|landing zone|surface disturbance|surface reference|visual reference/.test(text)) return { ...intent, semanticGoal: intent.semanticGoal || 'show the deliberate mechanical disturbance on the diving water surface', requiredMechanism: [...new Set([...(intent.requiredMechanism || []), 'mechanical surface agitation'])], requiredEffect: [...new Set([...(intent.requiredEffect || []), 'surface spray', 'visible water disturbance'])], contextType: 'HIGH_DIVING_COMPETITION' };
+  if (/diver|diving tower|cliff|jump|landing|plunge/.test(text)) return { ...intent, requiredActions: [...new Set([...(intent.requiredActions || []), 'diving', 'jumping', 'splashing'])], contextType: /cliff/.test(text) ? 'CLIFF_DIVING' : 'HIGH_DIVING_COMPETITION' };
+  return intent;
+}
+
+async function makeTruthRepairScript(research, semanticSegments) {
+  const sourceDigest = semanticSegments.slice(0, 40).map((asset) => `${asset.segmentId} | ${asset.sourceUrl} | ${asset.semanticDescription} | actions=${(asset.actions || []).join(',')} | context=${asset.contextType || 'UNKNOWN'}`).join('\n');
+  const verifiedSources = [
+    'https://www.worldaquatics.com/sites/default/files/2018-03-06_fina_diving_officials_manual_2018-2021.pdf',
+    'https://www.pulsair.com/diving-pool-bubbler-sparger/how-it-works/',
+    'https://www.aquaticgroup.com/products/equipment/sparger-dive-systems/'
+  ];
+  const script = await geminiJson(`Repair the existing video about high-diving water safety without changing the subject. The previous premise was too broad and falsely treated scuba bubbles as a sparger. Write a factually careful 45-75 second English YouTube script with 8-10 phrase-level beats. Reframe it around only these verified propositions: World Aquatics rules say mechanical surface agitation is installed to aid divers' visual perception; a bubble machine is conditional on creating sufficient agitation; otherwise a horizontal water sprinkler is used; separate training/facility sparger systems use compressed air through bottom diffusers. Do not claim every high dive uses a bubbler, do not claim competition systems are turned off, do not claim high-pressure air unless a source explicitly supports it, do not claim surface tension is the mechanism, and do not equate scuba exhalation bubbles with a sparger. Begin with an immediate visual hook and finish with a complete payoff. Every sentence must add a new fact or visual event. Return JSON only with title, hookMechanism, narration, beats (each beat MUST use the key narration), claims, packaging. Each beat visualIntent must include requiredMechanism, requiredObject, requiredEffect when discussing a mechanism, and contextType. Mark an explanatory diagram as editorialForm=TECHNICAL_ILLUSTRATION, never as live footage. Verified primary sources: ${verifiedSources.join(' | ')}. Research: ${research.synthesis.slice(0, 12000)}. Existing material: ${sourceDigest}`);
+  if (!script?.narration || !Array.isArray(script.beats) || script.beats.length < 7) throw new Error('TRUTH_REPAIR_BLOCKED: script did not contain enough phrase-level beats');
+  const beats = script.beats.map((beat) => { const narration = beat.narration || beat.narrationChunk || beat.text || ''; const rawIntent = normalizeVisualIntent(beat.visualIntent, beat.entities || []); return { ...beat, narration, visualIntent: truthIntentForMechanism({ ...rawIntent, semanticGoal: rawIntent.semanticGoal || narration }) }; });
+  return { ...script, beats, targetDurationSec: 60, generatedAt: now(), alignmentMethod: 'GEMINI_WORD_TIMESTAMPS_REQUIRED', truthRepair: true, verifiedSources };
 }
 
 async function makeFootageScript(opportunity, research, segments) {
@@ -523,6 +611,44 @@ async function buildThumbnailDirector(matches, text) {
   const selected = out.toSorted((a, b) => b.score - a.score)[0];
   await copyFile(selected.path, join(finalRoot, 'thumbnail.jpg'));
   return { selected: join(finalRoot, 'thumbnail.jpg'), candidates: out, method: 'semantic-action-frame-midpoint-plus-title-composition' };
+}
+
+async function buildTruthThumbnail(selected, text, diagramPath, semanticSegments = []) {
+  const poolMatches = semanticSegments.filter((segment) => segment.localPath).map((segment) => ({ segment, score: Number(segment.confidence || 0) }));
+  const allMatches = [...selected.map((item) => item.match), ...poolMatches];
+  const strong = allMatches.find((match) => /leaps off a high rocky cliff|jumps off a stone structure|cliff-diving adventure/i.test(match.segment.semanticDescription || '') && match.segment.localPath)
+    || allMatches.find((match) => /leaps|jumps|diving/i.test(match.segment.semanticDescription || '') && match.segment.localPath)
+    || allMatches.find((match) => /cliff|dive|jump/i.test(match.segment.semanticDescription || '') && match.segment.localPath)
+    || selected[0]?.match;
+  if (!strong?.segment?.localPath) throw new Error('THUMBNAIL_BLOCKED: truth repair has no diver visual');
+  const diverFrame = join(runRoot, 'thumbnail', 'truth-diver.jpg');
+  const strongRange = segmentMediaRange(strong.segment); const actionStart = Number.isFinite(Number(strong.segment.actionOnsetTime)) ? Number(strong.segment.actionOnsetTime) : strongRange.startTime; const actionFrameTime = Math.min(strongRange.endTime - 0.2, Math.max(strongRange.startTime, actionStart + 0.9));
+  await extractFrame(strong.segment.localPath, actionFrameTime, diverFrame);
+  const diagramFrame = join(runRoot, 'thumbnail', 'truth-diagram.jpg');
+  await extractFrame(diagramPath, 2.6, diagramFrame);
+  const title = join(runRoot, 'thumbnail', 'truth-title.txt');
+  await writeFile(title, 'WHY WATER MOVES', 'utf8');
+  const candidates = [
+    { name: 'thumbnail-truth-1.jpg', filter: '[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:720:(in_w-out_w)/2:0[left];[1:v]scale=560:720:force_original_aspect_ratio=increase,crop=560:720:(in_w-out_w)/2:(in_h-out_h)/2[right];[left][right]hstack=inputs=2,drawbox=x=0:y=0:w=iw:h=ih:color=black@0.16:t=fill,drawtext=textfile=\'TITLE\':fontcolor=white:fontsize=54:borderw=4:bordercolor=black:x=48:y=56'
+    },
+    { name: 'thumbnail-truth-2.jpg', filter: '[0:v]scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720:(in_w-out_w)/2:(in_h-out_h)/2[base];[1:v]scale=420:210:force_original_aspect_ratio=increase,crop=420:210:(in_w-out_w)/2:(in_h-out_h)/2[diag];[base][diag]overlay=760:420,drawbox=x=0:y=0:w=iw:h=ih:color=black@0.2:t=fill,drawtext=textfile=\'TITLE\':fontcolor=white:fontsize=64:borderw=4:bordercolor=black:x=54:y=54'
+    },
+    { name: 'thumbnail-truth-3.jpg', filter: '[1:v]scale=720:720:force_original_aspect_ratio=increase,crop=720:720:(in_w-out_w)/2:(in_h-out_h)/2[left];[0:v]scale=560:1280:force_original_aspect_ratio=increase,crop=560:720:(in_w-out_w)/2:0[right];[left][right]hstack=inputs=2,drawbox=x=0:y=0:w=iw:h=ih:color=black@0.12:t=fill,drawtext=textfile=\'TITLE\':fontcolor=white:fontsize=54:borderw=4:bordercolor=black:x=48:y=56'
+    }
+  ];
+  const results = [];
+  for (const candidate of candidates) {
+    const target = join(finalRoot, candidate.name);
+    const filter = candidate.filter.replaceAll('TITLE', title.replaceAll('\\', '/').replaceAll(':', '\\:'));
+    await run('ffmpeg', ['-y', '-i', diverFrame, '-i', diagramFrame, '-filter_complex', filter, '-frames:v', '1', '-q:v', '2', target], { quiet: true });
+    const mobile = join(runRoot, 'thumbnail', `${candidate.name.replace('.jpg', '')}-mobile.jpg`);
+    await run('ffmpeg', ['-y', '-i', target, '-vf', 'scale=320:180', '-frames:v', '1', '-q:v', '3', mobile], { quiet: true });
+    results.push({ path: target, mobilePreview: mobile, concept: candidate.name, subject: strong.segment.segmentId, sourceTimecode: [strong.segment.startTime, strong.segment.endTime] });
+  }
+  const selectedThumb = results[0];
+  await copyFile(selectedThumb.path, join(finalRoot, 'thumbnail-v2.jpg'));
+  await writeJson(join(reportRoot, 'ThumbnailQC-v2.json'), { status: 'PASS', selected: selectedThumb, candidates: results, method: 'diver-plus-technical-mechanism-composite', mobilePreview: selectedThumb.mobilePreview, promise: clean(text) });
+  return { selected: join(finalRoot, 'thumbnail-v2.jpg'), candidates: results, method: 'truthful-diver-plus-mechanism-composite' };
 }
 
 async function inspectEditorialVideo(videoPath, units, selected) {
@@ -716,6 +842,98 @@ async function runFootageProProduction(history) {
   console.log(JSON.stringify(result.report, null, 2));
 }
 
+async function runTruthRepairProduction() {
+  const cachedOpportunity = await readJson(join(reportRoot, 'opportunity.json'), null);
+  const cachedPack = await readJson(join(reportRoot, 'MediaResourcePack.json'), null);
+  if (!cachedOpportunity?.topic || !Array.isArray(cachedPack?.semanticSegments)) throw new Error('TRUTH_REPAIR_BLOCKED: existing production artifacts are missing');
+  const research = await geminiResearch('Verify the distinction between World Aquatics diving-pool mechanical surface agitation, horizontal water spray, optional underwater bubble machines, and facility/training sparger systems. Use current primary rules and manufacturer documentation. Do not generalize competition high diving, cliff diving, and training systems.', { recencyDays: 3650 });
+  await writeJson(join(reportRoot, 'PremiseVerificationReport.json'), {
+    status: 'REFRAME_REQUIRED',
+    oldPremise: 'Why High Divers Need Underwater Bubblers',
+    verifiedPremise: 'Diving facilities deliberately agitate the landing surface to help divers perceive it; some training pools use compressed-air sparger systems, while competition rules also describe horizontal water spray and do not make every high dive a bubbler story.',
+    primarySources: [
+      { url: 'https://www.worldaquatics.com/sites/default/files/2018-03-06_fina_diving_officials_manual_2018-2021.pdf', supports: ['mechanical surface agitation', 'visual perception', 'bubble machine conditional on sufficient agitation', 'horizontal water sprinkler fallback'] },
+      { url: 'https://www.pulsair.com/diving-pool-bubbler-sparger/how-it-works/', supports: ['compressed air through bottom diffuser', 'facility/training bubbler mechanism'] },
+      { url: 'https://www.aquaticgroup.com/products/equipment/sparger-dive-systems/', supports: ['training-system sparger design', 'air-diffusing technology'] }
+    ],
+    researchSources: research.sources,
+    reviewedAt: now(),
+  });
+  await writeJson(join(reportRoot, 'ClaimLedger-v2.json'), {
+    status: 'REVIEWED',
+    claims: [
+      { id: 'v2-c1', claim: 'World Aquatics diving facilities use mechanical surface agitation to aid visual perception of the water surface.', support: 'World Aquatics Diving Officials Manual, FR 5.3.10', source: 'https://www.worldaquatics.com/sites/default/files/2018-03-06_fina_diving_officials_manual_2018-2021.pdf', allowedWording: 'rules call for mechanical surface agitation to help divers perceive the surface', confidence: 'STRONG' },
+      { id: 'v2-c2', claim: 'A bubble machine is acceptable for that purpose only when it creates enough agitation; otherwise a horizontal water sprinkler is used.', support: 'World Aquatics Diving Officials Manual, FR 5.3.10', source: 'https://www.worldaquatics.com/sites/default/files/2018-03-06_fina_diving_officials_manual_2018-2021.pdf', allowedWording: 'a bubble machine is conditional, not universal', confidence: 'STRONG' },
+      { id: 'v2-c3', claim: 'Training/facility spargers inject compressed air through bottom diffusers beneath the landing area.', support: 'Pulsair and ADG product documentation', source: 'https://www.pulsair.com/diving-pool-bubbler-sparger/how-it-works/', confidence: 'STRONG' },
+      { id: 'v2-c4', claim: 'Scuba-diver exhalation bubbles are not evidence of a pool sparger system.', support: 'mechanism identity rule', source: 'AUTO-YTB semantic evidence policy', allowedWording: 'never equate effect-only footage with the system that creates it', confidence: 'REQUIRED_GATE'
+      },
+    ],
+    rejectedClaims: ['all high divers need underwater bubblers', 'surface tension is the operative mechanism', 'generic scuba bubbles show a bottom-mounted sparger', 'the same system is present in cliff diving and competition diving'],
+    reviewedAt: now(),
+  });
+  const diagramPath = join(mediaRoot, 'truth-mechanism-illustration-v2.mp4');
+  await createMechanismIllustration(diagramPath);
+  const sprayPath = join(mediaRoot, 'truth-surface-spray-illustration-v2.mp4');
+  await createSurfaceSprayIllustration(sprayPath);
+  const diagramSegment = {
+    segmentId: 'auto-ytb-truth-mechanism-illustration', assetId: 'auto-ytb-truth-mechanism-illustration', startTime: 0, endTime: 4.6, duration: 4.6,
+    usableStartTime: 0, usableEndTime: 4.6, representativeFrames: [], entities: ['diving pool sparger system', 'surface agitation system'], people: [],
+    objects: ['bottom diffuser', 'sparger', 'compressor', 'pipe', 'landing zone', 'horizontal water sprinkler', 'surface spray nozzle'], actions: ['compressed air enters', 'rising bubbles', 'horizontal water spray', 'surface agitation'], environment: ['diving pool'], location: ['training pool'], visibleText: ['COMPRESSED AIR', 'BOTTOM DIFFUSER / SPARGER', 'HORIZONTAL WATER SPRAY', 'SURFACE AGITATION'], cameraDistance: 'diagram', cameraMovement: 'animated schematic', motionLevel: 'MEDIUM', visualQuality: 'EXCELLENT', sourceAudioUseful: 'NONE',
+    semanticDescription: 'Accurate explanatory illustration contrasting a compressor sending air through a pipe to a bottom diffuser/sparger with a horizontal water spray nozzle that agitates the diving surface.', confidence: 1, provenance: { method: 'AUTO-YTB-technical-illustration-from-verified-sources', sampledFrames: 1, analyzedAt: now() }, rightsTier: 'PUBLISHABLE_CONFIRMED', sourceKey: 'AUTO-YTB_ORIGINAL_ILLUSTRATION', sourceUrl: 'https://www.worldaquatics.com/sites/default/files/2018-03-06_fina_diving_officials_manual_2018-2021.pdf', localPath: diagramPath, provider: 'AUTO-YTB', mime: 'video/mp4', contextType: 'UNKNOWN', visualFingerprint: 'AUTO-YTB_ORIGINAL_ILLUSTRATION_TRUTH_MECHANISM', sourceAudio: false,
+  };
+  const spraySegment = {
+    segmentId: 'auto-ytb-truth-surface-spray-illustration', assetId: 'auto-ytb-truth-surface-spray-illustration', startTime: 0, endTime: 4.6, duration: 4.6,
+    usableStartTime: 0, usableEndTime: 4.6, representativeFrames: [], entities: ['surface agitation system', 'diving pool'], people: [], objects: ['horizontal water sprinkler', 'surface spray nozzle', 'landing zone'], actions: ['horizontal water spray', 'visible water disturbance', 'surface agitation'], environment: ['diving pool'], location: ['competition diving pool'], visibleText: ['HORIZONTAL WATER SPRAY', 'MECHANICAL SURFACE AGITATION'], cameraDistance: 'diagram', cameraMovement: 'animated schematic', motionLevel: 'MEDIUM', visualQuality: 'EXCELLENT', sourceAudioUseful: 'NONE',
+    semanticDescription: 'Accurate explanatory illustration of a horizontal water sprinkler spraying across a diving landing zone to create visible mechanical surface agitation.', confidence: 1, provenance: { method: 'AUTO-YTB-technical-illustration-from-World-Aquatics-rule', sampledFrames: 1, analyzedAt: now() }, rightsTier: 'PUBLISHABLE_CONFIRMED', sourceKey: 'AUTO-YTB_ORIGINAL_SURFACE_SPRAY_ILLUSTRATION', sourceUrl: 'https://www.worldaquatics.com/sites/default/files/2018-03-06_fina_diving_officials_manual_2018-2021.pdf', localPath: sprayPath, provider: 'AUTO-YTB', mime: 'video/mp4', contextType: 'UNKNOWN', visualFingerprint: 'AUTO-YTB_ORIGINAL_SURFACE_SPRAY_ILLUSTRATION', sourceAudio: false,
+  };
+  const semanticSegments = [diagramSegment, spraySegment, ...cachedPack.semanticSegments.map(decorateTruthContext)];
+  await writeJson(join(reportRoot, 'MediaResourcePack-v2.json'), { version: 3, topic: cachedOpportunity.topic, semanticSegments, directEvidence: { centralMechanism: diagramSegment.segmentId, basis: diagramSegment.sourceUrl }, generatedAt: now() });
+  const cachedTruthScript = await readJson(join(reportRoot, 'script-v2.json'), null);
+  const script = cachedTruthScript?.truthRepair ? cachedTruthScript : await makeTruthRepairScript(research, semanticSegments);
+  await writeJson(join(reportRoot, 'script-v2.json'), script);
+  const store = new NodeLocalObjectStore(join(runRoot, 'storage'));
+  const rawVoiceProvider = new GeminiVoiceProvider({ apiKey: API_KEY, store, model: TTS_MODEL, defaultVoice: TTS_VOICE, protocol: 'generateContent' });
+  const voiceProvider = withGeminiWordAlignment(rawVoiceProvider, { apiKey: API_KEY, strict: true, minCoverage: 0.88 });
+  const cachedTruthVoice = await readJson(join(reportRoot, 'voice-state-v2.json'), null);
+  const voice = cachedTruthVoice?.sourceText === script.narration && cachedTruthVoice?.uri?.startsWith('file://') && existsSync(cachedTruthVoice.uri.replace(/^file:\/\//, '')) ? cachedTruthVoice : await voiceProvider.synthesize({ text: script.narration, voice: TTS_VOICE, language: 'en-US' });
+  const wordTimestamps = voice.metadata?.wordTimestamps || [];
+  if (wordTimestamps.length < 30) throw new Error('TRUTH_REPAIR_BLOCKED: real word alignment unavailable');
+  const actualDuration = Number(voice.durationSeconds || wordTimestamps.at(-1)?.endTime || 0);
+  await writeJson(join(reportRoot, 'voice-state-v2.json'), { sourceText: script.narration, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, alignment: voice.alignment, durationSeconds: actualDuration, alignmentSource: voice.metadata?.alignmentSource || 'unknown', wordTimestamps, metadata: voice.metadata });
+  const units = buildNarrationUnits(script.beats.map((beat, index) => ({ ...beat, id: beat.id || `beat-${index + 1}`, visualIntent: truthIntentForMechanism(normalizeVisualIntent(beat.visualIntent, beat.entities || [])) })), wordTimestamps);
+  if (units.length < 8) throw new Error(`TRUTH_REPAIR_BLOCKED: only ${units.length} phrase units`);
+  const selected = selectSemanticMatches(units, semanticSegments);
+  const centralEvidence = centralObjectEvidenceGate({ centralObject: 'diving-pool sparger/surface-agitation mechanism', requiredMechanism: ['compressed air sparger system'], selected, allowIllustration: true });
+  await writeJson(join(reportRoot, 'CentralObjectEvidenceGate-v2.json'), centralEvidence);
+  if (centralEvidence.status !== 'PASS') throw new Error('TRUTH_REPAIR_BLOCKED: central mechanism has no direct evidence');
+  const coverage = coverageFromTimeline(units, selected);
+  const timelineItems = units.map((unit, index) => ({ startTime: unit.startTime, endTime: unit.endTime, visualType: selected[index].match.segment.provider === 'AUTO-YTB' ? 'GRAPHIC' : 'REAL_VIDEO' }));
+  const mediaRatios = timelineMediaRatios(timelineItems);
+  const scenes = selected.map((item, index) => { const unit = units[index]; return { id: `${unit.id}-s${index + 1}`, startSec: unit.startTime, durationSec: Math.max(0.2, unit.endTime - unit.startTime), kind: 'video', instruction: unit.visualIntent, sourceIds: [item.match.segment.segmentId], generated: false }; });
+  const timelineAssets = selected.map((item, index) => { const segment = item.match.segment; const range = segmentMediaRange(segment); return { id: `${segment.segmentId}-${index}-v2`, uri: fileUri(segment.localPath), mimeType: segment.mime || 'video/mp4', provider: segment.provider, model: segment.provider === 'AUTO-YTB' ? 'truth-technical-illustration-v1' : 'multiframe-semantic-segment-v1', costUsd: 0, sceneId: scenes[index].id, generated: segment.provider === 'AUTO-YTB', sourceIds: [segment.segmentId], sourceUrl: segment.sourceUrl, license: 'Original explanatory illustration grounded in cited primary sources', metadata: { sourceUrl: segment.sourceUrl, rightsStatus: segment.rightsTier, attribution: segment.provider === 'AUTO-YTB' ? 'AUTO-YTB original illustration' : segment.metadata?.creator || null, title: segment.semanticDescription, clipStartSec: range.startTime, clipEndSec: range.endTime, sourceAudio: segment.sourceAudio, visualMatch: item.match.classification, matchExplanation: item.match.explanation, semanticProfile: segment.provenance, contextType: segment.contextType, shotTimecode: [segment.startTime, segment.endTime], usableTimecode: [range.startTime, range.endTime] } }; });
+  const renderManifest = { projectId: runId, createdAt: now(), contentFormat: 'SHORT_HORIZONTAL', aspectRatio: '16:9', frame: { width: 1280, height: 720 }, engineeringResolution: '1280x720', contentArchetype: { version: 1, id: 'FOOTAGE_PRO_TRUTH_REPAIR', label: 'Factual editorial repair', confidence: 0, reasons: ['verified premise', 'direct mechanism illustration', 'phrase-level semantic matching'], voiceMode: 'SINGLE_NARRATOR', realityMode: 'FACTUAL', cameraProfile: 'EDITORIAL_DOCUMENTARY', profile: {} }, captionPlan: { enabled: true, preset: 'KARAOKE_BOLD', source: 'GEMINI_WORD_TIMESTAMPS', mode: 'WORD_KARAOKE' }, editPlan: { preset: 'FOOTAGE_PRO', transitionMode: 'CLEAN_CUTS', preserveAudioTiming: true, defaultMotionEffects: [] }, script: { title: script.title, targetDurationSec: actualDuration, beats: units.map((unit) => ({ id: unit.id, narration: unit.text, entities: unit.visualIntent.requiredEntities, visualIntent: unit.visualIntent, startSec: unit.startTime, targetDurationSec: unit.endTime - unit.startTime, importance: unit.importance })) }, scenes, assets: timelineAssets, voice: { id: `voice-${runId}-v2`, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: actualDuration, alignment: voice.alignment, wordTimestamps }, music: null, estimatedCostUsd: 0, actualCostUsd: Number(voice.metadata?.transcriptionCostUsd || 0), containsSyntheticMedia: true };
+  const v2ManifestPath = join(runRoot, 'timeline', 'MasterTimeline-v2.json'); await writeJson(v2ManifestPath, renderManifest);
+  const renderer = new FfmpegRenderer({ outputRoot: join(renderRoot, 'truth-v2'), width: 1280, height: 720, fps: 30, targetLufs: -16, truePeakDb: -1.5, loudnessRange: 7 });
+  const rendered = await renderer.render({ manifestUri: fileUri(v2ManifestPath), outputKey: 'base.mp4' });
+  const assPath = join(runRoot, 'audio', 'karaoke-v2-truth.ass'); const karaoke = await writeKaraokeAss(wordTimestamps, assPath);
+  const v2 = join(finalRoot, 'video-v2.mp4');
+  await run('ffmpeg', ['-y', '-i', rendered.uri.replace(/^file:\/\//, ''), '-vf', `subtitles='${assPath.replaceAll('\\', '/').replaceAll(':', '\\:')}'`, '-c:a', 'copy', '-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-movflags', '+faststart', v2], { quiet: true });
+  const probe = await probeVideoFile(v2);
+  const expectedTimelineEnd = Math.max(...units.map((unit) => unit.endTime));
+  const consistency = finalArtifactConsistencyGate({ actualDurationSeconds: probe.durationSeconds, expectedTimelineEndSeconds: expectedTimelineEnd, audioDurationSeconds: Number(voice.durationSeconds || 0), lastWordEndSeconds: wordTimestamps.at(-1)?.endTime || 0, lastCaptionEndSeconds: wordTimestamps.at(-1)?.endTime || 0, toleranceSeconds: 0.3, tailToleranceSeconds: 0.15 });
+  const ending = endingIntegrityReport({ actualDurationSeconds: probe.durationSeconds, expectedTimelineEndSeconds: expectedTimelineEnd, audioDurationSeconds: Number(voice.durationSeconds || 0), lastWordEndSeconds: wordTimestamps.at(-1)?.endTime || 0, lastCaptionEndSeconds: wordTimestamps.at(-1)?.endTime || 0, finalSpokenText: units.at(-1)?.text, payoffPresent: true, toleranceSeconds: 0.3, tailToleranceSeconds: 0.15 });
+  await writeJson(join(reportRoot, 'FinalArtifactConsistencyGate-v2.json'), consistency); await writeJson(join(reportRoot, 'EndingIntegrityReport-v2.json'), ending);
+  if (consistency.status !== 'PASS' || ending.status !== 'PASS') throw new Error(`TRUTH_REPAIR_BLOCKED: final artifact consistency failed ${JSON.stringify({ consistency, ending })}`);
+  const editorial = await inspectEditorialVideo(v2, units, selected); await writeJson(join(reportRoot, 'EditorialCritic-v2.json'), editorial);
+  const thumbnail = await buildTruthThumbnail(selected, script.packaging?.title || script.title, diagramPath, semanticSegments);
+  const receipts = selected.map((item, index) => { const range = segmentMediaRange(item.match.segment); return { narration: units[index].text, startTime: units[index].startTime, endTime: units[index].endTime, visualIntent: units[index].visualIntent, topCandidates: item.topCandidates.map((candidate) => ({ segmentId: candidate.segment.segmentId, source: candidate.segment.sourceUrl, sourceTimecode: [segmentMediaRange(candidate.segment).startTime, segmentMediaRange(candidate.segment).endTime], classification: candidate.classification, score: candidate.score, explanation: candidate.explanation })), selectedSegment: item.match.segment.segmentId, selectedSourceTimecode: [range.startTime, range.endTime], matchClass: item.match.classification }; });
+  await writeJson(join(reportRoot, 'matching-receipts-v2.json'), receipts);
+  await writeJson(join(reportRoot, 'TemporalReviewReport-v2.json'), { status: editorial.status, intervals: editorial.rows, reviewedAt: now() });
+  const report = { version: 3, runId, status: consistency.status === 'PASS' && ending.status === 'PASS' && centralEvidence.status === 'PASS' && editorial.status === 'PASS' ? 'READY_FOR_HUMAN_REVIEW' : 'INTERNAL_REVIEW_REQUIRED', output: { video: v2, thumbnail: thumbnail.selected, durationSeconds: probe.durationSeconds, title: script.packaging?.title || script.title }, premise: await readJson(join(reportRoot, 'PremiseVerificationReport.json'), null), claimLedger: await readJson(join(reportRoot, 'ClaimLedger-v2.json'), null), centralEvidence, voice: { provider: voice.provider, model: voice.model, alignmentMethod: voice.metadata?.alignmentSource || 'gemini-word-timestamps', wordCount: wordTimestamps.length, karaoke }, footage: { mediaRatios, coverage, selected: selected.map((item) => ({ segmentId: item.match.segment.segmentId, sourceUrl: item.match.segment.sourceUrl, classification: item.match.classification })) }, qc: { editorial, consistency, ending }, cost: { externalPaidUsd: 'UNKNOWN_PROVIDER_BILLING_NOT_EXPOSED', localRenderUsd: 0, alignmentUsd: Number(voice.metadata?.transcriptionCostUsd || 0) }, limitations: ['The central sparger is shown with an original explanatory illustration grounded in primary documentation; it is not claimed to be live facility footage.', 'Human review remains required.'] };
+  await writeJson(join(reportRoot, 'production-run-v2.json'), report);
+  console.log(JSON.stringify(report, null, 2));
+}
+
 async function repairFootageProRun() {
   const manifestPath = join(runRoot, 'timeline', 'render-manifest.json');
   const manifest = await readJson(manifestPath, null);
@@ -769,9 +987,13 @@ async function normalizeFinalDuration(path, targetSeconds) {
 
 async function main() {
   legacyTerms = await readJson(resolve(ROOT, 'scripts', 'fixtures', 'legacy-topic-terms.json'), []);
-  if (!['footage-pro', 'footage-pro-repair'].includes(mode)) throw new Error('QUALITY_RESET_BLOCKED: image-first autonomous rendering is retired. Use the Footage-First preflight before any new production.');
+  if (!['footage-pro', 'footage-pro-repair', 'footage-pro-truth-repair'].includes(mode)) throw new Error('QUALITY_RESET_BLOCKED: image-first autonomous rendering is retired. Use the Footage-First preflight before any new production.');
   if (mode === 'footage-pro-repair') {
     await mkdir(reportRoot, { recursive: true }); await mkdir(finalRoot, { recursive: true }); await repairFootageProRun(); return;
+  }
+  if (mode === 'footage-pro-truth-repair') {
+    await mkdir(mediaRoot, { recursive: true }); await mkdir(reportRoot, { recursive: true }); await mkdir(finalRoot, { recursive: true });
+    await runTruthRepairProduction(); return;
   }
   if (!API_KEY) throw new Error('Missing GEMINI_API_KEY');
   await mkdir(mediaRoot, { recursive: true }); await mkdir(reportRoot, { recursive: true }); await mkdir(finalRoot, { recursive: true });

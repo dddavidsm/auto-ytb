@@ -448,7 +448,10 @@ export class FfmpegRenderer {
         // later keyframe and silently shift the visual into an unrelated shot.
         // Decode from the requested timestamp, reset timestamps, and force one
         // stable CFR output so every clip starts on the intended motion.
-        const inputArgs = ['-y','-i',source];
+         // A semantic segment can be shorter than the narration phrase. Looping
+         // the already-selected source clip keeps the editorial timeline clock
+         // authoritative instead of silently shortening the final MP4.
+         const inputArgs = ['-y','-stream_loop','-1','-i',source];
         if (clipStart > 0) inputArgs.push('-ss',String(clipStart));
         inputArgs.push('-t',String(duration),'-vf',`${videoFilter},setpts=PTS-STARTPTS`,'-fps_mode','cfr','-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast','-avoid_negative_ts','make_zero',clip);
         await run(this.ffmpeg, inputArgs);
