@@ -489,7 +489,7 @@ export class FfmpegRenderer {
       const musicPath = manifest.music?.uri ? await this.materialize(manifest.music.uri, join(work,'music')) : null;
       const loudnorm = `loudnorm=I=${this.targetLufs}:TP=${this.truePeakDb}:LRA=${this.loudnessRange}`;
       if (musicPath && mimeFor(musicPath).startsWith('audio/')) {
-        await run(this.ffmpeg, ['-y','-i',joined,'-i',voicePath,'-stream_loop','-1','-i',musicPath,'-filter_complex',`[1:a]${loudnorm}[voice];[2:a]volume=${Number(manifest.music?.gain??0.18)}[music];[music][voice]sidechaincompress=threshold=0.025:ratio=10:attack=18:release=420[ducked];[voice][ducked]amix=inputs=2:duration=first:normalize=0[aout]`,'-map','0:v:0','-map','[aout]','-c:v','copy','-c:a','aac','-b:a','192k','-shortest',out]);
+         await run(this.ffmpeg, ['-y','-i',joined,'-i',voicePath,'-stream_loop','-1','-i',musicPath,'-filter_complex',`[1:a]${loudnorm},asplit=2[voice][side];[2:a]volume=${Number(manifest.music?.gain??0.18)}[music];[music][side]sidechaincompress=threshold=0.025:ratio=10:attack=18:release=420[ducked];[voice][ducked]amix=inputs=2:duration=first:normalize=0[aout]`,'-map','0:v:0','-map','[aout]','-c:v','copy','-c:a','aac','-b:a','192k','-shortest',out]);
       } else {
         await run(this.ffmpeg, ['-y','-i',joined,'-i',voicePath,'-map','0:v:0','-map','1:a:0','-c:v','copy','-filter:a',loudnorm,'-c:a','aac','-b:a','192k','-shortest',out]);
       }

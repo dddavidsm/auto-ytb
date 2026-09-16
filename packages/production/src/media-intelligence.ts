@@ -7,6 +7,8 @@ export type DiscoveryReference = { id: string; kind: 'DISCOVERY_REFERENCE'; url:
 export type PublishableAsset = { id: string; kind: 'PUBLISHABLE_ASSET'; uri: string; provider: string; sourceUrl: string; title: string; rights: RightsState; license: string; creator?: string; attribution?: string; entities: string[]; technical?: Record<string, unknown> };
 export type MediaSegment = PublishableAsset & { segmentId: string; startSec: number; endSec: number; description: string; actions?: string[]; locations?: string[]; ocr?: string[]; transcript?: string; shotType?: string; qualityScore: number; motionScore?: number; semanticTerms?: string[] };
 export type RightsLedgerEntry = { assetId: string; sourceUrl: string; provider: string; license: string; rights: RightsState; commercialUse?: boolean; attribution?: string; checkedAt: string; risk: 'LOW' | 'MEDIUM' | 'HIGH' };
+export type NASAAssetRightsInput = { assetId: string; sourceUrl: string; title: string; producer?: 'NASA' | 'THIRD_PARTY' | 'UNKNOWN'; thirdPartyCopyrightNotice?: boolean; containsNASAIdentifiers?: boolean; identifiablePeople?: boolean; usage: 'FACTUAL_EDITORIAL' | 'PROMOTIONAL' | 'COMMERCIAL_AD' | 'UNKNOWN'; retrievedAt?: string };
+export type NASAAssetRightsDecision = RightsLedgerEntry & { status: 'PUBLISHABLE_EDITORIAL' | 'REVIEW_REQUIRED' | 'BLOCKED'; producer: string; thirdPartyCopyrightNotice: boolean; containsNASAIdentifiers: boolean; identifiablePeople: boolean; usage: string; rationale: string; policyUrl: string; policyVersion: string };
 export type NarrationBeat = { beatId: string; text: string; startSec: number; endSec: number; entityIds: string[]; requiredVisual?: string; critical?: boolean };
 export type CoverageRow = { beatId: string; requiredEntities: string[]; exactAssets: string[]; strongContextAssets: string[]; fallbackAssets: string[]; rightsConfidence: number; coverageConfidence: number; specificity: SpecificityClass; decision: 'USE' | 'RESEARCH' | 'REWRITE' | 'GENERATE' };
 export type MediaAvailabilityReport = { opportunityId: string; generatedAt: string; rows: Array<{ beatId: string; status: 'EXCELLENT' | 'GOOD' | 'MARGINAL' | 'POOR'; exactCount: number; contextualCount: number; rationale: string }>; overall: 'EXCELLENT' | 'GOOD' | 'MARGINAL' | 'POOR' };
@@ -64,4 +66,14 @@ export class MediaIntelligenceEngine {
   }
 
   createResourcePack(packId: string, beats: NarrationBeat[]): MediaResourcePack { return { packId, entities: [...this.entities.values()], discovery: [...this.discovery.values()], assets: [...this.assets.values()], segments: [...this.segments.values()], rights: [...this.rights.values()], coverage: this.buildCoverage(beats) }; }
+}
+
+export function resolveNASAAssetRights(input: NASAAssetRightsInput): NASAAssetRightsDecision {
+  const thirdParty = input.thirdPartyCopyrightNotice === true || input.producer === 'THIRD_PARTY';
+  const peopleRisk = input.identifiablePeople === true && input.usage !== 'FACTUAL_EDITORIAL';
+  const logoRisk = input.containsNASAIdentifiers === true && input.usage !== 'FACTUAL_EDITORIAL';
+  const blocked = thirdParty || input.usage === 'UNKNOWN';
+  const status: NASAAssetRightsDecision['status'] = blocked ? 'BLOCKED' : peopleRisk || logoRisk || input.producer !== 'NASA' ? 'REVIEW_REQUIRED' : 'PUBLISHABLE_EDITORIAL';
+  const rationale = blocked ? 'Third-party or unknown ownership cannot pass the rights gate.' : status === 'REVIEW_REQUIRED' ? 'NASA-origin is plausible, but identifiable people, identifiers or producer context require review.' : 'NASA-produced media used factually/editorially; attribute NASA and do not imply endorsement.';
+  return { assetId: input.assetId, sourceUrl: input.sourceUrl, provider: 'NASA', license: 'NASA_MEDIA_USAGE_GUIDELINES', rights: status === 'PUBLISHABLE_EDITORIAL' ? 'CLEARED' : status === 'REVIEW_REQUIRED' ? 'VERIFY' : 'BLOCKED', commercialUse: status === 'PUBLISHABLE_EDITORIAL', attribution: 'NASA', checkedAt: input.retrievedAt ?? new Date().toISOString(), risk: status === 'PUBLISHABLE_EDITORIAL' ? 'LOW' : status === 'REVIEW_REQUIRED' ? 'MEDIUM' : 'HIGH', status, producer: input.producer ?? 'UNKNOWN', thirdPartyCopyrightNotice: thirdParty, containsNASAIdentifiers: input.containsNASAIdentifiers === true, identifiablePeople: input.identifiablePeople === true, usage: input.usage, rationale, policyUrl: 'https://www.nasa.gov/nasa-brand-center/images-and-media/', policyVersion: 'NASA-MEDIA-GUIDELINES-2026-09' };
 }

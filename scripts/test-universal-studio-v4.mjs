@@ -5,6 +5,7 @@ import {
   compareVideoDNA,
   createUniversalProductionGraph,
   parseNaturalLanguageEdit,
+  resolveNASAAssetRights,
 } from '../packages/production/dist/index.js';
 
 const graph = createUniversalProductionGraph(['SOURCED_NARRATIVE', 'GENERATIVE_IP_SERIES']);
@@ -39,5 +40,11 @@ const comparison = compareVideoDNA([
   { sourceId: 'baseline', role: 'BASELINE', dna: { schema: 'VIDEO_DNA_V1', sourceId: 'baseline', metadata: {}, hook: { firstValueSec: 6 }, narration: {}, editing: { visualChangeRate: 1 }, visualRhythm: { exactEntityCoverage: 0.4 }, provenance: { method: 'fixture', collectedAt: new Date().toISOString() } } },
 ]);
 assert.ok(comparison.differentiators.length >= 2);
+
+const nasaCleared = resolveNASAAssetRights({ assetId: 'nasa-test', sourceUrl: 'https://svs.gsfc.nasa.gov/30771/', title: 'ISS Earth', producer: 'NASA', thirdPartyCopyrightNotice: false, containsNASAIdentifiers: false, identifiablePeople: false, usage: 'FACTUAL_EDITORIAL' });
+assert.equal(nasaCleared.status, 'PUBLISHABLE_EDITORIAL');
+assert.equal(nasaCleared.rights, 'CLEARED');
+const nasaThirdParty = resolveNASAAssetRights({ assetId: 'nasa-third-party-test', sourceUrl: 'https://www.nasa.gov/media/', title: 'Hosted third-party media', producer: 'THIRD_PARTY', thirdPartyCopyrightNotice: true, containsNASAIdentifiers: false, identifiablePeople: false, usage: 'FACTUAL_EDITORIAL' });
+assert.equal(nasaThirdParty.status, 'BLOCKED');
 
 console.log('✓ universal graph, generic registries, media coverage, edit patches and VideoDNA pass');
