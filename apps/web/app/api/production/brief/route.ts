@@ -1,4 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { NextResponse } from 'next/server';
 import { createUniversalProductionGraph } from '@auto-ytb/production';
@@ -9,7 +11,7 @@ export const runtime = 'nodejs';
 function inferFormat(prompt: string) {
   const text = prompt.toLowerCase();
   if (/documentary|explain|why|news|report|history|facts|research/.test(text)) return 'SOURCED_NARRATIVE';
-  if (/episode|character|monkey|farm|cartoon|animated|moss|comedy short/.test(text)) return 'GENERATIVE_IP_SERIES';
+  if (/episode|character|monkey|farm|cartoon|animated|comedy short/.test(text)) return 'GENERATIVE_IP_SERIES';
   return 'HYBRID';
 }
 
@@ -39,11 +41,18 @@ export async function POST(request: Request) {
   const directory = resolve(process.cwd(), '.data', 'universal-briefs');
   await mkdir(directory, { recursive: true });
   await writeFile(resolve(directory, `${briefId}.json`), `${JSON.stringify({ brief, graph }, null, 2)}\n`);
+  const repoRoot = existsSync(resolve(process.cwd(), 'scripts', 'run-autonomous-studio.mjs')) ? process.cwd() : resolve(process.cwd(), '..', '..');
+  const runId = `ui-${briefId}`;
+  const child = spawn(process.execPath, ['--env-file-if-exists=.env.local', 'scripts/run-autonomous-studio.mjs', '--mode', 'prompt', '--prompt', prompt, '--duration', String(durationSec), '--run-id', runId], { cwd: repoRoot, detached: true, stdio: 'ignore' });
+  child.unref();
   return NextResponse.json({
     ok: true,
+    runId,
+    pipeline: 'AUTONOMOUS_STUDIO_CANONICAL',
+    artifactRoot: resolve(repoRoot, '.data', 'autonomous-production', runId),
     brief,
     graph,
     quote: { qualityMode, durationSec, format, knownPaidCostUsd: 0, note: 'Final provider costs are quoted after research and media reconnaissance.' },
-    progress: ['BRIEF_ACCEPTED', 'FORMAT_INFERRED', 'GRAPH_READY', 'READY_FOR_RESEARCH'],
+    progress: ['BRIEF_ACCEPTED', 'FORMAT_INFERRED', 'GRAPH_READY', 'RUN_STARTED', 'RESEARCH_PENDING'],
   });
 }
