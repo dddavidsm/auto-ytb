@@ -22,3 +22,6 @@ export * from './director-brain.js';
 export * from './universal.js';
 export * from './media-intelligence.js';
 export * from './video-dna.js';
+export * from './footage-first.js';
+export * from './footage-providers.js';
+export * from './reference-style.js';

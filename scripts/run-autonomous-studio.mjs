@@ -308,6 +308,7 @@ async function normalizeFinalDuration(path, targetSeconds) {
 
 async function main() {
   legacyTerms = await readJson(resolve(ROOT, 'scripts', 'fixtures', 'legacy-topic-terms.json'), []);
+  if (mode !== 'footage-pro') throw new Error('QUALITY_RESET_BLOCKED: image-first autonomous rendering is retired. Use the Footage-First preflight before any new production.');
   if (!API_KEY) throw new Error('Missing GEMINI_API_KEY');
   await mkdir(mediaRoot, { recursive: true }); await mkdir(reportRoot, { recursive: true }); await mkdir(finalRoot, { recursive: true });
   const history = await loadCreativeHistory();

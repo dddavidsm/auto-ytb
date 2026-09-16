@@ -431,11 +431,9 @@ export class FfmpegRenderer {
       }
       const source = asset ? await this.materialize(asset.uri, join(work, `asset-${index}`)) : null;
       if (source && mimeFor(source).startsWith('image/')) {
-        // AI stills are turned into restrained documentary shots. Keep the
-        // subject photographic and clean: no card frame, logo, progress bar,
-        // or decorative UI is allowed to compete with the narration.
-        const motionPeriod = Math.max(12, Math.round(duration * 5));
-        const imageFilter = `scale=${Math.round(width * 1.06)}:${Math.round(height * 1.06)}:force_original_aspect_ratio=increase,crop=${width}:${height}:(in_w-out_w)/2+12*sin(2*PI*t/${motionPeriod}):(in_h-out_h)/2+8*cos(2*PI*t/${motionPeriod + 3}),format=yuv420p`;
+        // Still images stay still. FOOTAGE_PRO must source real motion; a
+        // synthetic pan, shake, jitter or noise pass is never a substitute.
+        const imageFilter = `scale=${Math.round(width * 1.06)}:${Math.round(height * 1.06)}:force_original_aspect_ratio=increase,crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2,format=yuv420p`;
         await run(this.ffmpeg, ['-y','-loop','1','-i',source,'-t',String(duration),'-vf',imageFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',clip]);
       } else if (source && mimeFor(source).startsWith('video/')) {
         const clipStart = Math.max(0, Number(asset?.metadata?.clipStartSec ?? 0));
