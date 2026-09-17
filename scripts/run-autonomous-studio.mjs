@@ -26,6 +26,7 @@ const arg = (name, fallback = undefined) => {
 };
 const mode = arg('mode', 'prompt');
 const requestedPrompt = arg('prompt');
+const requestedScoutTopic = arg('scout-topic');
 const requestedDuration = Number(arg('duration', mode === 'radar' ? 150 : 90));
 const runId = arg('run-id', `studio-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 7)}`);
 const resumeRun = process.argv.includes('--resume') || String(arg('resume', 'false')).toLowerCase() === 'true';
@@ -43,6 +44,12 @@ const now = () => new Date().toISOString();
 const sleep = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 const writeJson = async (path, value) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8'); };
 const readJson = async (path, fallback) => { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return fallback; } };
+async function recordTopicRejection(topic, angle, blockers, reason) {
+  const rejectedPath = join(reportRoot, 'rejected-topics.json');
+  const rejected = await readJson(rejectedPath, []);
+  const next = [...(Array.isArray(rejected) ? rejected : []), { topic, angle, blockers, reason: String(reason), rejectedAt: now() }];
+  await writeJson(rejectedPath, next.filter((item, index, rows) => rows.findIndex((candidate) => candidate.topic === item.topic) === index));
+}
 async function fetchTimed(url, options = {}, timeoutMs = 20000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -86,8 +93,17 @@ async function downloadMovingCandidate(candidate, targetRoot, index) {
   const extension = String(candidate.metadata?.mime || '').includes('webm') ? '.webm' : '.mp4';
   const target = join(targetRoot, `${String(index).padStart(2, '0')}-${safeFileName(candidate.metadata?.title || candidate.id)}${extension}`);
   if (!existsSync(target)) {
-    const response = await fetchTimed(url, { headers: { 'user-agent': 'AUTO-YTB FootagePro/1.0 (rights-aware media client)' } }, 90000);
-    if (!response.ok) throw new Error(`Moving media download failed ${response.status}: ${url}`);
+    let response;
+    let lastStatus = 'unknown';
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      response = await fetchTimed(url, { headers: { 'user-agent': 'AUTO-YTB FootagePro/1.0 (rights-aware media client)', 'accept': 'video/*,application/octet-stream;q=0.9,*/*;q=0.1' } }, 90000);
+      lastStatus = response.status;
+      if (response.ok) break;
+      if (![429, 500, 502, 503, 504].includes(response.status)) break;
+      const retryAfter = Number(response.headers.get('retry-after') || 0);
+      await sleep(Math.max(1500, retryAfter * 1000, 1500 * (attempt + 1)));
+    }
+    if (!response?.ok) throw new Error(`Moving media download failed ${lastStatus}: ${url}`);
     await writeFile(target, Buffer.from(await response.arrayBuffer()));
   }
   return { ...candidate, localPath: target, ...await probeVideoFile(target), acquisition: 'DOWNLOADED_REAL_VIDEO', downloadedAt: now() };
@@ -126,21 +142,26 @@ function broadenArchiveQueries(candidate) {
 
 async function scoutMovingTopics(history) {
   const cachedScout = await readJson(join(reportRoot, 'FootageScoutReport.json'), null);
-  const cachedWinner = cachedScout?.reports?.find((item) => item.estimatedSegmentCount >= 15 && item.nativeVideo?.grade !== 'POOR' && item.nativeVideo?.actionCount >= 1);
+  const previousTopic = (await readJson(join(reportRoot, 'opportunity.json'), null))?.topic;
+  const priorGreenlight = await readJson(join(reportRoot, 'TopicGreenlightReport.json'), null);
+  const rejectedTopicRows = await readJson(join(reportRoot, 'rejected-topics.json'), []);
+  const rejectedTopics = new Set((Array.isArray(rejectedTopicRows) ? rejectedTopicRows : []).map((item) => item.topic).filter(Boolean));
+  if (priorGreenlight?.status === 'REJECT' && previousTopic) rejectedTopics.add(previousTopic);
+  const cachedWinner = cachedScout?.reports?.find((item) => !rejectedTopics.has(item.topic) && item.estimatedSegmentCount >= 15 && item.nativeVideo?.grade !== 'POOR' && item.nativeVideo?.actionCount >= 1);
   if (cachedWinner) return { winner: cachedWinner, reports: cachedScout.reports, resumedFromCache: true };
   const live = await readNewsTitles();
   const recent = history.productions.slice(-12).map((item) => `${item.topic} (${item.domain || 'unknown'})`).join('\n');
-  const generated = await geminiJson(`Generate exactly 20 genuinely different YouTube opportunity candidates for a 45-75 second English FOOTAGE_PRO video. Favor subjects with abundant searchable real moving footage: people doing things, food preparation, sports action, vehicles moving, products being demonstrated, machines operating, transformations, competitions or visible experiments. Prefer broad concrete visual worlds over obscure processes. Return JSON array only with compact objects: [{topic,angle,domain,viewerPromise,hookIdea,entities,catalogQuery,thumbnailPromise}]. catalogQuery must be a broad 2-4 word public-archive phrase relevant to the topic, not a long title or abstract phrase. Do not invent metrics. Avoid excluded historical terms. EXCLUDED: ${legacyTerms.join(', ')}. RECENT HISTORY: ${recent || 'none'}. LIVE SIGNALS: ${live.slice(0, 10).map((item) => item.title).join(' | ')}`);
+  const generated = await geminiJson(`Generate exactly 20 genuinely different YouTube opportunity candidates for a 45-75 second English FOOTAGE_PRO video. Favor subjects with abundant searchable real moving footage: people doing things, food preparation, sports action, vehicles moving, products being demonstrated, machines operating, transformations, competitions or visible experiments. Prefer broad concrete visual worlds over obscure processes. Return JSON array only with compact objects: [{topic,angle,domain,viewerPromise,hookIdea,entities,catalogQuery,searchQueries,thumbnailPromise}]. catalogQuery must be a broad 2-4 word public-archive phrase relevant to the topic, not a long title or abstract phrase. searchQueries must contain 4-8 materially different concrete footage searches: exact entity, action, demonstration, broad domain, alternate phrasing. Do not invent metrics. Avoid excluded historical terms. EXCLUDED: ${legacyTerms.join(', ')}. RECENT HISTORY: ${recent || 'none'}. LIVE SIGNALS: ${live.slice(0, 10).map((item) => item.title).join(' | ')}`);
   const candidates = Array.isArray(generated) ? generated : (generated.candidates || generated.topics || []);
   const reports = [];
   const scoutCandidate = async (candidate) => {
     assertNovel(JSON.stringify(candidate), 'moving footage scout');
-    const initialQueries = [...new Set([candidate.catalogQuery || `${candidate.domain || 'people action'} video`, candidate.entities?.[0] ? `${candidate.entities[0]} demonstration` : '', `${candidate.domain || 'people'} action video`].map(clean).filter(Boolean))].slice(0, 2);
+    const initialQueries = [...new Set([...(Array.isArray(candidate.searchQueries) ? candidate.searchQueries : []), candidate.catalogQuery || `${candidate.domain || 'people action'} video`, candidate.entities?.[0] ? `${candidate.entities[0]} demonstration` : '', `${candidate.domain || 'people'} action video`].map(clean).filter(Boolean))].slice(0, 4);
     const searched = [];
     for (const query of initialQueries) searched.push(await searchMovingTopic(query, 12));
     let pool = [...new Map(searched.flatMap((item) => item.candidates).map((item) => [item.sourceKey || item.id, item])).values()];
     if (pool.filter((item) => movingCandidateRelevance(item, candidate) >= 2).length < 15) {
-      for (const query of broadenArchiveQueries(candidate).slice(0, 2)) {
+      for (const query of broadenArchiveQueries(candidate).slice(0, 4)) {
         if (initialQueries.includes(query)) continue;
         searched.push(await searchMovingTopic(query, 12));
 
@@ -163,7 +184,7 @@ async function scoutMovingTopics(history) {
     return actionDelta + audioDelta || (b.nativeVideo.score - a.nativeVideo.score) || (b.nativeVideo.publishableCandidateCount - a.nativeVideo.publishableCandidateCount);
   });
   await writeJson(join(reportRoot, 'FootageScoutReport.json'), { version: 1, candidateCount: reports.length, reports, credentials: { pexels: Boolean(process.env.PEXELS_API_KEY), pixabay: Boolean(process.env.PIXABAY_API_KEY) }, generatedAt: now() });
-  const winner = reports.find((item) => item.estimatedSegmentCount >= 15 && item.nativeVideo.grade !== 'POOR' && item.nativeVideo.actionCount >= 1);
+  const winner = reports.find((item) => !rejectedTopics.has(item.topic) && item.estimatedSegmentCount >= 15 && item.nativeVideo.grade !== 'POOR' && item.nativeVideo.actionCount >= 1);
   if (!winner) throw new Error(`FOOTAGE_SCOUT_BLOCKED: no topic reached 15 estimated moving segments; best=${reports[0]?.topic || 'none'} count=${reports[0]?.estimatedSegmentCount || 0}`);
   return { winner, reports };
 }
@@ -684,7 +705,8 @@ async function visualRewritePass(script, semanticSegments, failure) {
 
 async function renderFootageProRun(opportunity, research, semanticSegments) {
   const cachedScript = await readJson(join(reportRoot, 'script.json'), null);
-  let script = cachedScript?.narration && Array.isArray(cachedScript.beats) ? cachedScript : await makeFootageScript(opportunity, research, semanticSegments);
+  let script = cachedScript?.sourceOpportunityTopic === opportunity.topic && cachedScript?.narration && Array.isArray(cachedScript.beats) ? cachedScript : await makeFootageScript(opportunity, research, semanticSegments);
+  script = { ...script, sourceOpportunityTopic: opportunity.topic };
   await writeJson(join(reportRoot, 'script.json'), script);
   const store = new NodeLocalObjectStore(join(runRoot, 'storage'));
   const voiceStatePath = join(reportRoot, 'voice-state.json');
@@ -714,14 +736,27 @@ async function renderFootageProRun(opportunity, research, semanticSegments) {
     if (actualDuration < 45 || actualDuration > 75) throw new Error(`FOOTAGE_PRO VisualRewritePass voice duration ${actualDuration.toFixed(2)}s outside 45-75s`);
     units = buildNarrationUnits(script.beats.map((beat, index) => ({ ...beat, id: beat.id || `beat-${index + 1}` })), wordTimestamps);
     if (units.length < 8) throw new Error(`EDITORIAL_TIMELINE_BLOCKED after VisualRewritePass: only ${units.length} phrase-level units were aligned`);
-    selected = selectSemanticMatches(units, semanticSegments);
+    try { selected = selectSemanticMatches(units, semanticSegments); } catch (finalMatchError) { await recordTopicRejection(opportunity.topic, opportunity.angle, ['EDITORIAL_MATCH_BLOCKED'], finalMatchError); throw finalMatchError; }
   }
   const coverage = coverageFromTimeline(units, selected);
-  const thumbnail = await buildThumbnailDirector(selected, script.packaging?.thumbnailText || script.title);
+  let thumbnail;
+  try {
+    thumbnail = await buildThumbnailDirector(selected, script.packaging?.thumbnailText || script.title);
+  } catch (error) {
+    const rejectedPath = join(reportRoot, 'rejected-topics.json');
+    const rejected = await readJson(rejectedPath, []);
+    await writeJson(rejectedPath, [...(Array.isArray(rejected) ? rejected : []), { topic: opportunity.topic, angle: opportunity.angle, blockers: ['THUMBNAIL_BLOCKED'], reason: String(error), rejectedAt: now() }]);
+    throw error;
+  }
   const noveltySimilarity = Number((await readJson(join(reportRoot, 'novelty.json'), { maxSimilarity: 0 })).maxSimilarity || 0);
   const greenlight = evaluateCreativeGreenlightEvidence({ promise: opportunity.viewerPromise || opportunity.angle || script.title, hook: { match: selected[0]?.match || null, firstFrameEvidence: 'first editorial unit uses a semantically selected moving segment' }, units, coverage, semanticSegments, noveltySimilarity, thumbnailEvidence: thumbnail.method });
   await writeJson(join(reportRoot, 'TopicGreenlightReport.json'), greenlight);
-  if (greenlight.status !== 'PASS') throw new Error(`CREATIVE_GREENLIGHT_BLOCKED: ${greenlight.blockers.join('; ')}`);
+  if (greenlight.status !== 'PASS') {
+    const rejectedPath = join(reportRoot, 'rejected-topics.json');
+    const rejected = await readJson(rejectedPath, []);
+    await writeJson(rejectedPath, [...(Array.isArray(rejected) ? rejected : []), { topic: opportunity.topic, angle: opportunity.angle, blockers: greenlight.blockers, mediaDepth: greenlight.dimensions?.mediaDepth ?? null, rejectedAt: now() }]);
+    throw new Error(`CREATIVE_GREENLIGHT_BLOCKED: ${greenlight.blockers.join('; ')}`);
+  }
   const timelineItems = units.map((unit) => ({ startTime: unit.startTime, endTime: unit.endTime, visualType: 'REAL_VIDEO' }));
   const mediaRatios = timelineMediaRatios(timelineItems);
   const scenes = selected.map((item, index) => { const unit = units[index]; return { id: `${unit.id}-s${index + 1}`, startSec: unit.startTime, durationSec: Math.max(0.2, unit.endTime - unit.startTime), kind: 'video', instruction: unit.visualIntent, sourceIds: [item.match.segment.segmentId], generated: false }; });
@@ -779,7 +814,12 @@ async function renderFootageProRun(opportunity, research, semanticSegments) {
 
 async function runFootageProProduction(history) {
   const cachedOpportunity = await readJson(join(reportRoot, 'opportunity.json'), null);
-  const scouting = resumeRun && cachedOpportunity?.topic ? { winner: cachedOpportunity } : await scoutMovingTopics(history);
+  const cachedScoutReport = await readJson(join(reportRoot, 'FootageScoutReport.json'), null);
+  const requestedWinner = requestedScoutTopic ? cachedScoutReport?.reports?.find((item) => item.topic === requestedScoutTopic) : null;
+  const priorGreenlight = await readJson(join(reportRoot, 'TopicGreenlightReport.json'), null);
+  const rejectedTopics = await readJson(join(reportRoot, 'rejected-topics.json'), []);
+  const cachedTopicRejected = Array.isArray(rejectedTopics) && rejectedTopics.some((item) => item.topic === cachedOpportunity?.topic);
+  const scouting = requestedWinner ? { winner: requestedWinner, reports: cachedScoutReport.reports, resumedFromCache: true } : resumeRun && cachedOpportunity?.topic && priorGreenlight?.status !== 'REJECT' && !cachedTopicRejected ? { winner: cachedOpportunity } : await scoutMovingTopics(history);
   const opportunity = { ...scouting.winner, inputMode: mode === 'radar' ? 'RADAR_AUTONOMOUS' : 'USER_PROMPT', selectedAt: cachedOpportunity?.selectedAt || now() };
   const scoutScore = scouting.winner.nativeVideo;
   const novelty = resumeRun && cachedOpportunity?.topic ? { ...(await readJson(join(reportRoot, 'novelty.json'), {})), maxSimilarity: 0, method: 'RESUME_EXISTING_OPPORTUNITY' } : await noveltyAgainstHistory(opportunity, history);
@@ -807,7 +847,12 @@ async function runFootageProProduction(history) {
   const allCandidates = relevanceRanked.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
   if (allCandidates.length < 15) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_RELEVANCE: only ${allCandidates.length} moving candidates match the selected topic's source metadata`);
   const downloaded = [];
-  const downloadCandidates = allCandidates.slice(0, 16);
+  // Prefer sources that the current acquisition path can actually retrieve.
+  // Wikimedia remains in discovery, but a transient archive throttle must not
+  // consume the whole download budget when Pexels/Pixabay already provide the
+  // required depth.
+  const acquisitionPreferred = allCandidates.filter((item) => !/Wikimedia Commons/i.test(String(item.provider || '')));
+  const downloadCandidates = (acquisitionPreferred.length >= 15 ? acquisitionPreferred : allCandidates).slice(0, 16);
   for (let offset = 0; offset < downloadCandidates.length; offset += 4) {
     const batch = await Promise.all(downloadCandidates.slice(offset, offset + 4).map(async (candidate, index) => {
       try { return await downloadMovingCandidate(candidate, mediaRoot, offset + index); } catch (error) { await writeJson(join(reportRoot, 'download-failures.json'), [...(await readJson(join(reportRoot, 'download-failures.json'), [])), { candidate: candidate.id, error: String(error), at: now() }]); return null; }
@@ -817,7 +862,7 @@ async function runFootageProProduction(history) {
   if (downloaded.length < 15) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_AFTER_DOWNLOAD: only ${downloaded.length} real moving assets survived download/probe`);
   const cachedMediaPack = await readJson(join(reportRoot, 'MediaResourcePack.json'), null);
   let semanticSegments;
-  if (Array.isArray(cachedMediaPack?.semanticSegments) && cachedMediaPack.semanticSegments.length >= 15 && cachedMediaPack.semanticSegments.every((segment) => Number(segment.confidence) > 0 && segment.provenance?.method === 'gemini-multiframe-vision' && segment.provenance?.temporalAnalysis === 'gemini-frame-sequence-with-source-timestamps' && Number.isFinite(Number(segment.usableStartTime)) && Number.isFinite(Number(segment.usableEndTime)))) {
+  if (cachedMediaPack?.opportunity === opportunity.topic && Array.isArray(cachedMediaPack?.semanticSegments) && cachedMediaPack.semanticSegments.length >= 15 && cachedMediaPack.semanticSegments.every((segment) => Number(segment.confidence) > 0 && segment.provenance?.method === 'gemini-multiframe-vision' && segment.provenance?.temporalAnalysis === 'gemini-frame-sequence-with-source-timestamps' && Number.isFinite(Number(segment.usableStartTime)) && Number.isFinite(Number(segment.usableEndTime)))) {
     semanticSegments = cachedMediaPack.semanticSegments;
   } else {
     const analyzed = [];

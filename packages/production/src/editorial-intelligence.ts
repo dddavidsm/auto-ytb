@@ -161,13 +161,14 @@ export function parseShotBoundaries(showInfo: string, duration: number, minimumS
   return shots.length ? shots : [{ startTime: 0, endTime: Math.max(0, duration), duration: Math.max(0, duration) }];
 }
 
-const tokenise = (value: unknown) => [...new Set(String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter((token) => token.length > 2 || ['m', 'km', 'h', 'g'].includes(token) || /^\d+$/.test(token)))];
+const tokenise = (value: unknown) => [...new Set(String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(/\s+/).filter((token) => token.length > 2 || ['m', 'km', 'h', 'g', 'hz'].includes(token) || /^\d+$/.test(token)))];
 const numberTens = new Set(['twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']);
+const numberTenValues: Record<string, number> = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
 const numberUnits = new Set(['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']);
 const numberUnitValues: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9 };
 const numberSmallValues: Record<string, number> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
 function fuzzyTokenMatch(expected: string, actual: string) {
-  if (expected.length < 5 || actual.length < 4) return false;
+  if (expected.length < 4 || actual.length < 3) return false;
   const previous = Array.from({ length: actual.length + 1 }, (_, index) => index);
   for (let row = 1; row <= expected.length; row += 1) {
     const current = [row];
@@ -202,11 +203,11 @@ export function normalizeVisualIntent(value: unknown, fallbackEntities: string[]
 function tokenMatches(expected: string, actual: string) {
   const left = tokenise(expected); const right = new Set(tokenise(actual));
   return left.length > 0 && left.every((token) => {
-    const numericMatch = numberTens.has(token) && [...right].some((candidate) => /^\d{2}$/.test(candidate) && candidate.startsWith(String(['twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'].indexOf(token) + 2)));
+    const numericMatch = numberTens.has(token) && [...right].some((candidate) => /^\d{2}$/.test(candidate) && Number(candidate) >= numberTenValues[token] && Number(candidate) < numberTenValues[token] + 10);
     const unitNumericMatch = numberUnits.has(token) && [...right].some((candidate) => /^\d$/.test(candidate) && Number(candidate) === numberUnitValues[token]);
     const smallNumericMatch = numberSmallValues[token] != null && [...right].some((candidate) => /^\d{1,2}$/.test(candidate) && Number(candidate) === numberSmallValues[token]);
-    const prefixMatch = [...right].some((candidate) => token.length >= 5 && (candidate.startsWith(token) || token.startsWith(candidate) || fuzzyTokenMatch(token, candidate)));
-    const abbreviationMatch = (token === 'meter' || token === 'meters') && right.has('m') || (token === 'kilometer' || token === 'kilometers') && right.has('km') || (token === 'mile' || token === 'miles') && right.has('mph') || token === 'grams' && right.has('g');
+    const prefixMatch = [...right].some((candidate) => token.length >= 4 && (candidate.startsWith(token) || token.startsWith(candidate) || fuzzyTokenMatch(token, candidate)));
+    const abbreviationMatch = (token === 'meter' || token === 'meters') && right.has('m') || (token === 'kilometer' || token === 'kilometers') && right.has('km') || (token === 'mile' || token === 'miles') && right.has('mph') || token === 'grams' && right.has('g') || (token === 'hertz' || token === 'hz') && right.has('hz');
     return right.has(token) || numericMatch || unitNumericMatch || smallNumericMatch || prefixMatch || abbreviationMatch;
   });
 }
@@ -219,8 +220,18 @@ function locatePhrase(phrase: string, words: WordTiming[], cursor: number) {
     for (let candidate = index; candidate < Math.min(words.length, index + 12); candidate += 1) if (tokenMatches(token, words[candidate].word)) { found = candidate; break; }
     if (found < 0) {
       const nextKnown = wanted.slice(tokenIndex + 1).map((candidate) => words.slice(index, Math.min(words.length, index + 8)).findIndex((word) => tokenMatches(candidate, word.word))).findIndex((candidate) => candidate >= 0);
+      if (nextKnown < 0 && tokenIndex === wanted.length - 1 && words[index]) {
+        // A final low-confidence lexical variant (for example “stake” ->
+        // “stick”) still has a real spoken interval. Preserve that interval
+        // with reduced alignment confidence instead of inventing timing.
+        matches.push(words[index]); index += 1; unresolved += 1; continue;
+      }
       if (nextKnown < 0 || !words[index]) throw new Error(`NARRATION_ALIGNMENT_BLOCKED: could not map phrase token '${token}' after word ${cursor}`);
-      matches.push(words[index]); index += 1; unresolved += 1; continue;
+      // The recognizer may omit a modifier or collapse a compound spoken
+      // number (for example “nine-hundred-degree” -> “900°”). Keep the real
+      // audio cursor anchored and mark only the script token unresolved; the
+      // next concrete token must still align to the observed word.
+      unresolved += 1; continue;
     }
     // If the recognizer omitted the current function word (for example
     // "Once the diver" becoming "Once diver"), do not jump forward to a
@@ -235,6 +246,10 @@ function locatePhrase(phrase: string, words: WordTiming[], cursor: number) {
     matches.push(words[found]); index = found + 1;
     const observedTokens = tokenise(words[found].word);
     while (observedTokens.includes(wanted[tokenIndex + 1] ?? '')) tokenIndex += 1;
+    // Speech recognition often compounds adjacent script words (“track bed”
+    // becomes “trackbed”). Treat the observed compound as one aligned audio
+    // word while consuming the script's second token.
+    if (wanted[tokenIndex + 1] && observedTokens.some((observed) => observed.length > wanted[tokenIndex + 1].length && observed.includes(wanted[tokenIndex + 1]))) tokenIndex += 1;
     if (/\//.test(words[found].word) && /kilometer|mile|meter/i.test(token) && wanted[tokenIndex + 1] === 'per' && wanted[tokenIndex + 2] === 'hour') tokenIndex += 2;
     if (/^mph\.?$/i.test(words[found].word) && /mile/i.test(token) && wanted[tokenIndex + 1] === 'per' && wanted[tokenIndex + 2] === 'hour') tokenIndex += 2;
     // TTS frequently emits “27” where the script says “twenty-seven”. The

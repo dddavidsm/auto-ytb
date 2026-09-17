@@ -156,6 +156,7 @@ export class FfmpegRenderer {
     this.targetLufs = Number.isFinite(Number(options.targetLufs)) ? Number(options.targetLufs) : -16;
     this.truePeakDb = Number.isFinite(Number(options.truePeakDb)) ? Number(options.truePeakDb) : -1.5;
     this.loudnessRange = Number.isFinite(Number(options.loudnessRange)) ? Number(options.loudnessRange) : 7;
+    this.ffprobe = options.ffprobe ?? 'ffprobe';
   }
 
   async materialize(uri, destBase) {
@@ -385,6 +386,15 @@ export class FfmpegRenderer {
     await run(this.ffmpeg, ['-y','-f','lavfi','-i',`color=c=0x070b12:s=${width}x${height}:r=${this.fps}:d=${duration}`,'-vf',`${filters.join(',')},format=yuv420p`,'-an','-c:v','libx264','-preset','veryfast',clip]);
   }
 
+  async probeDuration(source) {
+    return await new Promise((resolvePromise, reject) => {
+      const child = spawn(this.ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', source], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = ''; let stderr = '';
+      child.stdout.on('data', (chunk) => { stdout += chunk.toString(); }); child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+      child.on('error', reject); child.on('close', (code) => { const duration = Number(stdout.trim()); if (code !== 0 || !Number.isFinite(duration)) reject(new Error(`Unable to probe source duration: ${source} ${stderr.slice(0, 500)}`)); else resolvePromise(duration); });
+    });
+  }
+
   async render(input) {
     const manifestPath = pathFromUri(input.manifestUri);
     if (!manifestPath) throw new Error('FfmpegRenderer requires a local/file:// manifest URI');
@@ -395,19 +405,6 @@ export class FfmpegRenderer {
     await mkdir(work, { recursive: true });
     const clips = [];
     let timelineCursor = 0;
-    const motionBridge = async (source, duration, index, position) => {
-      const sample = join(work, `bridge-sample-${index}-${position}.mp4`);
-      const bridge = join(work, `bridge-${index}-${position}.mp4`);
-      const bridgeWindow = Math.max(0.18, Math.min(0.6, duration));
-      const inputArgs = position === 'first'
-        ? ['-y','-i',source]
-        : ['-y','-sseof',String(-bridgeWindow),'-i',source];
-      const bridgeFilter = `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2,setpts=PTS-STARTPTS,format=yuv420p`;
-      await run(this.ffmpeg, [...inputArgs,'-t',bridgeWindow.toFixed(3),'-vf',bridgeFilter,'-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',sample]);
-      if (duration <= bridgeWindow + 0.01) return sample;
-      await run(this.ffmpeg, ['-y','-stream_loop','-1','-i',sample,'-t',duration.toFixed(3),'-vf','setpts=PTS-STARTPTS,format=yuv420p','-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast',bridge]);
-      return bridge;
-    };
     for (let index = 0; index < manifest.scenes.length; index += 1) {
       const scene = manifest.scenes[index];
       const clip = join(work, `scene-${String(index).padStart(4, '0')}.mp4`);
@@ -418,13 +415,7 @@ export class FfmpegRenderer {
         await this.renderProcedural({ scene, asset, beat, clip, work, index, width, height, duration });
         const sceneStart = Math.max(0, Number(scene.startSec ?? timelineCursor));
         const gap = sceneStart - timelineCursor;
-        if (gap > 0.015) {
-          const source = clips.at(-1) ?? clip;
-          const bridge = await motionBridge(source, gap, index, clips.length ? 'last' : 'first');
-          if (clips.length) clips.push(bridge);
-          else clips.unshift(bridge);
-          timelineCursor = sceneStart;
-        }
+        if (gap > 0.015) throw new Error(`RENDER_PLAN_INVALID: unassigned timeline gap ${gap.toFixed(3)}s before ${scene.id}`);
         clips.push(clip);
         timelineCursor = Math.max(timelineCursor, sceneStart + duration);
         continue;
@@ -448,10 +439,10 @@ export class FfmpegRenderer {
         // later keyframe and silently shift the visual into an unrelated shot.
         // Decode from the requested timestamp, reset timestamps, and force one
         // stable CFR output so every clip starts on the intended motion.
-         // A semantic segment can be shorter than the narration phrase. Looping
-         // the already-selected source clip keeps the editorial timeline clock
-         // authoritative instead of silently shortening the final MP4.
-         const inputArgs = ['-y','-stream_loop','-1','-i',source];
+         const sourceDuration = await this.probeDuration(source);
+         const availableDuration = Math.max(0, (clipEnd ?? sourceDuration) - clipStart);
+         if (availableDuration + 0.05 < duration) throw new Error(`RENDER_PLAN_INVALID: scene ${scene.id} requests ${duration.toFixed(3)}s but source provides ${availableDuration.toFixed(3)}s`);
+         const inputArgs = ['-y','-i',source];
         if (clipStart > 0) inputArgs.push('-ss',String(clipStart));
         inputArgs.push('-t',String(duration),'-vf',`${videoFilter},setpts=PTS-STARTPTS`,'-fps_mode','cfr','-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast','-avoid_negative_ts','make_zero',clip);
         await run(this.ffmpeg, inputArgs);
@@ -459,14 +450,8 @@ export class FfmpegRenderer {
         throw new Error(`Scene ${scene.id} has no renderable visual asset`);
       }
       const sceneStart = Math.max(0, Number(scene.startSec ?? timelineCursor));
-      const gap = sceneStart - timelineCursor;
-      if (gap > 0.015) {
-        const source = clips.at(-1) ?? clip;
-        const bridge = await motionBridge(source, gap, index, clips.length ? 'last' : 'first');
-        if (clips.length) clips.push(bridge);
-        else clips.unshift(bridge);
-        timelineCursor = sceneStart;
-      }
+       const gap = sceneStart - timelineCursor;
+       if (gap > 0.015) throw new Error(`RENDER_PLAN_INVALID: unassigned timeline gap ${gap.toFixed(3)}s before ${scene.id}`);
       clips.push(clip);
       timelineCursor = Math.max(timelineCursor, sceneStart + duration);
     }

@@ -110,7 +110,11 @@ export function withGeminiWordAlignment(provider,options={}){
       const interaction=await request(fetchFn,'https://generativelanguage.googleapis.com/v1beta/interactions',apiKey,{method:'POST',headers:{'Content-Type':'application/json','Api-Revision':'2026-05-20'},body:JSON.stringify({model,input:[{type:'audio',uri:fileUri,mime_type:mimeType}],generation_config:{transcription_config:{language_codes:input.language?[input.language]:[],mode:{type:'verbatim',timestamp_granularities:['word']}}}})});
       const json=await interaction.json();const words=extractWords(json);if(!words.length)throw new Error('Gemini Transcribe returned no word_info timestamps');
       const converted=wordTimestampsToCharacterAlignment(input.text,words,asset.durationSeconds??words.at(-1)?.end);
-      if(converted.coverage<minCoverage)throw new Error(`Gemini word alignment coverage ${Math.round(converted.coverage*100)}% is below required ${Math.round(minCoverage*100)}%`);
+      // Coverage is computed from floating-point character spans; a result
+      // reported as 88.0% can be a few ulps below the configured 0.88 floor.
+      // Keep the real alignment strict while allowing that reporting-scale
+      // rounding error, rather than falling back to estimated timing.
+      if(converted.coverage+0.001<minCoverage)throw new Error(`Gemini word alignment coverage ${Math.round(converted.coverage*100)}% is below required ${Math.round(minCoverage*100)}%`);
       const duration=Math.max(Number(asset.durationSeconds??0),Number(words.at(-1)?.end??0));const transcriptionCostUsd=round6(duration/60*usdPerMinute);
       return{...asset,durationSeconds:duration,alignment:converted.alignment,metadata:{...(asset.metadata??{}),alignmentSource:'gemini-word-timestamps',alignmentCoverage:round6(converted.coverage),transcriptionModel:model,transcriptionWordCount:words.length,wordTimestamps:words.map(({text,start,end})=>({word:text,startTime:start,endTime:end,confidence:null})),transcriptionUsdPerMinute:usdPerMinute,transcriptionCostUsd}};
     }catch(error){
