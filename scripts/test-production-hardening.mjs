@@ -88,6 +88,16 @@ try{
   assert.ok(restCalls.some((call)=>call.target.endsWith('/files/test-audio')&&call.init.method==='DELETE'));
 }finally{await rm(temp,{recursive:true,force:true});}
 
+const numericAlignment=wordTimestampsToCharacterAlignment('At four thousand meters, that\'s deep.',[
+  {text:'At',normalized:'at',start:0,end:0.1},
+  {text:'4,000',normalized:'4000',start:0.1,end:0.8},
+  {text:'m',normalized:'m',start:0.8,end:0.95},
+  {text:"that's",normalized:'thats',start:1,end:1.4},
+  {text:'deep',normalized:'deep',start:1.4,end:1.8},
+],1.8);
+assert.ok(numericAlignment.coverage > 0.9);
+assert.deepEqual(numericAlignment.unmatchedSourceWords, []);
+
 const live=await readFile('scripts/live-pipeline.mjs','utf8');
 assert.match(live,/AUTO_YTB_CHANNEL_NICHE/);
 assert.match(live,/AUTO_YTB_CONTENT_TOPIC/);

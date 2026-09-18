@@ -12,6 +12,9 @@ import {
   WorldRegistry,
   assertFinalTimelineIsVideoOnly,
   assertFinalTimelineVideoOnly,
+  evaluateCreativeQC,
+  assessShotFeasibility,
+  redesignHighRiskShot,
 } from '../packages/production/dist/index.js';
 import { HiggsfieldVideoProvider } from '../packages/providers/dist/index.js';
 
@@ -51,10 +54,26 @@ try {
   for (let index = 0; index < 10; index += 1) performance.record({ provider: 'reliable', model: 'b', shotType: 'hook', accepted: index < 9, usableSeconds: index < 9 ? 3 : 0, costUsd: 0.2, latencyMs: 120, quality: index < 9 ? 88 : 50 });
   assert.equal(performance.rank([{ provider: 'cheap', model: 'a', estimatedCostUsd: 0.1 }, { provider: 'reliable', model: 'b', estimatedCostUsd: 0.2 }], 'hook')[0].provider, 'reliable');
 
+  const storyBeats = [
+    { beatId: 'danger', description: 'A kitten is trapped beside rising water.', requiredVisualTerms: ['kitten', 'trapped', 'rising water'] },
+    { beatId: 'rescue', description: 'The cat pulls the kitten to safety.', requiredVisualTerms: ['cat', 'pulls', 'kitten', 'safety'] },
+  ];
+  const semanticShot = (shotId, storyBeat, action, result, purpose, framing) => ({ shotId, scene: shotId, narrativePurpose: purpose, startTime: 0, desiredDurationSeconds: 4, aspectRatio: '9:16', visualDescription: action, primarySubject: 'orange-cat-v1', characterIds: ['orange-cat-v1'], action, framing, camera: 'documentary camera', motion: 'readable motion', realismTarget: 'STYLIZED_REAL', styleTarget: 'consistent', continuityDependencies: [], importance: purpose === 'hook' ? 'HERO' : purpose === 'end' ? 'PAYOFF' : 'UTILITY', generationEligible: true, sourcePolicy: 'GENERATIVE_ONLY', maxCostUsd: 0.2, qualityFloor: 75, referenceRequirements: [], semanticContract: { subject: 'orange-cat-v1', action, result, storyBeat } });
+  const strongCreative = evaluateCreativeQC({ storyBeats, technicalPass: true, shots: [semanticShot('s1', 'danger', 'turns toward the trapped kitten beside rising water', 'danger is visible', 'hook', 'wide'), semanticShot('s2', 'rescue', 'pulls the kitten to safe pavement', 'kitten reaches safety', 'end', 'medium close-up')] });
+  assert.equal(strongCreative.creativePass, true);
+  const genericCreative = evaluateCreativeQC({ storyBeats, technicalPass: true, shots: [semanticShot('g1', 'danger', 'perform one simple physically plausible action', '', 'hook', 'medium'), semanticShot('g2', 'danger', 'perform one simple physically plausible action', '', 'story progression', 'medium')] });
+  assert.equal(genericCreative.creativePass, false);
+  assert.ok(genericCreative.reasons.includes('STORY_BEAT_COVERAGE_INCOMPLETE'));
+  assert.equal(assessShotFeasibility({ ...semanticShot('risk', 'rescue', 'walks while opening a bottle, pouring liquid, handing it to a second character, and reacting', 'object changes hands', 'story progression', 'wide'), characterIds: ['a', 'b'], semanticContract: { subject: 'a', action: 'walks while opening a bottle, pouring liquid, handing it to a second character, and reacting', object: 'bottle', cause: 'thirst', result: 'drink is handed over', storyBeat: 'rescue' } }).level, 'HIGH_RISK');
+  const redesigned = redesignHighRiskShot({ ...semanticShot('risk-2', 'rescue', 'walks while opening a bottle, pouring liquid, handing it to a second character, and reacting', 'object changes hands', 'story progression', 'wide'), characterIds: ['a', 'b'], semanticContract: { subject: 'a', action: 'walks while opening a bottle, pouring liquid, handing it to a second character, and reacting', object: 'bottle', cause: 'thirst', result: 'drink is handed over', storyBeat: 'rescue' } });
+  assert.equal(assessShotFeasibility(redesigned).redesignRequired, false);
+
   const ledger = new CostOptimizer({ targetUsd: 1, hardUsd: 1, spentUsd: 0, reservedUsd: 0, generatedSeconds: 0, acceptedSeconds: 0, rejectedCostUsd: 0, providerBreakdown: {}, modelBreakdown: {} });
   ledger.reserve(0.2, 'hero');
   ledger.settle({ provider: 'reliable', model: 'b', costUsd: 0.2, generatedSeconds: 4, acceptedSeconds: 4, accepted: true });
   assert.equal(ledger.snapshot().costPerAcceptedUsableSecond, 0.05);
+  ledger.settle({ provider: 'reliable', model: 'b', costUsd: 0.1, generatedSeconds: 4, acceptedSeconds: 0, accepted: false });
+  assert.equal(ledger.snapshot().wastedGenerationCostUsd, 0.1);
   assert.throws(() => ledger.reserve(0.9, 'over-budget'), /BUDGET_BLOCK/);
 
   const repair = new RepairOrchestrator().decide({ mode: 'FULL_GENERATIVE', quality: { technicalValidity: true, subjectCorrectness: 'STRONG', actionCorrectness: 'WEAK', characterIdentity: 'NOT_APPLICABLE', worldIdentity: 'NOT_APPLICABLE', temporalCoherence: 'STRONG', physics: 'WEAK', styleMatch: 'STRONG', motion: 'STRONG', artifactIssues: ['PHYSICS'], method: 'fixture', score: 60, accepted: false, rejectionReasons: ['PHYSICS'] }, attemptNumber: 1, maxAttempts: 3, estimatedCostUsd: 0.2, hasReferences: false, retrievalAllowed: false });
@@ -62,6 +81,7 @@ try {
   const temporalRepair = new RepairOrchestrator().decide({ mode: 'CHARACTER_SERIES', quality: { technicalValidity: true, subjectCorrectness: 'STRONG', actionCorrectness: 'STRONG', characterIdentity: 'STRONG', worldIdentity: 'STRONG', temporalCoherence: 'WEAK', physics: 'STRONG', styleMatch: 'STRONG', motion: 'WEAK', artifactIssues: ['FREEZE_DETECTED'], method: 'fixture', score: 70, accepted: false, rejectionReasons: ['FREEZE_DETECTED'] }, attemptNumber: 1, maxAttempts: 3, estimatedCostUsd: 0.4, hasReferences: true, retrievalAllowed: false });
   assert.equal(temporalRepair.strategy, 'SIMPLIFY_ACTION');
   assert.equal(new RepairOrchestrator().decide({ mode: 'FULL_GENERATIVE', quality: { technicalValidity: false, subjectCorrectness: 'WEAK', actionCorrectness: 'WEAK', characterIdentity: 'NOT_APPLICABLE', worldIdentity: 'NOT_APPLICABLE', temporalCoherence: 'WEAK', physics: 'NOT_APPLICABLE', styleMatch: 'WEAK', motion: 'WEAK', artifactIssues: ['PROVIDER'], method: 'fixture', score: 0, accepted: false, rejectionReasons: ['PROVIDER'] }, attemptNumber: 3, maxAttempts: 3, estimatedCostUsd: 0.2, hasReferences: false, retrievalAllowed: false }).strategy, 'ABORT');
+  assert.equal(new RepairOrchestrator().decide({ mode: 'FULL_GENERATIVE', quality: { technicalValidity: false, subjectCorrectness: 'WEAK', actionCorrectness: 'WEAK', characterIdentity: 'NOT_APPLICABLE', worldIdentity: 'NOT_APPLICABLE', temporalCoherence: 'WEAK', physics: 'NOT_APPLICABLE', styleMatch: 'WEAK', motion: 'WEAK', artifactIssues: ['PROVIDER'], method: 'fixture', score: 0, accepted: false, rejectionReasons: ['Gemini API request failed 429 RESOURCE_EXHAUSTED'] }, attemptNumber: 1, maxAttempts: 3, estimatedCostUsd: 0.2, hasReferences: false, retrievalAllowed: false }).strategy, 'ABORT');
 
   const stored = [];
   const requests = [];

@@ -2,9 +2,27 @@ import { readFile } from 'node:fs/promises';
 
 const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));
 const round6=(value)=>Math.round(Number(value||0)*1_000_000)/1_000_000;
-const normalizeWord=(value)=>String(value??'').normalize('NFKD').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu,'');
+const normalizeWord=(value)=>{
+  const normalized=String(value??'').normalize('NFKD').toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu,'');
+  const aliases={metre:'m',metres:'m',meter:'m',meters:'m',kilometre:'km',kilometres:'km',kilometer:'km',kilometers:'km'};
+  return aliases[normalized]??normalized;
+};
 const numberTens={twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
 const numberUnits={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9};
+function numberValueAt(items,index){
+  const current=items[index]?.normalized??'';
+  if(/^\d+$/.test(current))return{value:Number(current),span:1};
+  if(numberTens[current]!=null){const next=items[index+1]?.normalized;return numberUnits[next]!=null?{value:numberTens[current]+numberUnits[next],span:2}:{value:numberTens[current],span:1};}
+  if(numberUnits[current]!=null){const next=items[index+1]?.normalized;
+    if(next==='thousand'||next==='hundred'){
+      const multiplier=next==='thousand'?1000:100;let value=numberUnits[current]*multiplier;let span=2;const after=items[index+2]?.normalized;
+      if(numberUnits[after]!=null){value+=numberUnits[after];span+=1;}
+      return{value,span};
+    }
+    return{value:numberUnits[current],span:1};
+  }
+  return null;
+}
 const parseOffset=(value)=>{const n=Number(String(value??'').replace(/s$/i,''));return Number.isFinite(n)?Math.max(0,n):null;};
 
 async function request(fetchFn,url,apiKey,init={},attempts=4){
@@ -55,31 +73,28 @@ export function wordTimestampsToCharacterAlignment(text,words,durationSeconds){
   // in the same coordinate system so emoji/non-BMP characters cannot shift every later timestamp.
   const characters=String(text).split('');
   const starts=Array(characters.length).fill(Number.NaN),ends=Array(characters.length).fill(Number.NaN);
-  const tokens=sourceTokens(String(text));let tokenCursor=0,matchedCharacters=0;
-  for(const word of words){
+  const tokens=sourceTokens(String(text));let tokenCursor=0,matchedCharacters=0;const matchedTokenIndexes=new Set();
+  for(let wordIndex=0;wordIndex<words.length;wordIndex+=1){
+    const word=words[wordIndex];
     if(!word.normalized)continue;
-    let matchIndex=-1;
+    let matchIndex=-1;let sourceSpan=1;let providerSpan=1;
     for(let i=tokenCursor;i<Math.min(tokens.length,tokenCursor+7);i+=1){
       const exact=tokens[i].normalized===word.normalized;
-      const numericValue=/^\d{2}$/.test(word.normalized)?Number(word.normalized):null;
-      const tensValue=numberTens[tokens[i].normalized];
-      const numeric= numericValue!=null && tensValue!=null && numericValue>=tensValue && numericValue<tensValue+10 && numberUnits[tokens[i+1]?.normalized];
-      if(exact||numeric){matchIndex=i;break;}
+      const sourceNumber=numberValueAt(tokens,i),providerNumber=numberValueAt(words,wordIndex);
+      const numeric=Boolean(sourceNumber&&providerNumber&&sourceNumber.value===providerNumber.value);
+      if(exact||numeric){matchIndex=i;sourceSpan=numeric?sourceNumber.span:1;providerSpan=numeric?providerNumber.span:1;break;}
     }
     if(matchIndex<0)continue;
-    const token=tokens[matchIndex];
-    const numericValue=/^\d{2}$/.test(word.normalized)?Number(word.normalized):null;
-    const nextToken=tokens[matchIndex+1];
-    const nextNumericUnit=nextToken&&numberUnits[nextToken.normalized];
-    const tensValue=numberTens[token.normalized];
-    const matchedTokens=(numericValue!=null&&tensValue!=null&&numericValue>=tensValue&&numericValue<tensValue+10&&nextNumericUnit)?[token,nextToken]:[token];
-    tokenCursor=matchIndex+matchedTokens.length;
+    const matchedTokens=tokens.slice(matchIndex,matchIndex+sourceSpan);tokenCursor=matchIndex+sourceSpan;
+    for(let i=matchIndex;i<matchIndex+sourceSpan;i+=1)matchedTokenIndexes.add(i);
+    const wordEnd=words[Math.min(words.length-1,wordIndex+providerSpan-1)].end;
     const totalSpan=Math.max(1,matchedTokens.reduce((sum,item)=>sum+item.end-item.start,0));
     let tokenOffset=0;
     for(const matchedToken of matchedTokens){
-      const span=Math.max(1,matchedToken.end-matchedToken.start),step=Math.max(0.001,(word.end-word.start)/totalSpan);
-      for(let i=matchedToken.start;i<matchedToken.end&&i<characters.length;i+=1){starts[i]=word.start+tokenOffset*step;ends[i]=Math.min(word.end,word.start+(tokenOffset+1)*step);matchedCharacters+=1;tokenOffset+=1;}
+      const span=Math.max(1,matchedToken.end-matchedToken.start),step=Math.max(0.001,(wordEnd-word.start)/totalSpan);
+      for(let i=matchedToken.start;i<matchedToken.end&&i<characters.length;i+=1){starts[i]=word.start+tokenOffset*step;ends[i]=Math.min(wordEnd,word.start+(tokenOffset+1)*step);matchedCharacters+=1;tokenOffset+=1;}
     }
+    wordIndex+=providerSpan-1;
   }
   const duration=Math.max(0.1,Number(durationSeconds??words.at(-1)?.end??0.1));
   let lastKnownEnd=0;
@@ -93,7 +108,7 @@ export function wordTimestampsToCharacterAlignment(text,words,durationSeconds){
     lastKnownEnd=ends[gapEnd];i=gapEnd;
   }
   const coverage=matchedCharacters/Math.max(1,tokens.reduce((sum,token)=>sum+(token.end-token.start),0));
-  return{alignment:{characters,characterStartTimesSeconds:starts,characterEndTimesSeconds:ends},coverage};
+  return{alignment:{characters,characterStartTimesSeconds:starts,characterEndTimesSeconds:ends},coverage,unmatchedSourceWords:tokens.filter((_,index)=>!matchedTokenIndexes.has(index)).map((token)=>token.text),providerWords:words.map((word)=>word.text)};
 }
 
 export function withGeminiWordAlignment(provider,options={}){
@@ -114,7 +129,7 @@ export function withGeminiWordAlignment(provider,options={}){
       // reported as 88.0% can be a few ulps below the configured 0.88 floor.
       // Keep the real alignment strict while allowing that reporting-scale
       // rounding error, rather than falling back to estimated timing.
-      if(converted.coverage+0.001<minCoverage)throw new Error(`Gemini word alignment coverage ${Math.round(converted.coverage*100)}% is below required ${Math.round(minCoverage*100)}%`);
+      if(converted.coverage+0.001<minCoverage){const detail=converted.unmatchedSourceWords.slice(0,12).join('|');throw new Error(`Gemini word alignment coverage ${Math.round(converted.coverage*100)}% is below required ${Math.round(minCoverage*100)}%; unmatched=${detail}`);}
       const duration=Math.max(Number(asset.durationSeconds??0),Number(words.at(-1)?.end??0));const transcriptionCostUsd=round6(duration/60*usdPerMinute);
       return{...asset,durationSeconds:duration,alignment:converted.alignment,metadata:{...(asset.metadata??{}),alignmentSource:'gemini-word-timestamps',alignmentCoverage:round6(converted.coverage),transcriptionModel:model,transcriptionWordCount:words.length,wordTimestamps:words.map(({text,start,end})=>({word:text,startTime:start,endTime:end,confidence:null})),transcriptionUsdPerMinute:usdPerMinute,transcriptionCostUsd}};
     }catch(error){

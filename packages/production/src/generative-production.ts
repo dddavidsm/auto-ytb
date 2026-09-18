@@ -206,7 +206,156 @@ export type ShotContract = {
   maxCostUsd: number | null;
   qualityFloor: number;
   referenceRequirements: string[];
+  semanticContract?: ShotSemanticContract;
 };
+
+export type ShotSemanticContract = {
+  subject: string;
+  action: string;
+  object?: string;
+  cause?: string;
+  result?: string;
+  emotion?: string;
+  storyBeat: string;
+};
+
+export type StoryBeatContract = {
+  beatId: string;
+  description: string;
+  requiredVisualTerms: string[];
+  importance?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+};
+
+export type ShotFeasibility = {
+  level: 'EASY' | 'MODERATE' | 'HARD' | 'HIGH_RISK';
+  factors: string[];
+  redesignRequired: boolean;
+};
+
+export type CreativeQCReport = {
+  version: 'CREATIVE_QC_V1';
+  technicalPass: boolean;
+  creativePass: boolean;
+  humanReviewQualityFloor: number;
+  score: number;
+  dimensions: {
+    storyClarity: number;
+    storyCoverage: number;
+    shotSpecificity: number;
+    narrativeProgression: number;
+    visualCausality: number;
+    shotDiversity: number;
+    hook: number;
+    payoff: number;
+    genericCoverage: number;
+    redundancy: number;
+    pacing: number;
+  };
+  beatCoverage: Array<{ beatId: string; covered: boolean; shotIds: string[]; reason: string }>;
+  feasibility: Array<{ shotId: string; level: ShotFeasibility['level']; factors: string[]; redesignRequired: boolean }>;
+  reasons: string[];
+};
+
+const creativeTokens = (value: string | undefined): string[] => String(value ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [];
+const creativeOverlap = (left: string[], right: string[]): number => {
+  const target = new Set(right.flatMap(creativeTokens));
+  const source = [...new Set(left.flatMap(creativeTokens))];
+  return source.length ? source.filter((item) => target.has(item)).length / source.length : 0;
+};
+
+export function assessShotFeasibility(shot: ShotContract): ShotFeasibility {
+  const factors: string[] = [];
+  const contract = shot.semanticContract;
+  const text = `${shot.action} ${shot.visualDescription}`.toLowerCase();
+  const characters = shot.characterIds.length;
+  if (characters > 1) factors.push('MULTI_CHARACTER');
+  if (contract?.object || /object|bottle|spoon|bird|ball|tool|liquid|food|car\\b/i.test(text)) factors.push('OBJECT_INTERACTION');
+  if (/hand|finger|paw|grip|pick|hold|pull|catch|open|pour|drink|eat|climb|carry/i.test(text)) factors.push('CONTACT_ANATOMY');
+  if (/then|after|before|while|and then|followed by|until/i.test(text)) factors.push('MULTI_STEP_ACTION');
+  if (/water|rain|fire|smoke|wind|flow|fall|impact|moving vehicle|crowd/i.test(text)) factors.push('DYNAMIC_PHYSICS');
+  if (/orbit|drone|complex|whip|rapid|zoom|spin|choreograph/i.test(`${shot.camera} ${shot.motion}`)) factors.push('COMPLEX_CAMERA');
+  const hardFactors = factors.filter((factor) => ['MULTI_CHARACTER', 'OBJECT_INTERACTION', 'CONTACT_ANATOMY', 'DYNAMIC_PHYSICS'].includes(factor)).length;
+  const level = factors.length >= 4 || (hardFactors >= 3 && factors.includes('MULTI_STEP_ACTION')) ? 'HIGH_RISK' : factors.length >= 3 ? 'HARD' : factors.length >= 1 ? 'MODERATE' : 'EASY';
+  return { level, factors, redesignRequired: level === 'HIGH_RISK' };
+}
+
+/**
+ * Converts a high-risk request into a single, filmable action without
+ * discarding the semantic contract that made the shot narratively useful.
+ * This is a planning operation, not a quality bypass: the redesigned shot
+ * is still evaluated by the normal preflight and clip QC gates.
+ */
+export function redesignHighRiskShot(shot: ShotContract): ShotContract {
+  const feasibility = assessShotFeasibility(shot);
+  if (!feasibility.redesignRequired) return shot;
+  const action = shot.action.trim();
+  const firstAction = action.split(/\s+(?:then|and then|while|after|before|until)\s+/i)[0].replace(/[.;]+$/, '').trim();
+  const subject = shot.semanticContract?.subject ?? shot.primarySubject;
+  const object = shot.semanticContract?.object;
+  const objectConstraint = object ? ` Keep the ${object.replace(/\b(rainy|wet|rushing|flowing)\b/gi, '').replace(/\s+/g, ' ').trim()} continuously visible.` : '';
+  return {
+    ...shot,
+    visualDescription: `${subject}: ${firstAction || action}.${objectConstraint}`,
+    action: `${firstAction || action}. Perform only this one continuous action with clear contact and readable cause and result.${objectConstraint}`,
+    framing: /close|detail/i.test(shot.framing) ? shot.framing : 'stable medium shot',
+    camera: 'locked documentary camera with subtle natural movement',
+    motion: 'slow readable real-time motion with a gentle steady camera move',
+    continuityDependencies: [...shot.continuityDependencies, `preflight redesign from ${feasibility.factors.join(', ')}`],
+    semanticContract: shot.semanticContract ? {
+      ...shot.semanticContract,
+      subject,
+      action: `${firstAction || action}; one continuous action`,
+    } : undefined,
+  };
+}
+
+export function evaluateCreativeQC(input: { storyBeats: StoryBeatContract[]; shots: ShotContract[]; technicalPass: boolean; humanReviewQualityFloor?: number }): CreativeQCReport {
+  const beats = input.storyBeats;
+  const shots = input.shots;
+  const feasibility = shots.map((shot) => ({ shotId: shot.shotId, ...assessShotFeasibility(shot) }));
+  const beatCoverage = beats.map((beat) => {
+    const matches = shots.filter((shot) => {
+      if (shot.semanticContract?.storyBeat === beat.beatId) return true;
+      const text = `${shot.visualDescription} ${shot.action} ${shot.semanticContract?.result ?? ''}`;
+      return creativeOverlap(beat.requiredVisualTerms, [text]) >= 0.35;
+    });
+    return { beatId: beat.beatId, covered: matches.length > 0, shotIds: matches.map((shot) => shot.shotId), reason: matches.length ? 'A shot has an explicit semantic contract for this beat.' : 'No shot contract demonstrates the required visual beat.' };
+  });
+  const contracts = shots.map((shot) => shot.semanticContract).filter((item): item is ShotSemanticContract => Boolean(item));
+  const uniqueActions = new Set(contracts.map((item) => item.action.toLowerCase().trim())).size;
+  const generic = shots.filter((shot) => !shot.semanticContract || /establish the situation|perform one simple|show the subject|generic|appropriate to the story/i.test(`${shot.action} ${shot.visualDescription}`)).length;
+  const frames = new Set(shots.map((shot) => shot.framing));
+  const cameras = new Set(shots.map((shot) => shot.camera));
+  const hook = shots[0] && shots[0].narrativePurpose === 'hook' && Boolean(shots[0].semanticContract?.action) ? 100 : 0;
+  const payoff = shots.at(-1) && ['payoff', 'end', 'result'].includes(shots.at(-1)?.narrativePurpose ?? '') && Boolean(shots.at(-1)?.semanticContract?.result) ? 100 : 0;
+  const storyCoverage = beats.length ? Math.round(100 * beatCoverage.filter((item) => item.covered).length / beats.length) : 0;
+  const genericCoverage = shots.length ? Math.round(100 * generic / shots.length) : 100;
+  const dimensions = {
+    storyClarity: storyCoverage,
+    storyCoverage,
+    shotSpecificity: contracts.length === shots.length ? 100 : 0,
+    narrativeProgression: Math.min(100, Math.round(contracts.length ? uniqueActions / Math.max(1, Math.min(shots.length, 5)) * 100 : 0)),
+    visualCausality: contracts.filter((item) => item.cause && item.result).length === contracts.length && contracts.length > 0 ? 100 : 50,
+    shotDiversity: Math.min(100, frames.size * 25 + cameras.size * 15),
+    hook,
+    payoff,
+    genericCoverage,
+    redundancy: Math.max(0, 100 - Math.round(100 * Math.max(0, shots.length - uniqueActions) / Math.max(1, shots.length))),
+    pacing: shots.length >= 3 && shots.every((shot) => shot.desiredDurationSeconds > 0) ? 100 : 0,
+  };
+  const score = Math.round((dimensions.storyClarity * 0.2 + dimensions.shotSpecificity * 0.15 + dimensions.narrativeProgression * 0.15 + dimensions.visualCausality * 0.12 + dimensions.shotDiversity * 0.1 + dimensions.hook * 0.1 + dimensions.payoff * 0.1 + (100 - dimensions.genericCoverage) * 0.05 + dimensions.redundancy * 0.03) * 1);
+  const humanReviewQualityFloor = input.humanReviewQualityFloor ?? 75;
+  const reasons: string[] = [];
+  if (!input.technicalPass) reasons.push('TECHNICAL_QC_FAILED');
+  if (storyCoverage < 100) reasons.push('STORY_BEAT_COVERAGE_INCOMPLETE');
+  if (dimensions.shotSpecificity < 100) reasons.push('SHOT_SEMANTIC_CONTRACT_MISSING');
+  if (genericCoverage > 35) reasons.push('GENERIC_COVERAGE_TOO_HIGH');
+  if (hook < 100) reasons.push('HOOK_NOT_VISUALLY_SPECIFIC');
+  if (payoff < 100) reasons.push('PAYOFF_NOT_VISUALLY_SPECIFIC');
+  if (feasibility.some((item) => item.redesignRequired)) reasons.push('HIGH_RISK_SHOT_REQUIRES_REDESIGN');
+  if (score < humanReviewQualityFloor) reasons.push('HUMAN_REVIEW_QUALITY_FLOOR_NOT_MET');
+  return { version: 'CREATIVE_QC_V1', technicalPass: input.technicalPass, creativePass: input.technicalPass && reasons.length === 0, humanReviewQualityFloor, score, dimensions, beatCoverage, feasibility, reasons };
+}
 
 export class GenerationPromptCompiler {
   compile(shot: ShotContract, characters: CharacterIdentity[], world: WorldIdentity | null, references: ReferencePack, negativeConstraints: string[] = []): string {
@@ -259,12 +408,12 @@ export function evaluateGeneratedClipQuality(input: Omit<GeneratedClipQuality, '
   return { ...input, score, accepted: rejectionReasons.length === 0, rejectionReasons };
 }
 
-export type GenerationCostLedger = { targetUsd: number | null; hardUsd: number | null; spentUsd: number; reservedUsd: number; generatedSeconds: number; acceptedSeconds: number; rejectedCostUsd: number; providerBreakdown: Record<string, number>; modelBreakdown: Record<string, number>; };
+export type GenerationCostLedger = { targetUsd: number | null; hardUsd: number | null; spentUsd: number; reservedUsd: number; generatedSeconds: number; acceptedSeconds: number; rejectedCostUsd: number; wastedGenerationCostUsd?: number; providerBreakdown: Record<string, number>; modelBreakdown: Record<string, number>; };
 
 export class CostOptimizer {
   constructor(private readonly ledger: GenerationCostLedger) {}
   reserve(costUsd: number, reason: string): void { if (costUsd < 0) throw new Error('NEGATIVE_COST'); const available = this.ledger.hardUsd == null ? Infinity : this.ledger.hardUsd - this.ledger.spentUsd - this.ledger.reservedUsd; if (costUsd > available + 1e-9) throw new Error(`BUDGET_BLOCK:${reason}`); this.ledger.reservedUsd += costUsd; }
-  settle(input: { provider: string; model: string; costUsd: number; generatedSeconds: number; acceptedSeconds: number; accepted: boolean }): void { this.ledger.reservedUsd = Math.max(0, this.ledger.reservedUsd - input.costUsd); this.ledger.spentUsd += input.costUsd; this.ledger.generatedSeconds += input.generatedSeconds; this.ledger.acceptedSeconds += input.acceptedSeconds; if (!input.accepted) this.ledger.rejectedCostUsd += input.costUsd; this.ledger.providerBreakdown[input.provider] = (this.ledger.providerBreakdown[input.provider] ?? 0) + input.costUsd; this.ledger.modelBreakdown[input.model] = (this.ledger.modelBreakdown[input.model] ?? 0) + input.costUsd; }
+  settle(input: { provider: string; model: string; costUsd: number; generatedSeconds: number; acceptedSeconds: number; accepted: boolean }): void { this.ledger.reservedUsd = Math.max(0, this.ledger.reservedUsd - input.costUsd); this.ledger.spentUsd += input.costUsd; this.ledger.generatedSeconds += input.generatedSeconds; this.ledger.acceptedSeconds += input.acceptedSeconds; if (!input.accepted) { this.ledger.rejectedCostUsd += input.costUsd; this.ledger.wastedGenerationCostUsd = (this.ledger.wastedGenerationCostUsd ?? 0) + input.costUsd; } this.ledger.providerBreakdown[input.provider] = (this.ledger.providerBreakdown[input.provider] ?? 0) + input.costUsd; this.ledger.modelBreakdown[input.model] = (this.ledger.modelBreakdown[input.model] ?? 0) + input.costUsd; }
   snapshot() { return { ...this.ledger, costPerAcceptedUsableSecond: this.ledger.acceptedSeconds > 0 ? this.ledger.spentUsd / this.ledger.acceptedSeconds : null, remainingUsd: this.ledger.hardUsd == null ? null : Math.max(0, this.ledger.hardUsd - this.ledger.spentUsd - this.ledger.reservedUsd) }; }
 }
 
@@ -275,6 +424,9 @@ export function diagnoseGenerationFailure(quality: GeneratedClipQuality): string
 export class RepairOrchestrator {
   decide(input: { mode: ProductionMode; quality: GeneratedClipQuality; attemptNumber: number; maxAttempts: number; estimatedCostUsd: number | null; hasReferences: boolean; retrievalAllowed: boolean }): RepairDecision {
     const category = diagnoseGenerationFailure(input.quality)[0] ?? 'UNKNOWN_GENERATION_FAILURE';
+    if (/429|quota|resource_exhausted|rate.?limit|unauthori[sz]ed|forbidden|invalid.?credential|billing/i.test(category)) {
+      return { category, strategy: 'ABORT', reason: 'Provider availability or authorization failure; stop instead of spending on an identical retry.', expectedGain: 0, estimatedCostUsd: null };
+    }
     if (input.attemptNumber >= input.maxAttempts) return { category, strategy: 'ABORT', reason: 'Maximum generation attempts reached.', expectedGain: 0, estimatedCostUsd: null };
     if (/character|identity|drift/i.test(category) && !input.hasReferences) return { category, strategy: 'ADD_REFERENCE', reason: 'Identity failure needs canonical reference assets before another request.', expectedGain: 0.7, estimatedCostUsd: input.estimatedCostUsd };
     if (/physics|anatomy|interaction|artifact|freeze|loop|temporal/i.test(category)) return { category, strategy: 'SIMPLIFY_ACTION', reason: 'Reduce action complexity and temporal risk before changing provider.', expectedGain: 0.55, estimatedCostUsd: input.estimatedCostUsd };

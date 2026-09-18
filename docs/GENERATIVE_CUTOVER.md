@@ -61,3 +61,11 @@ This section records an actual controlled validation run, not a contract fixture
 - B remains blocked by the historical image segments under VIDEO_ONLY. Exact moving replacements were not available for every named vehicle within the remaining validation budget, so no wrong-model substitute was promoted.
 
 The validation therefore proves real provider calls, billing reservation, rejection/repair behavior, and VIDEO_ONLY repair, but does not claim the full A-F milestone complete. D's visual result and E/F/B require further work before publication readiness.
+
+## Quality recovery validation (2026-09-18)
+
+The recovery pass adds a structured creative gate before generation and before final promotion. It checks explicit story-beat coverage, semantic shot contracts, hook/payoff specificity, visual causality, shot diversity, redundancy, pacing, and a human-review quality floor. A technical render is not eligible for `READY_FOR_HUMAN_REVIEW` when the story is only a sequence of generic or repeated shots.
+
+High-risk shot plans are redesigned into one continuous, filmable action while retaining the subject, object, cause, result, emotion, and story-beat contract. Provider quota/authentication failures now trip a finite abort path instead of spending on identical retries. Failed generative runs persist attempts, repair decisions, cost, and provider failure categories before exiting.
+
+The closeout run used the isolated `.data/autonomous-production/validation-closeout-budget.json` ledger. Gemini returned `429 RESOURCE_EXHAUSTED` for both the Lite and Fast D hook attempts; the new iteration therefore recorded $1.20 of estimated rejected generation cost and stopped further calls. No Higgsfield credential was configured. This is an external quota limitation, not a successful D/E validation. A and C remain valid and were not regenerated; F recovered word alignment but still stopped at an honest visual-match failure for the hyperbaric-chamber beat; B still requires exact moving replacements for its historical still scenes.
