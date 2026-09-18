@@ -25,6 +25,7 @@
     "production:smoke": "npm run build && node scripts/production-smoke.mjs",
     "production:pilot": "npm run build && node scripts/production-pilot.mjs",
     "production:autonomous": "npm run build && node --env-file-if-exists=.env.local scripts/run-autonomous-studio.mjs",
+    "production:create": "npm run build && node scripts/production-create.mjs",
     "test:autonomous-cutover": "node scripts/test-autonomous-studio-cutover.mjs",
     "test:visual-continuity-cutover": "npm run build && node scripts/test-visual-continuity-cutover.mjs",
     "test:footage-first": "npm run build && node scripts/test-footage-first.mjs",

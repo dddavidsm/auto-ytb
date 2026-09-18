@@ -4,9 +4,9 @@ import { createHash } from 'node:crypto';
 import { dirname, join, resolve, extname } from 'node:path';
 import { spawn } from 'node:child_process';
 import { NodeLocalObjectStore, FfmpegRenderer } from '../packages/runtime-node/index.mjs';
-import { GeminiVoiceProvider } from '../packages/providers/dist/index.js';
+import { GeminiVoiceProvider, GeminiVideoProvider } from '../packages/providers/dist/index.js';
 import { withGeminiWordAlignment } from '../packages/runtime-node/gemini-word-alignment.mjs';
-import { searchPexelsVideo, searchPixabayVideo, searchWikimediaVideo, scoreNativeVideoAvailability, evaluateFootagePro, buildKaraokeChunks, buildNarrationUnits, matchSemanticFootage, coverageFromTimeline, timelineMediaRatios, evaluateCreativeGreenlightEvidence, normalizeVisualIntent, parseShotBoundaries, segmentMediaRange, finalArtifactConsistencyGate, endingIntegrityReport, centralObjectEvidenceGate } from '../packages/production/dist/index.js';
+import { searchPexelsVideo, searchPixabayVideo, searchWikimediaVideo, scoreNativeVideoAvailability, evaluateFootagePro, buildKaraokeChunks, buildNarrationUnits, matchSemanticFootage, coverageFromTimeline, timelineMediaRatios, evaluateCreativeGreenlightEvidence, evaluateModeContract, normalizeVisualIntent, parseShotBoundaries, segmentMediaRange, finalArtifactConsistencyGate, endingIntegrityReport, centralObjectEvidenceGate, SyntheticBrollEngine, assertGenerationJustification, buildVisualContinuityProfile, buildVisualGapReport, compileSyntheticShotPrompt, passesPhotorealismGate } from '../packages/production/dist/index.js';
 
 // Canonical generic runtime. Run-specific topics, sources and decisions are
 // always artifacts; this file contains no production fixture content.
@@ -26,6 +26,7 @@ const arg = (name, fallback = undefined) => {
 };
 const mode = arg('mode', 'prompt');
 const requestedPrompt = arg('prompt');
+const requestedScriptPath = arg('script') || arg('script-path');
 const requestedScoutTopic = arg('scout-topic');
 const requestedDuration = Number(arg('duration', mode === 'radar' ? 150 : 90));
 const runId = arg('run-id', `studio-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 7)}`);
@@ -259,7 +260,7 @@ async function geminiVisualJson(framePaths, context = '', frameTimes = []) {
   const temporalGuide = frameTimes.length ? `Frame timestamps in source seconds, in order: ${frameTimes.map((value, index) => `F${index + 1}=${Number(value).toFixed(3)}s`).join(', ')}. Use these timestamps when estimating the first moment of the main action.` : '';
   const parts = [{ text: `Analyze the actual video frames below, not the filename or source title. ${context}
 ${temporalGuide}
-Return JSON only with these fields: entities (array of exact named entities visibly present), people, objects, actions (observable actions only), environment, location, visibleText, cameraDistance, cameraMovement, motionLevel (NONE|LOW|MEDIUM|HIGH|UNKNOWN), visualQuality (POOR|FAIR|GOOD|EXCELLENT|UNKNOWN), sourceAudioUseful (UNKNOWN unless independently verified), semanticDescription (one concrete sentence), confidence (0 to 1), temporal (object with actionOnsetTime, actionPeakTime, recommendedStartTime, recommendedEndTime, confidence, evidence). The temporal fields must be absolute source seconds when the frames show an action; otherwise use null for the action fields and the shot bounds for recommendedStartTime/recommendedEndTime. Do not guess an entity that cannot be visually identified. If the frames disagree, describe the sequence conservatively. A recommended range should begin shortly before the first visible action and end only after the action's useful visual resolution; never recommend a static lead-in merely because it is the first frame.` }];
+Return JSON only with these fields: entities (array of exact named entities visibly present), people, objects, actions (observable actions only), environment, location, visibleText, cameraDistance, cameraMovement, motionLevel (NONE|LOW|MEDIUM|HIGH|UNKNOWN), visualQuality (POOR|FAIR|GOOD|EXCELLENT|UNKNOWN), sourceAudioUseful (UNKNOWN unless independently verified), semanticDescription (one concrete sentence), confidence (0 to 1), photorealism (STRONG|MEDIUM|WEAK|UNKNOWN), temporalRealism (STRONG|MEDIUM|WEAK|UNKNOWN), styleMatch (STRONG|MEDIUM|WEAK|UNKNOWN), physics (STRONG|MEDIUM|WEAK|UNKNOWN), temporal (object with actionOnsetTime, actionPeakTime, recommendedStartTime, recommendedEndTime, confidence, evidence). The four realism fields are required only for a generated clip; otherwise use UNKNOWN. The temporal fields must be absolute source seconds when the frames show an action; otherwise use null for the action fields and the shot bounds for recommendedStartTime/recommendedEndTime. Do not guess an entity that cannot be visually identified. If the frames disagree, describe the sequence conservatively. A recommended range should begin shortly before the first visible action and end only after the action's useful visual resolution; never recommend a static lead-in merely because it is the first frame.` }];
   for (const framePath of framePaths) parts.push({ inlineData: { mimeType: 'image/jpeg', data: (await readFile(framePath)).toString('base64') } });
   const request = async (extra = '') => {
     const response = await fetchTimed(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(VISION_MODEL)}:generateContent`, {
@@ -276,7 +277,8 @@ Return JSON only with these fields: entities (array of exact named entities visi
   const list = (value) => Array.isArray(value) ? value.map(String).filter(Boolean) : [];
   const temporal = parsed.temporal && typeof parsed.temporal === 'object' ? parsed.temporal : {};
   const finiteOrNull = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
-  return { entities: list(parsed.entities), people: list(parsed.people), objects: list(parsed.objects), actions: list(parsed.actions), environment: list(parsed.environment), location: list(parsed.location), visibleText: list(parsed.visibleText), cameraDistance: clean(parsed.cameraDistance || 'UNKNOWN'), cameraMovement: clean(parsed.cameraMovement || 'UNKNOWN'), motionLevel: ['NONE', 'LOW', 'MEDIUM', 'HIGH', 'UNKNOWN'].includes(parsed.motionLevel) ? parsed.motionLevel : 'UNKNOWN', visualQuality: ['POOR', 'FAIR', 'GOOD', 'EXCELLENT', 'UNKNOWN'].includes(parsed.visualQuality) ? parsed.visualQuality : 'UNKNOWN', sourceAudioUseful: ['NONE', 'AMBIENCE', 'MECHANICAL', 'DIALOGUE', 'IMPACT', 'MUSIC', 'NOISY', 'UNKNOWN'].includes(parsed.sourceAudioUseful) ? parsed.sourceAudioUseful : 'UNKNOWN', semanticDescription: clean(parsed.semanticDescription || 'Unknown visual content'), confidence: Number.isFinite(Number(parsed.confidence)) ? Math.max(0, Math.min(1, Number(parsed.confidence))) : 0.35, temporal: { actionOnsetTime: finiteOrNull(temporal.actionOnsetTime), actionPeakTime: finiteOrNull(temporal.actionPeakTime), recommendedStartTime: finiteOrNull(temporal.recommendedStartTime), recommendedEndTime: finiteOrNull(temporal.recommendedEndTime), confidence: Number.isFinite(Number(temporal.confidence)) ? Math.max(0, Math.min(1, Number(temporal.confidence))) : 0, evidence: clean(temporal.evidence || '') } };
+  const realism=(value)=>['STRONG','MEDIUM','WEAK','UNKNOWN'].includes(value)?value:'UNKNOWN';
+  return { entities: list(parsed.entities), people: list(parsed.people), objects: list(parsed.objects), actions: list(parsed.actions), environment: list(parsed.environment), location: list(parsed.location), visibleText: list(parsed.visibleText), cameraDistance: clean(parsed.cameraDistance || 'UNKNOWN'), cameraMovement: clean(parsed.cameraMovement || 'UNKNOWN'), motionLevel: ['NONE', 'LOW', 'MEDIUM', 'HIGH', 'UNKNOWN'].includes(parsed.motionLevel) ? parsed.motionLevel : 'UNKNOWN', visualQuality: ['POOR', 'FAIR', 'GOOD', 'EXCELLENT', 'UNKNOWN'].includes(parsed.visualQuality) ? parsed.visualQuality : 'UNKNOWN', sourceAudioUseful: ['NONE', 'AMBIENCE', 'MECHANICAL', 'DIALOGUE', 'IMPACT', 'MUSIC', 'NOISY', 'UNKNOWN'].includes(parsed.sourceAudioUseful) ? parsed.sourceAudioUseful : 'UNKNOWN', semanticDescription: clean(parsed.semanticDescription || 'Unknown visual content'), confidence: Number.isFinite(Number(parsed.confidence)) ? Math.max(0, Math.min(1, Number(parsed.confidence))) : 0.35, photorealism:realism(parsed.photorealism), temporalRealism:realism(parsed.temporalRealism), styleMatch:realism(parsed.styleMatch), physics:realism(parsed.physics), temporal: { actionOnsetTime: finiteOrNull(temporal.actionOnsetTime), actionPeakTime: finiteOrNull(temporal.actionPeakTime), recommendedStartTime: finiteOrNull(temporal.recommendedStartTime), recommendedEndTime: finiteOrNull(temporal.recommendedEndTime), confidence: Number.isFinite(Number(temporal.confidence)) ? Math.max(0, Math.min(1, Number(temporal.confidence))) : 0, evidence: clean(temporal.evidence || '') } };
 }
 
 async function extractFrame(videoPath, seconds, targetPath) {
@@ -286,8 +288,13 @@ async function extractFrame(videoPath, seconds, targetPath) {
 }
 
 async function detectRealShots(videoPath, duration) {
-  const detected = await captureCommand('ffmpeg', ['-i', videoPath, '-vf', "select='gt(scene,0.28)',showinfo", '-an', '-f', 'null', '-']);
-  return parseShotBoundaries(detected.stderr, duration, 0.8);
+  // Analysis is deliberately cheaper than acquisition.  Full-resolution scene
+  // decoding of long stock clips made preflight crawl without improving a
+  // 45–240s edit; decode a bounded, downscaled inspection range and keep the
+  // source timecodes honest.
+  const inspectionDuration = Math.min(Math.max(0, Number(duration) || 0), 120);
+  const detected = await captureCommand('ffmpeg', ['-t', String(inspectionDuration), '-i', videoPath, '-vf', "scale=640:-2,select='gt(scene,0.28)',showinfo", '-an', '-f', 'null', '-']);
+  return parseShotBoundaries(detected.stderr, inspectionDuration || duration, 0.8);
 }
 
 function unknownSemanticProfile(asset, shot, frames, error = null) {
@@ -320,10 +327,15 @@ async function analyzeMovingAsset(asset, index) {
 async function geminiResearch(query, options = {}) {
   if (!API_KEY) throw new Error('GEMINI_API_KEY is required for research');
   const freshness = options.recencyDays ? `Prefer sources from the last ${options.recencyDays} days.` : '';
-  const response = await fetchTimed('https://generativelanguage.googleapis.com/v1beta/interactions', {
-    method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': API_KEY, 'Api-Revision': '2026-05-20' },
-    body: JSON.stringify({ model: SEARCH_MODEL, input: `Research this video opportunity with primary and reputable sources: ${query}. ${freshness} Return factual claims, dates, named entities, audiovisual leads and risks.`, tools: [{ type: 'google_search' }] }),
-  }, 60000);
+  let response;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    response = await fetchTimed('https://generativelanguage.googleapis.com/v1beta/interactions', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': API_KEY, 'Api-Revision': '2026-05-20' },
+      body: JSON.stringify({ model: SEARCH_MODEL, input: `Research this video opportunity with primary and reputable sources: ${query}. ${freshness} Return factual claims, dates, named entities, audiovisual leads and risks.`, tools: [{ type: 'google_search' }] }),
+    }, 60000);
+    if (response.ok || ![429, 500, 502, 503, 504].includes(response.status) || attempt === 2) break;
+    await sleep(1200 * (attempt + 1));
+  }
   if (!response.ok) throw new Error(`Gemini research ${response.status}: ${(await response.text()).slice(0, 700)}`);
   const json = await response.json();
   const sources = [];
@@ -343,6 +355,18 @@ async function geminiResearch(query, options = {}) {
     if (Array.isArray(node)) node.forEach(walk); else Object.values(node).forEach(walk);
   };
   walk(json);
+  // Some current Interactions responses render citations directly into the
+  // returned research text instead of exposing url_citation annotations. Keep
+  // those URLs as explicitly lower-confidence discovery receipts rather than
+  // silently writing an empty ResearchPack.
+  for (const url of textBlocks(json).join('\n').match(/https?:\/\/[^\s)\]}>]+/g) || []) {
+    const normalized = url.replace(/[.,;:]+$/, '');
+    if (!sources.some((source) => source.url === normalized)) {
+      let title = normalized;
+      try { title = new URL(normalized).hostname; } catch { /* URL was already validated by the regex. */ }
+      sources.push({ url: normalized, title, provenance: 'TEXT_URL_DISCOVERY' });
+    }
+  }
   return { query, retrievedAt: now(), synthesis: textBlocks(json).join('\n'), sources: sources.slice(0, 24) };
 }
 
@@ -376,12 +400,13 @@ async function noveltyAgainstHistory(candidate, history) {
   return { maxSimilarity: Math.max(0, ...scores.map((item) => item.similarity)), comparisons: scores };
 }
 
-async function discoverCommons(query, limit = 6) {
+async function discoverCommons(query, limit = 6, options = {}) {
   const url = new URL('https://commons.wikimedia.org/w/api.php');
   url.search = new URLSearchParams({ action: 'query', generator: 'search', gsrsearch: `${query} filetype:bitmap`, gsrnamespace: '6', gsrlimit: String(Math.min(12, limit * 2)), prop: 'imageinfo', iiprop: 'url|mime|size|extmetadata', iiurlwidth: '1600', format: 'json', origin: '*', maxlag: '5' }).toString();
   let response;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    response = await fetch(url, { headers: { 'user-agent': 'AUTO-YTB Media Intelligence research client (contact: local studio)' } });
+  const attempts = Math.max(1, Math.min(4, Number(options.attempts ?? 4)));
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    response = await fetchTimed(url, { headers: { 'user-agent': 'AUTO-YTB Media Intelligence research client (contact: local studio)' } }, Number(options.timeoutMs ?? 15000));
     if (response.status !== 429 && response.status !== 503) break;
     const retryAfter = Number(response.headers.get('retry-after') || 0);
     await sleep(Math.max(1200, retryAfter * 1000, 1200 * (attempt + 1)));
@@ -403,7 +428,7 @@ async function downloadAsset(asset, index) {
   if (!existsSync(target)) {
     let response;
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      response = await fetch(asset.url, { headers: { 'user-agent': 'AUTO-YTB Media Vault (contact: local studio)' } });
+      response = await fetchTimed(asset.url, { headers: { 'user-agent': 'AUTO-YTB Media Vault (contact: local studio)' } }, 30000);
       if (response.status !== 429 && response.status !== 503) break;
       const retryAfter = Number(response.headers.get('retry-after') || 0);
       await sleep(Math.max(1500, retryAfter * 1000, 1500 * (attempt + 1)));
@@ -421,9 +446,51 @@ async function buildOpportunity(promptInput, history) {
   if (mode === 'radar') return discoverOpportunity(history);
   if (!promptInput) throw new Error('Prompt mode requires --prompt');
   assertNovel(promptInput, 'prompt');
-  const inferred = await geminiJson(`Convert this creator prompt into a production brief for an autonomous video studio. Do not write the script yet. Resolve concrete named entities, domain, research query and 8-12 specific media queries that can find exact public audiovisual evidence. Return JSON with topic, angle, audience, domain, entities (3-8), researchQuery, visualQueries, titleHypotheses, thumbnailPromise. Prompt: ${promptInput}`);
+  const inferred = await geminiJson(`Convert this creator input into a production brief for an autonomous video studio. Do not write the final script yet. Resolve concrete named entities, domain, research query and 8-20 specific media queries that can find exact public audiovisual evidence. For a ranking/list, return every proposed ranked entity in entities and create entity-specific moving-video queries for each. Return JSON with topic, angle, audience, domain, entities, researchQuery, visualQueries, titleHypotheses, thumbnailPromise. Creator input: ${promptInput}`);
   assertNovel(JSON.stringify(inferred), 'inferred prompt');
   return { ...inferred, topic: inferred.topic || promptInput, angle: inferred.angle || promptInput, inputMode: 'USER_PROMPT', selectedAt: now(), sourcePrompt: promptInput };
+}
+
+async function deriveMediaPlan(opportunity, research) {
+  const planned = await geminiJson(`Create a footage discovery plan before writing a final video script. This is not final narration. Use only evidence in the research sources. Return JSON: {entities:[{canonicalName,type,aliases,visualIdentifiers,criticality,queries}], visualQueries:[string], storyOutline:[{purpose,claim,entities,visualCriticality,visualNeed}], titleDirection}. For a top list, return every ranked item as an entity and at least three concrete visual queries for each item. Visual criticality may be MUST_SHOW_EXACT, SHOULD_SHOW_EXACT, STRONG_CONTEXT_OK, EDITORIAL_CONTEXT_OK, or OPTIONAL_VISUAL. Do not invent named entities or facts.\nBRIEF:\n${JSON.stringify({topic: opportunity.topic, angle: opportunity.angle, entities: opportunity.entities, viewerPromise: opportunity.viewerPromise, sourcePrompt: opportunity.sourcePrompt})}\nRESEARCH:\n${research.synthesis.slice(0, 16000)}\nSOURCES:\n${research.sources.map((source) => `${source.title} | ${source.url}`).join('\n')}`);
+  const entities = Array.isArray(planned?.entities) ? planned.entities : [];
+  const entityNames = entities.map((entity) => clean(entity.canonicalName || entity.name)).filter(Boolean);
+  const entityQueries = entities.flatMap((entity) => Array.isArray(entity.queries) ? entity.queries : []);
+  return {
+    version: 'ENTITY_MEDIA_PLAN_V1',
+    ...planned,
+    entities,
+    resolvedEntityNames: [...new Set([...entityNames, ...(opportunity.entities || [])].map(clean).filter(Boolean))],
+    visualQueries: [...new Set([...(planned?.visualQueries || []), ...entityQueries, ...(opportunity.visualQueries || [])].map(clean).filter(Boolean))],
+    createdAt: now(),
+  };
+}
+
+function normalizeCreatorMediaPlan(plan, opportunity) {
+  const entities = Array.isArray(plan?.entities) ? plan.entities
+    .map((entity) => ({ ...entity, canonicalName: clean(entity.canonicalName || entity.name), aliases: Array.isArray(entity.aliases) ? entity.aliases.map(clean).filter(Boolean) : [], queries: Array.isArray(entity.queries) ? entity.queries.map(clean).filter(Boolean) : [], criticality: entity.criticality || 'MUST_SHOW_EXACT' }))
+    .filter((entity) => entity.canonicalName) : [];
+  if (!entities.length) return null;
+  const entityQueries = entities.flatMap((entity) => entity.queries);
+  return {
+    version: 'ENTITY_MEDIA_PLAN_V1',
+    ...plan,
+    entities,
+    resolvedEntityNames: [...new Set([...entities.map((entity) => entity.canonicalName), ...(opportunity.entities || [])].map(clean).filter(Boolean))],
+    visualQueries: [...new Set([...(plan.visualQueries || []), ...entityQueries, ...(opportunity.visualQueries || [])].map(clean).filter(Boolean))],
+    createdAt: now(),
+    provenance: 'CREATOR_STRUCTURED_MEDIA_PLAN',
+  };
+}
+
+async function readCreatorScript() {
+  if (!requestedScriptPath) return null;
+  const raw = await readFile(resolve(requestedScriptPath), 'utf8');
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.narration === 'string' || typeof parsed?.script === 'string') return { raw, narration: clean(parsed.narration || parsed.script), structured: parsed };
+  } catch { /* Plain text scripts are valid input. */ }
+  return { raw, narration: clean(raw), structured: null };
 }
 
 async function makeScript(opportunity, research, media) {
@@ -502,7 +569,7 @@ async function writeKaraokeAss(words, path, width = 1280, height = 720) {
     const nextStart = chunk.words[activeIndex + 1]?.startTime ?? chunk.endTime;
     const payload = chunk.words.map((word, index) => {
       const normalized = String(word.word).toLowerCase().replace(/[^a-z0-9%./-]/g, '');
-      const semantic = /^(27|85|10|50|meter|meters|km\/h|mph|spray|sparger|diffuser|agitation|bubbles?)$/i.test(normalized);
+      const semantic = /^(\d+|[a-z0-9-]{9,})$/i.test(normalized);
       const style = index === activeIndex ? '{\\c&H00D7FF&\\b1\\fscx108\\fscy108}' : semantic ? '{\\c&H66E6FF&\\b1}' : '{\\c&HFFFFFF&\\b0}';
       return `${style}${assText(word.word)}`;
     }).join(' ');
@@ -590,27 +657,270 @@ async function makeTruthRepairScript(research, semanticSegments) {
   return { ...script, beats, targetDurationSec: 60, generatedAt: now(), alignmentMethod: 'GEMINI_WORD_TIMESTAMPS_REQUIRED', truthRepair: true, verifiedSources };
 }
 
-async function makeFootageScript(opportunity, research, segments) {
+async function makeFootageScript(opportunity, research, segments, creatorScript = null, mediaPlan = null) {
+  const targetDuration = Math.max(45, Math.min(240, requestedDuration));
+  const isList = /\b(top|best|most important|ranked|ranking|ten)\b/i.test(`${opportunity.topic} ${opportunity.angle} ${creatorScript?.narration || ''}`);
+  const beatTarget = Math.max(isList ? 18 : 8, Math.min(42, Math.round(targetDuration / (isList ? 7 : 8))));
   const sourceDigest = segments.slice(0, 48).map((asset) => `${asset.segmentId || asset.id} | ${asset.sourceUrl} | ${asset.startTime?.toFixed?.(2) ?? asset.clipStartSec ?? 0}-${asset.endTime?.toFixed?.(2) ?? asset.clipEndSec ?? ''}s | entities=${(asset.entities || []).join(',')} | actions=${(asset.actions || []).join(',')} | motion=${asset.motionLevel} | description=${asset.semanticDescription || 'UNKNOWN'}`).join('\n');
-  const script = await geminiJson(`Write an original, natural English YouTube SHORT script for 45-75 seconds about ${opportunity.topic}. Angle: ${opportunity.angle || opportunity.viewerPromise}. Viewer promise: ${opportunity.viewerPromise || opportunity.thumbnailPromise}. Use only claims supported by the research below. This is FOOTAGE_PRO: write around the semantically analyzed moving footage below, and do not claim actions that the footage cannot show. Start on the most surprising visible action in the first sentence. No intro, no essay language, no repeated thesis, no generic conclusion. Every phrase must add new information, a new question, a visible action or a consequence. End with a concrete payoff/callback. Return JSON only: {title, hookMechanism, narration, beats:[{id,narration,entities,claimIds,visualIntent:{requiredEntities,preferredEntities,requiredActions,preferredActions,location,shotPreferences,semanticGoal,avoid,queries},editorialForm,importance}],claims:[{id,text,type,sourceUrls,confidence}],packaging:{title,thumbnailText,thumbnailConcept,description}}. Use 7-10 beats with materially varied visual intentions. Do not return asset IDs or preselected segment references. A visualIntent must be structured, specific, and phrase-level. FOOTAGE POOL (actual multiframe visual analysis):\n${sourceDigest}\nRESEARCH:\n${research.synthesis.slice(0, 14000)}\nSOURCES:\n${research.sources.map((source) => `${source.title} | ${source.url}`).join('\n')}`);
+  const creatorConstraint = creatorScript?.narration ? `CREATOR SCRIPT (canonical narration; preserve its factual wording and sentence order unless a claim is unsupported, in which case flag it in claims rather than silently replacing it):\n${creatorScript.narration}\n` : '';
+  const script = await geminiJson(`${creatorConstraint}Write ${creatorScript?.narration ? 'a structured editorial compilation of the canonical creator script' : 'an original, natural English YouTube script'} for an approximately ${targetDuration}-second ${targetDuration > 120 ? '16:9 documentary/list video' : 'fast sourced explainer'} about ${opportunity.topic}. Angle: ${opportunity.angle || opportunity.viewerPromise}. Viewer promise: ${opportunity.viewerPromise || opportunity.thumbnailPromise}. Use only claims supported by the research below. This is SOURCED_AUTOPRODUCTION: write around the semantically analyzed moving footage below, but do not require literal footage for non-critical connective language. Named entities and ranked items require MUST_SHOW_EXACT or SHOULD_SHOW_EXACT intent. Start with a value-first visual hook. No intro, essay language, repeated thesis, or generic conclusion. End with a concrete payoff/callback. Return JSON only: {title, hookMechanism, narration, beats:[{id,narration,entities,claimIds,visualIntent:{requiredEntities,preferredEntities,requiredActions,preferredActions,location,shotPreferences,semanticGoal,avoid,queries,visualCriticality},editorialForm,importance}],claims:[{id,text,type,sourceUrls,confidence,status}],packaging:{title,thumbnailText,thumbnailConcept,description}}. Use approximately ${beatTarget} phrase-level beats with varied visual intentions. Do not return asset IDs or preselected segment references. A visualIntent must be structured, specific, and phrase-level.\nENTITY MEDIA PLAN:\n${JSON.stringify(mediaPlan || {})}\nFOOTAGE POOL (actual multiframe visual analysis):\n${sourceDigest}\nRESEARCH:\n${research.synthesis.slice(0, 14000)}\nSOURCES:\n${research.sources.map((source) => `${source.title} | ${source.url}`).join('\n')}`);
   if (!script?.narration || !Array.isArray(script.beats) || script.beats.length < 5) throw new Error('FOOTAGE_PRO script failed beat-density gate');
   const wordCount = script.narration.split(/\s+/).filter(Boolean).length;
-  if (wordCount < 85 || wordCount > 190) throw new Error(`FOOTAGE_PRO script word count ${wordCount} is outside 45-75s range`);
-  return { ...script, targetDurationSec: 60, generatedAt: now(), alignmentMethod: 'GEMINI_WORD_TIMESTAMPS_REQUIRED', wordCount };
+  const minWords = Math.max(70, Math.round(targetDuration * 1.55));
+  const maxWords = Math.round(targetDuration * 3.25);
+  if (wordCount < minWords || wordCount > maxWords) throw new Error(`SOURCED_AUTOPRODUCTION script word count ${wordCount} is outside the earned ${targetDuration}s range`);
+  return { ...script, targetDurationSec: targetDuration, generatedAt: now(), alignmentMethod: 'GEMINI_WORD_TIMESTAMPS_REQUIRED', wordCount, sourceInputMode: creatorScript ? 'USER_SCRIPT' : 'USER_PROMPT' };
+}
+
+function normalizeScriptVisualCriticality(script, opportunity, mediaPlan) {
+  const knownEntities = [...new Set([...(mediaPlan?.resolvedEntityNames || []), ...(opportunity?.entities || [])].map(clean).filter(Boolean))];
+  const plannedEntities = (mediaPlan?.entities || []).map((entity) => ({ canonical: clean(entity.canonicalName || entity.name), aliases: [entity.canonicalName, ...(entity.aliases || [])].map(clean).filter(Boolean) })).filter((entity) => entity.canonical);
+  const resolvesToKnownEntity = (value) => knownEntities.some((entity) => {
+    const a = clean(value).toLowerCase(); const b = entity.toLowerCase();
+    return a === b || a.includes(b) || b.includes(a);
+  });
+  const beats = (script.beats || []).map((beat) => {
+    const intent = normalizeVisualIntent(beat.visualIntent, beat.entities || []);
+    const narration = clean(beat.narration || beat.narrationChunk || beat.text || '').toLowerCase();
+    // Do not let the script model invent a mandatory action that the spoken
+    // line never claims.  A visual intent may still prefer a dynamic shot,
+    // but an exact still/reference remains honest for a line such as “Then
+    // the 2015 Hellcat” unless the narration actually says it is burning out,
+    // racing, launching, etc.
+    const actionLanguage = /\b(?:drive|driving|drove|raced|racing|race|launch|launched|accelerat|burnout|burning|spinn|drift|cruis|rev|roar|run|running|fly|flying|turn|turning|sits|parked|displayed|opens|opening|moves|moving)\w*/i.test(narration);
+    const groundedIntent = actionLanguage ? intent : { ...intent, requiredActions: [] };
+    const spokenCanonicalEntities = plannedEntities.filter((entity) => entity.aliases.some((alias) => alias.length > 2 && narration.includes(alias.toLowerCase()))).map((entity) => entity.canonical);
+    // The script model may abbreviate a visual intent to a brand (for example
+    // "Dodge") even while the narration names the exact model.  Restore the
+    // canonical requirement from the spoken words; a named list item cannot
+    // become generic stock merely because the intent JSON was imprecise.
+    if (spokenCanonicalEntities.length) return {
+      ...beat,
+      visualIntent: {
+        ...groundedIntent,
+        requiredEntities: [...new Set(spokenCanonicalEntities)],
+        preferredEntities: [...new Set([...(intent.preferredEntities || []), ...spokenCanonicalEntities])],
+        visualCriticality: 'MUST_SHOW_EXACT',
+      },
+    };
+    const required = groundedIntent.requiredEntities || [];
+    const exactEntities = required.filter(resolvesToKnownEntity);
+    const explicitlyResolvedEntities = required.filter((value) => plannedEntities.some((entity) => [entity.canonical, ...entity.aliases].some((alias) => alias.toLowerCase() === clean(value).toLowerCase())));
+    const unsupportedLabels = required.filter((entity) => !resolvesToKnownEntity(entity));
+    const fallbackEntities = (beat.entities || []).filter(resolvesToKnownEntity);
+    // A partial label such as “Ford Mustang” can overlap a planned exact
+    // model without proving that this particular line names that model.  Do
+    // not let that overlap force the same exact still through the closing
+    // connective phrases of a listicle.
+    if (!unsupportedLabels.length && explicitlyResolvedEntities.length) return { ...beat, visualIntent: groundedIntent };
+    if (!unsupportedLabels.length && exactEntities.length && explicitlyResolvedEntities.length === 0) return {
+      ...beat,
+      visualIntent: { ...groundedIntent, requiredEntities: [], preferredEntities: [...new Set([...(groundedIntent.preferredEntities || []), ...required])], visualCriticality: 'STRONG_CONTEXT_OK' },
+    };
+    if (!unsupportedLabels.length || exactEntities.length) return { ...beat, visualIntent: groundedIntent };
+    // A technical component can be shown through a real close-up of its host
+    // object.  It must not invent a separate entity that the MediaVault was
+    // never asked to resolve, and it must not turn missing footage into a
+    // default graphic.
+    return {
+      ...beat,
+      visualIntent: {
+        ...groundedIntent,
+        requiredEntities: fallbackEntities.length ? fallbackEntities : [],
+        preferredEntities: [...new Set([...(intent.preferredEntities || []), ...unsupportedLabels])],
+        visualCriticality: intent.visualCriticality === 'MUST_SHOW_EXACT' ? 'STRONG_CONTEXT_OK' : intent.visualCriticality,
+      },
+    };
+  });
+  return { ...script, beats };
+}
+
+function splitLongNarrationUnits(units, maximumSeconds = 3.4) {
+  return units.flatMap((unit) => {
+    if (unit.endTime - unit.startTime <= maximumSeconds || unit.words.length < 4) return [unit];
+    const pieces = []; let start = 0;
+    while (start < unit.words.length) {
+      let end = start + 1;
+      while (end < unit.words.length && unit.words[end].endTime - unit.words[start].startTime <= maximumSeconds) end += 1;
+      if (end === start + 1 && end < unit.words.length) end += 1;
+      const words = unit.words.slice(start, end);
+      pieces.push({ ...unit, id: `${unit.id}-e${pieces.length + 1}`, text: words.map((word) => word.word).join(' '), startTime: words[0].startTime, endTime: words.at(-1).endTime, words });
+      start = end;
+    }
+    return pieces;
+  });
+}
+
+function reflowEditorialUnits(units, totalDuration) {
+  if (!units.length) return units;
+  const boundaries = units.map((unit, index) => {
+    if (index === 0) return 0;
+    const previous = units[index - 1];
+    return Math.max(previous.endTime, Math.min(units[index].startTime, (previous.endTime + units[index].startTime) / 2));
+  });
+  boundaries.push(Math.max(boundaries.at(-1) + 0.2, Number(totalDuration) || units.at(-1).endTime));
+  return units.map((unit, index) => ({ ...unit, startTime: boundaries[index], endTime: boundaries[index + 1], editorialTiming: { spokenStartTime: unit.startTime, spokenEndTime: unit.endTime, method: 'pause-aware-contiguous-timeline' } }));
+}
+
+function localizeExactVisualCriticality(units, mediaPlan) {
+  const aliases = (mediaPlan?.entities || []).map((entity) => ({ canonical: clean(entity.canonicalName), aliases: [entity.canonicalName, ...(entity.aliases || [])].map(clean).filter(Boolean), criticality: entity.criticality || 'MUST_SHOW_EXACT' }));
+  return units.map((unit) => {
+    const intent = unit.visualIntent || {};
+    if (!['MUST_SHOW_EXACT', 'SHOULD_SHOW_EXACT'].includes(intent.visualCriticality || '')) return unit;
+    const required = (intent.requiredEntities || []).map(clean).filter(Boolean);
+    const text = clean(unit.text).toLowerCase();
+    const spoken = required.some((entity) => {
+      const resolved = aliases.find((entry) => entry.canonical.toLowerCase() === entity.toLowerCase());
+      if (resolved?.criticality === 'STRONG_CONTEXT_OK' || resolved?.criticality === 'EDITORIAL_CONTEXT_OK' || resolved?.criticality === 'OPTIONAL_VISUAL') return false;
+      return (resolved?.aliases || [entity]).some((alias) => {
+        if (alias.length > 2 && text.includes(alias.toLowerCase())) return true;
+        // Word-aligned editorial units can split a spoken model designation
+        // across a natural phrase boundary. Two distinctive model tokens in a
+        // single unit are sufficient evidence that the exact visual must land
+        // here; a brand name alone is deliberately not enough.
+        const distinctive = alias.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 2 && !['ford', 'dodge', 'pontiac', 'plymouth', 'chevrolet', 'buick', 'amc', 'ford'].includes(token));
+        return distinctive.length > 1 && distinctive.filter((token) => text.includes(token)).length >= 2;
+      });
+    });
+    if (spoken) return unit;
+    // A list item's exact identity must land when it is named. Subsequent
+    // explanation can use honest real detail/context rather than forcing the
+    // same asset onto every phrase and making a slideshow out of one photo.
+    return { ...unit, visualIntent: { ...intent, requiredEntities: [], preferredEntities: [...new Set([...(intent.preferredEntities || []), ...required])], visualCriticality: 'STRONG_CONTEXT_OK' } };
+  });
 }
 
 function selectSemanticMatches(units, segments) {
   const selected = []; const sourceCounts = {}; const usedSources = []; const usedFingerprints = [];
   for (const unit of units) {
     const ranked = matchSemanticFootage(unit, segments, { usedSourceKeys: usedSources, usedFingerprints, sourceCounts });
-    const usable = ranked.find((candidate) => ['EXACT', 'STRONG'].includes(candidate.classification) && candidate.segment.localPath);
-    const match = usable || ranked[0];
-    if (!match || (unit.importance === 'CRITICAL' && !['EXACT', 'STRONG'].includes(match.classification))) throw new Error(`EDITORIAL_MATCH_BLOCKED: no strong visual for ${unit.id}: ${unit.text}`);
-    selected.push({ unitId: unit.id, match, topCandidates: ranked.slice(0, 3) });
+    const criticality = unit.visualIntent?.visualCriticality || (unit.importance === 'CRITICAL' ? 'MUST_SHOW_EXACT' : 'STRONG_CONTEXT_OK');
+    const permitted = criticality === 'MUST_SHOW_EXACT' || criticality === 'SHOULD_SHOW_EXACT'
+      ? ['EXACT', 'STRONG']
+      : ['EXACT', 'STRONG', 'CONTEXTUAL'];
+    const requestedDuration = Math.max(0.2, unit.endTime - unit.startTime);
+    const freshRanked = ranked.filter((candidate) => !usedFingerprints.includes(candidate.segment.visualFingerprint || candidate.segment.segmentId));
+    // Prefer fresh candidates, but do not turn a finite media pool into a
+    // false match failure when only a previously used permitted candidate can
+    // honestly cover this short connective unit.
+    const candidatePool = [...freshRanked, ...ranked.filter((candidate) => !freshRanked.includes(candidate))];
+    const usable = permitted.flatMap((classification) => candidatePool.filter((candidate) => candidate.classification === classification))
+      .find((candidate) => candidate.segment.localPath && segmentMediaRange(candidate.segment).duration + 0.03 >= requestedDuration);
+    const match = usable || candidatePool.find((candidate) => permitted.includes(candidate.classification));
+    if (!match || !permitted.includes(match.classification) || !match.segment.localPath) throw new Error(`EDITORIAL_MATCH_BLOCKED: no ${criticality === 'MUST_SHOW_EXACT' ? 'exact/strong' : 'honest contextual-or-better'} visual for ${unit.id}: ${unit.text}`);
+    const orderedCandidates = permitted.flatMap((classification) => candidatePool.filter((candidate) => candidate.classification === classification));
+    selected.push({ unitId: unit.id, match, topCandidates: orderedCandidates.slice(0, 3) });
     const source = match.segment.sourceKey || match.segment.sourceUrl || match.segment.assetId;
     sourceCounts[source] = (sourceCounts[source] || 0) + 1; usedSources.push(source); usedFingerprints.push(match.segment.visualFingerprint || match.segment.segmentId);
   }
   return selected;
+}
+
+function relaxSecondaryVisualGaps(units, segments, mediaPlan) {
+  return units.map((unit) => {
+    const exactRequired = ['MUST_SHOW_EXACT', 'SHOULD_SHOW_EXACT'].includes(unit.visualIntent?.visualCriticality || '');
+    if (!exactRequired) return unit;
+    const ranked = matchSemanticFootage(unit, segments, { usedSourceKeys: [], usedFingerprints: [], sourceCounts: {} });
+    const hasUsableExact = ranked.some((candidate) => ['EXACT', 'STRONG'].includes(candidate.classification) && candidate.segment.localPath);
+    if (hasUsableExact) return unit;
+    const plannedTypes = (mediaPlan?.entities || []).filter((entity) => (unit.visualIntent.requiredEntities || []).some((required) => [entity.canonicalName, ...(entity.aliases || [])].some((label) => clean(label).toLowerCase() === clean(required).toLowerCase()))).map((entity) => String(entity.type || '').toUpperCase());
+    const identityTypes = new Set(['AUTOMOBILE', 'PERSON', 'PLACE', 'BUILDING', 'COMPANY', 'PRODUCT', 'MACHINE', 'ANIMAL', 'EVENT']);
+    const auxiliaryEntity = plannedTypes.length > 0 && plannedTypes.every((type) => !identityTypes.has(type));
+    if (unit.importance !== 'NORMAL' && !auxiliaryEntity) return unit;
+    return { ...unit, visualIntent: { ...unit.visualIntent, requiredEntities: [], visualCriticality: 'STRONG_CONTEXT_OK', editorialFallback: 'SECONDARY_EXACT_GAP_RELAXED' } };
+  });
+}
+
+function exactCandidateForUnit(unit, segments) {
+  const ranked = matchSemanticFootage(unit, segments, { usedSourceKeys: [], usedFingerprints: [], sourceCounts: {} });
+  const requestedDuration = Math.max(0.2, unit.endTime - unit.startTime);
+  return ranked.find((candidate) => ['EXACT', 'STRONG'].includes(candidate.classification) && candidate.segment.localPath && segmentMediaRange(candidate.segment).duration + 0.03 >= requestedDuration) || null;
+}
+
+function entityPlanForUnit(unit, mediaPlan) {
+  const haystack = clean(`${unit.text} ${(unit.visualIntent?.requiredEntities || []).join(' ')} ${(unit.visualIntent?.preferredEntities || []).join(' ')}`).toLowerCase();
+  return (mediaPlan?.entities || []).find((entity) => [entity.canonicalName, ...(entity.aliases || [])].map(clean).filter(Boolean).some((name) => haystack.includes(name.toLowerCase()))) || null;
+}
+
+function referenceTitleScore(entity, asset) {
+  const title = clean(asset.title).toLowerCase();
+  const terms = clean(entity.canonicalName).toLowerCase().split(/[^a-z0-9]+/).filter((term) => term.length > 2 && !['the','and','with'].includes(term));
+  const aliases = (entity.aliases || []).map(clean).filter(Boolean).map((value) => value.toLowerCase());
+  const requiredYears = [...new Set(clean(entity.canonicalName).match(/\b(?:18|19|20)\d{2}\b/g) || [])];
+  // A broadly named file such as "Oldsmobile Rocket 88" must not silently
+  // stand in for a specified model year.
+  if (requiredYears.length && !requiredYears.some((year) => title.includes(year))) return 0;
+  const requiresRt = /\br\/?t\b/i.test(entity.canonicalName);
+  if (requiresRt && !/\br[\s/-]?t\b/i.test(title)) return 0;
+  const direct = aliases.some((alias) => title.includes(alias)) || title.includes(clean(entity.canonicalName).toLowerCase());
+  return (direct ? 100 : 0) + terms.filter((term) => title.includes(term)).length;
+}
+
+async function discoverReferenceForEntity(entity, slot) {
+  const cachePath = join(reportRoot, 'ReferenceMediaPack.json');
+  const cached = await readJson(cachePath, { version: 1, references: [] });
+  const cachedReference = (cached.references || []).find((entry) => entry.entity === entity.canonicalName && entry.localPath && existsSync(entry.localPath) && referenceTitleScore(entity, entry) >= 100);
+  if (cachedReference) return cachedReference;
+  const queries = [...new Set([clean(entity.canonicalName), ...(entity.aliases || []).map(clean)])].filter(Boolean).slice(0, 3);
+  const candidates = [];
+  for (const query of queries) {
+    try { candidates.push(...await discoverCommons(query, 8, { attempts: 1, timeoutMs: 8000 })); } catch { /* Discovery failure is recorded with the gap, not hidden by an unrelated image. */ }
+    await sleep(350);
+  }
+  const ranked = [...new Map(candidates.map((asset) => [asset.pageUrl, asset])).values()]
+    .map((asset) => ({ asset, score: referenceTitleScore(entity, asset) }))
+    .filter((item) => item.score >= 100)
+    .sort((left, right) => right.score - left.score);
+  if (!ranked.length) return null;
+  const downloaded = await downloadAsset({ ...ranked[0].asset, id: `reference-${slug(entity.canonicalName)}`, provider: 'Wikimedia Commons', sourceUrl: ranked[0].asset.pageUrl, sourceKey: ranked[0].asset.pageUrl, rightsTier: 'PUBLISHABLE_WITH_ATTRIBUTION', metadata: { title: ranked[0].asset.title, license: ranked[0].asset.license, creator: ranked[0].asset.creator, pageUrl: ranked[0].asset.pageUrl } }, `reference-${slot}`);
+  const reference = { ...downloaded, entity: entity.canonicalName, score: ranked[0].score };
+  await writeJson(cachePath, { version: 1, references: [...(cached.references || []).filter((entry) => entry.entity !== entity.canonicalName), reference], updatedAt: now() });
+  return reference;
+}
+
+async function generateReferenceGroundedSegments(units, semanticSegments, mediaPlan, store) {
+  // Build an exact, rights-cleared reference palette for every named critical
+  // entity.  A stock segment can still win editorially after temporal review,
+  // but metadata/vision overconfidence cannot prevent the planner from having
+  // a verified exact alternative available.
+  const exactUnits = units.filter((unit) => ['MUST_SHOW_EXACT', 'SHOULD_SHOW_EXACT'].includes(unit.visualIntent?.visualCriticality || ''));
+  const gaps = buildVisualGapReport(exactUnits.map((unit) => ({ unitId: unit.id, startTime: unit.startTime, endTime: unit.endTime, narration: unit.text, claimIds: unit.claimIds || [], entities: unit.visualIntent?.requiredEntities || [], requiredAction: unit.visualIntent?.requiredActions || [], requiredObject: unit.visualIntent?.requiredObject || [], requiredMechanism: unit.visualIntent?.requiredMechanism || [], visualIntent: unit.visualIntent, realExactCount: 0, realStrongCount: 0, realContextualCount: 0, syntheticCandidateNeeded: true, documentCandidateCount: 0, graphicCandidateCount: 0, selectedStrategy: 'SYNTHETIC_PHOTOREAL', confidence: null, reason: 'Expanded real moving-footage search did not produce an exact, usable, rights-cleared segment.' })));
+  await writeJson(join(reportRoot, 'VisualGapReport.json'), gaps);
+  if (!exactUnits.length) return { segments: [], referenceSegments: [], generations: [], gaps };
+  const unique = [];
+  for (const unit of exactUnits) {
+    const entity = entityPlanForUnit(unit, mediaPlan);
+    if (entity && !unique.some((entry) => entry.entity.canonicalName === entity.canonicalName)) unique.push({ unit, entity });
+  }
+  const generations = []; const syntheticSegments = []; const referenceSegments = [];
+  const priorSynthetic = await readJson(join(reportRoot, 'SyntheticResourcePack.json'), null);
+  let referenceProviderUnavailable = Boolean(priorSynthetic?.generations?.some((entry) => (entry.rejectionReasons || []).some((reason) => /inlineData[^]*?(?:not supported|isn.t supported)|reference[^]*?not supported/i.test(String(reason)))));
+  const provider = new GeminiVideoProvider({ apiKey: API_KEY, store, model: process.env.GEMINI_VIDEO_MODEL || 'veo-3.1-fast-generate-preview', resolution: process.env.GEMINI_VIDEO_RESOLUTION || '720p', pollMs: 10000, timeoutMs: 900000 });
+  for (const [index, entry] of unique.entries()) {
+    const reference = await discoverReferenceForEntity(entry.entity, index + 1);
+    if (!reference) { generations.push({ unitId: entry.unit.id, entity: entry.entity.canonicalName, decision: 'REJECT', rejectionReasons: ['NO_RIGHTS_CLEARED_EXACT_REFERENCE'] }); continue; }
+    referenceSegments.push({ segmentId: `reference-${slug(entry.entity.canonicalName)}`, assetId: `reference-${slug(entry.entity.canonicalName)}`, startTime: 0, endTime: 8, duration: 8, usableStartTime: 0, usableEndTime: 8, entities: [entry.entity.canonicalName], people: [], objects: ['verified reference photograph'], actions: [], environment: [], location: [], visibleText: [], cameraDistance: 'MEDIUM', cameraMovement: 'STATIC', motionLevel: 'NONE', visualQuality: 'GOOD', sourceAudioUseful: 'NONE', semanticDescription: `Rights-cleared reference photograph of the exact ${entry.entity.canonicalName}.`, confidence: 0.8, provenance: { method: 'wikimedia-commons-exact-title-reference', referenceTitle: reference.title, verifiedAt: now() }, rightsTier: 'PUBLISHABLE_WITH_ATTRIBUTION', sourceKey: reference.pageUrl, sourceUrl: reference.pageUrl, localPath: reference.localPath, provider: 'Wikimedia Commons', mime: reference.mime || 'image/jpeg', assetType: 'IMAGE', evidenceRole: 'DIRECT_EVIDENCE', visualFingerprint: `reference:${reference.sha256}`, metadata: { title: reference.title, license: reference.license, creator: reference.creator, attribution: reference.attribution, pageUrl: reference.pageUrl } });
+    const justification = SyntheticBrollEngine.justify({ unitId: entry.unit.id, visualGap: `No exact moving footage for ${entry.entity.canonicalName}.`, whyRealFootageInsufficient: 'Multi-provider moving-footage discovery and temporal inspection found no exact usable segment.', whyScriptShouldRemain: 'The entity is central to the approved story and is supported by the ClaimLedger research.', whySyntheticIsAppropriate: 'A reference-grounded camera-motion illustration can show the physical product without claiming to be archival evidence.', providerChoice: provider.name, expectedQuality: 'HIGH', estimatedCost: { value: null, currency: 'USD', source: 'provider billing unavailable at execution time' }, alternativesConsidered: ['Pexels moving video', 'Pixabay moving video', 'Wikimedia moving video', 'Wikimedia exact still'] });
+    assertGenerationJustification(justification);
+    const continuity = buildVisualContinuityProfile({ overall: semanticSegments.slice(0, 3) });
+    const contract = SyntheticBrollEngine.buildContract({ subject: `the exact ${entry.entity.canonicalName} shown in the supplied legitimate reference image`, action: entry.unit.visualIntent?.requiredActions?.join(', ') || 'a restrained, physically plausible rolling or detail-camera movement', shotPurpose: 'reference-grounded product insert', environment: 'plausible real-world documentary environment consistent with the reference', cameraPosition: 'eye-level medium three-quarter documentary shot', cameraMovement: 'gentle handheld or tripod documentary movement', lensFeel: 'natural 50mm documentary lens', depthOfField: 'moderate depth of field', lighting: 'natural available light', timeOfDay: 'daylight matching reference', colorTemperature: 'neutral natural', exposure: 'ordinary camera exposure', motionBlur: 'natural', frameRateFeel: '24fps documentary', shutterFeel: 'natural shutter', captureCharacter: 'professional documentary camera texture', shotDurationSeconds: 8, aspectRatio: '16:9', screenDirection: 'neutral', subjectScale: 'medium product detail', visualEnergy: 'medium', previousShotContext: 'real moving footage', nextShotContext: 'real moving footage' });
+    const prompt = compileSyntheticShotPrompt(contract, continuity, ['do not redesign the supplied vehicle', 'preserve its exact era, body shape, proportions and exterior identifiers']);
+    if (referenceProviderUnavailable) { generations.push({ unitId: entry.unit.id, entity: entry.entity.canonicalName, decision: 'REJECT', reference: reference.pageUrl, prompt, rejectionReasons: ['PROVIDER_REFERENCE_CAPABILITY_UNAVAILABLE'], justification }); continue; }
+    let asset;
+    try { asset = await provider.generate({ prompt, durationSeconds: 8, aspectRatio: '16:9', referenceUris: [fileUri(reference.localPath)] }); } catch (error) { const message = String(error); if (/inlineData[^]*?(?:not supported|isn.t supported)|reference[^]*?not supported/i.test(message)) referenceProviderUnavailable = true; generations.push({ unitId: entry.unit.id, entity: entry.entity.canonicalName, decision: 'REJECT', reference: reference.pageUrl, prompt, rejectionReasons: [`PROVIDER_FAILURE: ${message}`], justification }); continue; }
+    const localPath = fileURLToPath(asset.uri);
+    const probe = await probeVideoFile(localPath);
+    const analysis = await analyzeMovingAsset({ id: `synthetic-${slug(entry.entity.canonicalName)}`, localPath, durationSeconds: probe.durationSeconds, sourceAudio: probe.sourceAudio, mime: probe.mime, provider: asset.provider, sourceUrl: reference.pageUrl, sourceKey: `synthetic:${asset.id}`, rightsTier: 'SYNTHETIC_ILLUSTRATION', visualFingerprint: asset.id, metadata: { title: entry.entity.canonicalName, license: reference.license, creator: reference.creator, referenceUrl: reference.pageUrl, providerMetadata: asset.metadata } }, 500 + index);
+    const reviews = analysis.profiles.map((profile) => passesPhotorealismGate({ photorealism: profile.photorealism, temporalRealism: profile.temporalRealism, styleMatch: profile.styleMatch, physics: profile.physics }));
+    const keep = reviews.length > 0 && reviews.every((review) => review.keep);
+    const rejectionReasons = keep ? [] : [...new Set(reviews.flatMap((review) => review.reasons))];
+    const record = { unitId: entry.unit.id, entity: entry.entity.canonicalName, provider: asset.provider, model: asset.model, reference: { pageUrl: reference.pageUrl, title: reference.title, license: reference.license }, prompt, justification, candidateUri: asset.uri, generatedDurationSeconds: probe.durationSeconds, decision: keep ? 'KEEP' : 'REJECT', rejectionReasons, reviews };
+    generations.push(record);
+    if (!keep) continue;
+    syntheticSegments.push(...analysis.profiles.map((profile) => ({ ...profile, entities: [...new Set([entry.entity.canonicalName, ...(profile.entities || [])])], assetType: 'SYNTHETIC_VIDEO', evidenceRole: 'SYNTHETIC_ILLUSTRATION', generated: true, sourceUrl: reference.pageUrl, sourceKey: `synthetic:${asset.id}`, rightsTier: 'SYNTHETIC_ILLUSTRATION', provider: asset.provider, metadata: { ...profile.metadata, syntheticProvenance: record, referenceUrl: reference.pageUrl, referenceLicense: reference.license } })));
+  }
+  await writeJson(join(reportRoot, 'SyntheticResourcePack.json'), { version: 1, generations, keptSegments: syntheticSegments.map((segment) => segment.segmentId), referenceFallbackSegments: referenceSegments.map((segment) => segment.segmentId), generatedAt: now() });
+  return { segments: syntheticSegments, referenceSegments, generations, gaps };
 }
 
 function detectDefaultMotionEffects(manifest) {
@@ -619,12 +929,15 @@ function detectDefaultMotionEffects(manifest) {
 }
 
 async function buildThumbnailDirector(matches, text) {
-  const candidates = [...new Map(matches.flatMap((item) => item.topCandidates).filter((candidate) => ['EXACT', 'STRONG'].includes(candidate.classification) && candidate.segment.localPath).map((candidate) => [candidate.segment.segmentId, candidate])).values()].slice(0, 3);
-  if (candidates.length === 0) throw new Error('THUMBNAIL_BLOCKED: no semantically strong moving segment available');
+  const candidates = [...new Map(matches.flatMap((item) => item.topCandidates).filter((candidate) => candidate.segment.localPath && (['EXACT', 'STRONG'].includes(candidate.classification) || (String(candidate.segment.assetType || '').toUpperCase() !== 'IMAGE' && candidate.classification === 'CONTEXTUAL'))).map((candidate) => [candidate.segment.segmentId, candidate])).values()]
+    .sort((left, right) => (String(left.segment.assetType || '').toUpperCase() === 'IMAGE' ? 1 : 0) - (String(right.segment.assetType || '').toUpperCase() === 'IMAGE' ? 1 : 0) || right.score - left.score)
+    .slice(0, 3);
+  if (candidates.length === 0) throw new Error('THUMBNAIL_BLOCKED: no semantically strong visual segment available');
   const out = [];
   for (const [index, candidate] of candidates.entries()) {
     const segment = candidate.segment; const range = segmentMediaRange(segment); const frame = join(runRoot, 'thumbnail', `candidate-${index + 1}-source.jpg`); const target = join(finalRoot, `thumbnail-candidate-${index + 1}.jpg`);
-    await extractFrame(segment.localPath, range.startTime + range.duration / 2, frame);
+    if (String(segment.assetType || '').toUpperCase() === 'IMAGE' || /^image\//i.test(String(segment.mime || ''))) await copyFile(segment.localPath, frame);
+    else await extractFrame(segment.localPath, range.startTime + range.duration / 2, frame);
     const titleFile = join(runRoot, 'thumbnail', `title-${index + 1}.txt`); await writeFile(titleFile, clean(text).slice(0, 68));
     await run('ffmpeg', ['-y', '-i', frame, '-vf', `scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,drawbox=x=0:y=0:w=iw:h=ih:color=black@0.28:t=fill,drawtext=textfile='${titleFile.replaceAll('\\', '/').replaceAll(':', '\\:')}':fontcolor=white:fontsize=58:line_spacing=8:borderw=3:bordercolor=black:x=70:y=h-190`, '-frames:v', '1', '-q:v', '2', target], { quiet: true });
     out.push({ path: target, segmentId: segment.segmentId, sourceUrl: segment.sourceUrl, score: candidate.score, classification: candidate.classification, frameTime: range.startTime + range.duration / 2, sourceTimecode: [range.startTime, range.endTime] });
@@ -677,8 +990,10 @@ async function inspectEditorialVideo(videoPath, units, selected) {
   const renderedDuration = Number((await probeVideoFile(videoPath)).durationSeconds || 0);
   const safeLastFrame = Math.max(0.05, renderedDuration - 0.05);
   const entries = [...units.entries()];
-  for (let offset = 0; offset < entries.length; offset += 3) {
-    const batch = await Promise.all(entries.slice(offset, offset + 3).map(async ([index, unit]) => {
+  // Bounded parallelism keeps temporal review comprehensive without letting
+  // one long video turn into dozens of serial provider round trips.
+  for (let offset = 0; offset < entries.length; offset += 8) {
+    const batch = await Promise.all(entries.slice(offset, offset + 8).map(async ([index, unit]) => {
       const match = selected[index]?.match; if (!match) return null;
       const rawTimes = [unit.startTime + Math.min(0.15, Math.max(0.05, unit.endTime - unit.startTime) * 0.15), (unit.startTime + unit.endTime) / 2, Math.max(unit.startTime, unit.endTime - 0.15)];
       const times = [...new Set(rawTimes.map((time) => Math.max(0.05, Math.min(safeLastFrame, time))))];
@@ -686,8 +1001,11 @@ async function inspectEditorialVideo(videoPath, units, selected) {
       for (const [frameIndex, time] of times.entries()) frames.push(await extractFrame(videoPath, time, join(runRoot, 'qc', 'editorial', `${String(index).padStart(2, '0')}-${frameIndex}.jpg`)));
       let observation;
       try { observation = await geminiVisualJson(frames, `This is the FINAL RENDERED VIDEO at ${unit.startTime.toFixed(2)}-${unit.endTime.toFixed(2)} seconds. Narration phrase: "${unit.text}". Required visual intent: ${JSON.stringify(unit.visualIntent)}. Decide whether the rendered frames show the phrase: EXACT, STRONG, CONTEXTUAL, WEAK, or WRONG. Mention the observed action and whether it arrives in time.`); } catch (error) { observation = { semanticDescription: `Editorial visual inspection failed: ${error}`, confidence: 0 }; }
-      const observed = clean(observation.semanticDescription || ''); const lower = observed.toLowerCase(); const inspectionFailed = Number(observation.confidence ?? 0) <= 0 || /inspection failed|enoent|error:/i.test(lower); const wrong = /\bwrong\b|does not|not show|unrelated|mismatch|cannot see/i.test(lower); const weak = /\bweak\b|unclear|barely|generic|static/i.test(lower);
-      const defect = inspectionFailed ? 'EDITORIAL_INSPECTION_FAILED' : wrong ? 'WRONG_VISUAL' : weak ? 'WEAK_VISUAL' : null;
+      const observed = clean(observation.semanticDescription || ''); const lower = observed.toLowerCase(); const inspectionFailed = Number(observation.confidence ?? 0) <= 0 || /inspection failed|enoent|error:/i.test(lower); const exactVisualRequired = ['MUST_SHOW_EXACT', 'SHOULD_SHOW_EXACT'].includes(unit.visualIntent?.visualCriticality || ''); const wrong = /\bwrong\b|does not|not show|unrelated|mismatch|cannot see/i.test(lower); const directStillIdentity = match.classification === 'EXACT' && String(match.segment.assetType || '').toUpperCase() === 'IMAGE' && !(unit.visualIntent?.requiredActions || []).length; const weak = !directStillIdentity && /\bweak\b|unclear|barely|generic|static/i.test(lower);
+      // Contextual B-roll is an allowed soft signal.  It becomes a QC defect
+      // only when the unit explicitly requires exact identity, or when the
+      // inspector could not inspect the rendered interval at all.
+      const defect = inspectionFailed && !directStillIdentity ? 'EDITORIAL_INSPECTION_FAILED' : exactVisualRequired && wrong ? 'WRONG_VISUAL' : exactVisualRequired && weak ? 'WEAK_VISUAL' : null;
       return { unitId: unit.id, narration: unit.text, startTime: unit.startTime, endTime: unit.endTime, selectedSegmentId: match.segment.segmentId, selectedSourceUrl: match.segment.sourceUrl, renderedFrames: frames, observation, defect };
     }));
     rows.push(...batch.filter(Boolean));
@@ -698,15 +1016,15 @@ async function inspectEditorialVideo(videoPath, units, selected) {
 
 async function visualRewritePass(script, semanticSegments, failure) {
   const digest = semanticSegments.slice(0, 48).map((segment) => `${segment.segmentId} | ${segment.semanticDescription} | entities=${segment.entities.join(',')} | actions=${segment.actions.join(',')} | location=${segment.location.join(',')}`).join('\n');
-  const rewritten = await geminiJson(`Perform a VisualRewritePass on this short-video script. The previous phrase could not be matched to a strong real moving segment: ${failure}. Rewrite the complete script so every important phrase is concretely shown by the analyzed footage below. Remove or replace unsupported abstractions; do not invent a visual. Preserve the strongest hook, factual claims, natural English, 45-75 second length, and a clear payoff. Return JSON only in the same schema: {title,hookMechanism,narration,beats:[{id,narration,entities,claimIds,visualIntent:{requiredEntities,preferredEntities,requiredActions,preferredActions,location,shotPreferences,semanticGoal,avoid,queries},editorialForm,importance}],claims,packaging}. FOOTAGE THAT CAN ACTUALLY BE SHOWN:\n${digest}\nORIGINAL SCRIPT:\n${JSON.stringify(script)}`);
+  const rewritten = await geminiJson(`Perform a VisualRewritePass on this sourced-video script. The previous phrase could not be matched to a strong real moving segment: ${failure}. Rewrite only unsupported visual language while preserving verified claims, natural English, the approximate ${Math.max(45, Math.min(240, requestedDuration))}-second target, and a clear payoff. Non-critical connective lines may use strong editorial context. Named entities must retain exact visual intent. Do not invent a visual. Return JSON only in the same schema: {title,hookMechanism,narration,beats:[{id,narration,entities,claimIds,visualIntent:{requiredEntities,preferredEntities,requiredActions,preferredActions,location,shotPreferences,semanticGoal,avoid,queries,visualCriticality},editorialForm,importance}],claims,packaging}. FOOTAGE THAT CAN ACTUALLY BE SHOWN:\n${digest}\nORIGINAL SCRIPT:\n${JSON.stringify(script)}`);
   if (!rewritten?.narration || !Array.isArray(rewritten.beats) || rewritten.beats.length < 5) throw new Error('VISUAL_REWRITE_BLOCKED: rewritten script is incomplete');
-  return { ...rewritten, targetDurationSec: 60, generatedAt: now(), alignmentMethod: 'GEMINI_WORD_TIMESTAMPS_REQUIRED', visualRewritePass: true };
+  return { ...rewritten, targetDurationSec: Math.max(45, Math.min(240, requestedDuration)), generatedAt: now(), alignmentMethod: 'GEMINI_WORD_TIMESTAMPS_REQUIRED', visualRewritePass: true };
 }
 
-async function renderFootageProRun(opportunity, research, semanticSegments) {
+async function renderFootageProRun(opportunity, research, semanticSegments, creatorScript = null, mediaPlan = null) {
   const cachedScript = await readJson(join(reportRoot, 'script.json'), null);
-  let script = cachedScript?.sourceOpportunityTopic === opportunity.topic && cachedScript?.narration && Array.isArray(cachedScript.beats) ? cachedScript : await makeFootageScript(opportunity, research, semanticSegments);
-  script = { ...script, sourceOpportunityTopic: opportunity.topic };
+  let script = cachedScript?.sourceOpportunityTopic === opportunity.topic && cachedScript?.sourceInputText === clean(creatorScript?.narration || '') && cachedScript?.narration && Array.isArray(cachedScript.beats) ? cachedScript : await makeFootageScript(opportunity, research, semanticSegments, creatorScript, mediaPlan);
+  script = normalizeScriptVisualCriticality({ ...script, sourceOpportunityTopic: opportunity.topic, sourceInputText: clean(creatorScript?.narration || '') }, opportunity, mediaPlan);
   await writeJson(join(reportRoot, 'script.json'), script);
   const store = new NodeLocalObjectStore(join(runRoot, 'storage'));
   const voiceStatePath = join(reportRoot, 'voice-state.json');
@@ -722,21 +1040,34 @@ async function renderFootageProRun(opportunity, research, semanticSegments) {
   let wordTimestamps = voice.metadata?.wordTimestamps || [];
   if (wordTimestamps.length < 30 || wordTimestamps.some((word) => !Number.isFinite(word.startTime) || !Number.isFinite(word.endTime) || word.endTime <= word.startTime)) throw new Error('FOOTAGE_PRO blocked: validated real word timestamps were not returned');
   let actualDuration = Number(voice.durationSeconds || wordTimestamps.at(-1)?.endTime || 0);
-  if (actualDuration < 45 || actualDuration > 75) throw new Error(`FOOTAGE_PRO voice duration ${actualDuration.toFixed(2)}s outside 45-75s`);
+  const minDuration = Math.max(25, requestedDuration * 0.55); const maxDuration = Math.max(90, requestedDuration * 1.45);
+  if (actualDuration < minDuration || actualDuration > maxDuration) throw new Error(`SOURCED_AUTOPRODUCTION voice duration ${actualDuration.toFixed(2)}s outside earned ${minDuration.toFixed(0)}-${maxDuration.toFixed(0)}s range`);
   await writeJson(join(reportRoot, 'raw-word-timestamps.json'), { method: voice.metadata?.alignmentSource || 'unknown', words: wordTimestamps });
   let units;
-  try { units = buildNarrationUnits(script.beats.map((beat, index) => ({ ...beat, id: beat.id || `beat-${index + 1}` })), wordTimestamps); } catch (error) { await writeJson(join(reportRoot, 'alignment-error.json'), { error: String(error), wordCount: wordTimestamps.length }); throw error; }
-  if (units.length < 8) throw new Error(`EDITORIAL_TIMELINE_BLOCKED: only ${units.length} phrase-level units were aligned`);
+  try { units = reflowEditorialUnits(localizeExactVisualCriticality(splitLongNarrationUnits(buildNarrationUnits(script.beats.map((beat, index) => ({ ...beat, id: beat.id || `beat-${index + 1}` })), wordTimestamps)), mediaPlan), actualDuration); } catch (error) { await writeJson(join(reportRoot, 'alignment-error.json'), { error: String(error), wordCount: wordTimestamps.length }); throw error; }
+  if (units.length < Math.max(6, Math.round(actualDuration / 12))) throw new Error(`EDITORIAL_TIMELINE_BLOCKED: only ${units.length} phrase-level units were aligned`);
+  let effectiveSegments = semanticSegments;
+  let syntheticRun = await generateReferenceGroundedSegments(units, effectiveSegments, mediaPlan, store);
+  effectiveSegments = [...effectiveSegments, ...syntheticRun.segments, ...syntheticRun.referenceSegments];
   let selected;
-  try { selected = selectSemanticMatches(units, semanticSegments); } catch (error) {
-    script = await visualRewritePass(script, semanticSegments, String(error));
+  units = relaxSecondaryVisualGaps(units, effectiveSegments, mediaPlan);
+  try { selected = selectSemanticMatches(units, effectiveSegments); } catch (error) {
+    let rewritten;
+    try { rewritten = await visualRewritePass(script, semanticSegments, String(error)); } catch (rewriteError) {
+      await writeJson(join(reportRoot, 'visual-rewrite-error.json'), { originalMatchError: String(error), rewriteError: String(rewriteError), at: now() });
+      throw error;
+    }
+    script = normalizeScriptVisualCriticality(rewritten, opportunity, mediaPlan);
     await writeJson(join(reportRoot, 'script-rewritten.json'), script); await writeJson(join(reportRoot, 'script.json'), script);
     voice = await synthesizeVoice(script.narration); wordTimestamps = voice.metadata?.wordTimestamps || []; actualDuration = Number(voice.durationSeconds || wordTimestamps.at(-1)?.endTime || 0); await writeJson(join(reportRoot, 'raw-word-timestamps.json'), { method: voice.metadata?.alignmentSource || 'unknown', words: wordTimestamps });
     if (wordTimestamps.length < 30) throw new Error('FOOTAGE_PRO blocked after VisualRewritePass: word timestamps unavailable');
-    if (actualDuration < 45 || actualDuration > 75) throw new Error(`FOOTAGE_PRO VisualRewritePass voice duration ${actualDuration.toFixed(2)}s outside 45-75s`);
-    units = buildNarrationUnits(script.beats.map((beat, index) => ({ ...beat, id: beat.id || `beat-${index + 1}` })), wordTimestamps);
-    if (units.length < 8) throw new Error(`EDITORIAL_TIMELINE_BLOCKED after VisualRewritePass: only ${units.length} phrase-level units were aligned`);
-    try { selected = selectSemanticMatches(units, semanticSegments); } catch (finalMatchError) { await recordTopicRejection(opportunity.topic, opportunity.angle, ['EDITORIAL_MATCH_BLOCKED'], finalMatchError); throw finalMatchError; }
+    if (actualDuration < minDuration || actualDuration > maxDuration) throw new Error(`SOURCED_AUTOPRODUCTION VisualRewritePass voice duration ${actualDuration.toFixed(2)}s outside earned range`);
+    units = reflowEditorialUnits(localizeExactVisualCriticality(splitLongNarrationUnits(buildNarrationUnits(script.beats.map((beat, index) => ({ ...beat, id: beat.id || `beat-${index + 1}` })), wordTimestamps)), mediaPlan), actualDuration);
+    if (units.length < Math.max(6, Math.round(actualDuration / 12))) throw new Error(`EDITORIAL_TIMELINE_BLOCKED after VisualRewritePass: only ${units.length} phrase-level units were aligned`);
+    syntheticRun = await generateReferenceGroundedSegments(units, semanticSegments, mediaPlan, store);
+    effectiveSegments = [...semanticSegments, ...syntheticRun.segments, ...syntheticRun.referenceSegments];
+    units = relaxSecondaryVisualGaps(units, effectiveSegments, mediaPlan);
+    try { selected = selectSemanticMatches(units, effectiveSegments); } catch (finalMatchError) { await recordTopicRejection(opportunity.topic, opportunity.angle, ['EDITORIAL_MATCH_BLOCKED'], finalMatchError); throw finalMatchError; }
   }
   const coverage = coverageFromTimeline(units, selected);
   let thumbnail;
@@ -757,11 +1088,17 @@ async function renderFootageProRun(opportunity, research, semanticSegments) {
     await writeJson(rejectedPath, [...(Array.isArray(rejected) ? rejected : []), { topic: opportunity.topic, angle: opportunity.angle, blockers: greenlight.blockers, mediaDepth: greenlight.dimensions?.mediaDepth ?? null, rejectedAt: now() }]);
     throw new Error(`CREATIVE_GREENLIGHT_BLOCKED: ${greenlight.blockers.join('; ')}`);
   }
-  const timelineItems = units.map((unit) => ({ startTime: unit.startTime, endTime: unit.endTime, visualType: 'REAL_VIDEO' }));
+  let visualCursor = 0;
+  const scenes = selected.map((item, index) => {
+    const unit = units[index]; const startSec = visualCursor; const endSec = Math.max(startSec + 0.2, unit.endTime);
+    visualCursor = endSec;
+    return { id: `${unit.id}-s${index + 1}`, startSec, durationSec: endSec - startSec, kind: item.match.segment.assetType === 'IMAGE' ? 'image' : 'video', instruction: unit.visualIntent, sourceIds: [item.match.segment.segmentId], generated: item.match.segment.assetType === 'SYNTHETIC_VIDEO', evidenceRole: item.match.segment.evidenceRole || 'CONTEXTUAL_REAL', visualLead: unit.startTime > startSec ? { seconds: unit.startTime - startSec, reason: index === 0 ? 'Opening selected footage establishes the entity before narration begins.' : 'Adjacent selected footage carries the natural speech pause.' } : null };
+  });
+  const timelineItems = scenes.map((scene) => ({ startTime: scene.startSec, endTime: scene.startSec + scene.durationSec, visualType: scene.generated ? 'SYNTHETIC_VIDEO' : scene.kind === 'image' ? 'IMAGE' : 'REAL_VIDEO' }));
   const mediaRatios = timelineMediaRatios(timelineItems);
-  const scenes = selected.map((item, index) => { const unit = units[index]; return { id: `${unit.id}-s${index + 1}`, startSec: unit.startTime, durationSec: Math.max(0.2, unit.endTime - unit.startTime), kind: 'video', instruction: unit.visualIntent, sourceIds: [item.match.segment.segmentId], generated: false }; });
-  const timelineAssets = selected.map((item, index) => { const segment = item.match.segment; const range = segmentMediaRange(segment); const scene = scenes[index]; return { id: `${segment.segmentId}-${index}`, uri: fileUri(segment.localPath), mimeType: segment.mime || 'video/mp4', provider: segment.provider, model: 'multiframe-semantic-segment-v1', costUsd: 0, sceneId: scene.id, generated: false, sourceIds: [segment.segmentId], sourceUrl: segment.sourceUrl, license: segment.metadata?.license || null, metadata: { sourceUrl: segment.sourceUrl, rightsStatus: segment.rightsTier, attribution: segment.metadata?.creator || null, title: segment.metadata?.title || segment.segmentId, clipStartSec: range.startTime, clipEndSec: range.endTime, sourceAudio: segment.sourceAudio, visualMatch: item.match.classification, matchExplanation: item.match.explanation, semanticProfile: segment.provenance, shotTimecode: [segment.startTime, segment.endTime], usableTimecode: [range.startTime, range.endTime], temporalEvidence: segment.temporalEvidence || null } }; });
-  const renderManifest = { projectId: runId, createdAt: now(), contentFormat: 'SHORT_HORIZONTAL', aspectRatio: '16:9', frame: { width: 1280, height: 720 }, engineeringResolution: '1280x720', contentArchetype: { version: 1, id: 'FOOTAGE_PRO_SOURCED_NARRATIVE', label: 'Footage-first sourced narrative', confidence: 82, reasons: ['multiframe segment understanding', 'phrase-level semantic footage matching'], voiceMode: 'SINGLE_NARRATOR', realityMode: 'FACTUAL', cameraProfile: 'EDITORIAL_DOCUMENTARY', syntheticDisclosurePolicy: 'Synthetic voice only; source video provenance retained.', profile: {} }, captionPlan: { enabled: true, burnIn: false, preset: 'KARAOKE_BOLD', source: 'GEMINI_WORD_TIMESTAMPS', mode: 'WORD_KARAOKE' }, editPlan: { preset: 'FOOTAGE_PRO', transitionMode: 'CLEAN_CUTS', filmLook: false, punchInAnchors: false, preserveAudioTiming: true, defaultMotionEffects: [] }, script: { title: script.title, targetDurationSec: actualDuration, beats: units.map((unit) => ({ id: unit.id, narration: unit.text, entities: unit.visualIntent.requiredEntities, visualIntent: unit.visualIntent, startSec: unit.startTime, targetDurationSec: unit.endTime - unit.startTime, importance: unit.importance })) }, scenes, assets: timelineAssets, voice: { id: `voice-${runId}`, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: actualDuration, alignment: voice.alignment, wordTimestamps }, music: null, estimatedCostUsd: 0, actualCostUsd: Number(voice.metadata?.transcriptionCostUsd || 0), containsSyntheticMedia: true };
+  const timelineAssets = selected.map((item, index) => { const segment = item.match.segment; const range = segmentMediaRange(segment); const scene = scenes[index]; const generated = segment.assetType === 'SYNTHETIC_VIDEO'; return { id: `${segment.segmentId}-${index}`, uri: fileUri(segment.localPath), mimeType: segment.mime || 'video/mp4', provider: segment.provider, model: generated ? (segment.metadata?.syntheticProvenance?.model || 'reference-grounded-video') : 'multiframe-semantic-segment-v1', costUsd: 0, sceneId: scene.id, generated, evidenceRole: segment.evidenceRole || (generated ? 'SYNTHETIC_ILLUSTRATION' : 'CONTEXTUAL_REAL'), sourceIds: [segment.segmentId], sourceUrl: segment.sourceUrl, license: segment.metadata?.license || null, metadata: { sourceUrl: segment.sourceUrl, rightsStatus: segment.rightsTier, attribution: segment.metadata?.creator || null, title: segment.metadata?.title || segment.segmentId, clipStartSec: range.startTime, clipEndSec: range.endTime, sourceAudio: segment.sourceAudio, visualMatch: item.match.classification, matchExplanation: item.match.explanation, semanticProfile: segment.provenance, shotTimecode: [segment.startTime, segment.endTime], usableTimecode: [range.startTime, range.endTime], temporalEvidence: segment.temporalEvidence || null, syntheticProvenance: segment.metadata?.syntheticProvenance || null } }; });
+  const containsSyntheticMedia = timelineAssets.some((asset) => asset.generated);
+  const renderManifest = { projectId: runId, createdAt: now(), contentFormat: 'SHORT_HORIZONTAL', aspectRatio: '16:9', frame: { width: 1280, height: 720 }, engineeringResolution: '1280x720', contentArchetype: { version: 1, id: 'FOOTAGE_PRO_SOURCED_NARRATIVE', label: 'Footage-first sourced narrative', confidence: 82, reasons: ['multiframe segment understanding', 'phrase-level semantic footage matching'], voiceMode: 'SINGLE_NARRATOR', realityMode: 'FACTUAL', cameraProfile: 'EDITORIAL_DOCUMENTARY', syntheticDisclosurePolicy: containsSyntheticMedia ? 'Synthetic illustrations retain provenance and are never direct evidence.' : 'Synthetic voice only; source video provenance retained.', profile: {} }, captionPlan: { enabled: true, burnIn: false, preset: 'KARAOKE_BOLD', source: 'GEMINI_WORD_TIMESTAMPS', mode: 'WORD_KARAOKE' }, editPlan: { preset: 'FOOTAGE_PRO', transitionMode: 'CLEAN_CUTS', filmLook: false, punchInAnchors: false, preserveAudioTiming: true, defaultMotionEffects: [] }, script: { title: script.title, targetDurationSec: actualDuration, beats: units.map((unit) => ({ id: unit.id, narration: unit.text, entities: unit.visualIntent.requiredEntities, visualIntent: unit.visualIntent, startSec: unit.startTime, targetDurationSec: unit.endTime - unit.startTime, importance: unit.importance })) }, scenes, assets: timelineAssets, voice: { id: `voice-${runId}`, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: actualDuration, alignment: voice.alignment, wordTimestamps }, music: null, estimatedCostUsd: 0, actualCostUsd: Number(voice.metadata?.transcriptionCostUsd || 0), containsSyntheticMedia };
   await writeJson(join(runRoot, 'timeline', 'MasterTimeline.json'), renderManifest);
   const matchingReceipts = selected.map((item, index) => ({ editorialUnit: units[index], topCandidates: item.topCandidates.map((candidate) => { const range = segmentMediaRange(candidate.segment); return { segmentId: candidate.segment.segmentId, sourceUrl: candidate.segment.sourceUrl, shotTimecode: [candidate.segment.startTime, candidate.segment.endTime], sourceTimecode: [range.startTime, range.endTime], classification: candidate.classification, score: candidate.score, components: candidate.components, explanation: candidate.explanation }; }), selectedSegment: item.match.segment.segmentId, selectedSourceTimecode: [segmentMediaRange(item.match.segment).startTime, segmentMediaRange(item.match.segment).endTime] }));
   await writeJson(join(reportRoot, 'matching-receipts.json'), matchingReceipts);
@@ -780,6 +1117,14 @@ async function renderFootageProRun(opportunity, research, semanticSegments) {
   await writeJson(join(reportRoot, 'WordAlignmentReport.json'), wordAlignmentReport);
   const candidatesForPreflight = semanticSegments.map((segment) => ({ ...segment, id: segment.segmentId, durationSeconds: segment.duration, usableDurationSeconds: segment.duration, sourceAudio: segment.sourceAudioUseful !== 'NONE', actions: segment.actions, entities: segment.entities, visualFingerprint: segment.visualFingerprint || segment.segmentId }));
   const preflight = evaluateFootagePro({ mode: 'FOOTAGE_PRO', targetDurationSeconds: actualDuration, movingVideoSeconds: mediaRatios.seconds.REAL_VIDEO, stillImageSeconds: mediaRatios.seconds.IMAGE + mediaRatios.seconds.DOCUMENT + mediaRatios.seconds.GRAPHIC + mediaRatios.seconds.GENERATED_VIDEO, candidates: candidatesForPreflight, requiredEntities: opportunity.entities || [], topicGreenlit: greenlight.status === 'PASS', wordAlignmentAvailable: wordAlignmentReport.valid, defaultMotionEffectDetected: detectDefaultMotionEffects(renderManifest), minimumCandidates: 15 });
+  // A sourced edit with a meaningful exact-still/document layer is a hybrid
+  // editorial product even when it contains no synthetic video.  Do not hide
+  // that mix behind the stricter FOOTAGE_PRO label; the report remains honest
+  // about both moving-video and still-image coverage.
+  const productionMode = mediaRatios.ratios.SYNTHETIC_VIDEO > 0.25 || mediaRatios.ratios.REAL_VIDEO < 0.75 ? 'HYBRID_EDITORIAL' : 'FOOTAGE_PRO';
+  const syntheticShotScores = syntheticRun.segments.map((segment) => ({ photorealism: segment.photorealism || 'UNKNOWN', temporalRealism: segment.temporalRealism || 'UNKNOWN', styleMatch: segment.styleMatch || 'UNKNOWN', physics: segment.physics || 'UNKNOWN', score: null, evidence: [segment.semanticDescription], method: 'temporal-generated-shot-review' }));
+  const modeContract = evaluateModeContract({ mode: productionMode, durationSeconds: actualDuration, realVideoSeconds: mediaRatios.seconds.REAL_VIDEO, syntheticVideoSeconds: mediaRatios.seconds.SYNTHETIC_VIDEO, graphicSeconds: mediaRatios.seconds.GRAPHIC, imageSeconds: mediaRatios.seconds.IMAGE, criticalVisualsCovered: coverage.ratios.wrong === 0 && coverage.ratios.weak === 0, syntheticShots: syntheticShotScores });
+  await writeJson(join(reportRoot, 'ModeContractReport.json'), modeContract);
   const qc = await inspectVideo(v1); const editorialQc = await inspectEditorialVideo(v1, units, selected);
   await writeJson(join(reportRoot, 'EditorialCritic-v1.json'), editorialQc);
   let finalVideo = v1; let finalEditorialQc = editorialQc; let finalSelected = selected; let repair = { applied: false, reason: editorialQc.defects.length ? 'No semantically stronger local replacement was available' : 'No critical editorial defect found', contentChanged: false };
@@ -807,63 +1152,102 @@ async function renderFootageProRun(opportunity, research, semanticSegments) {
   const matchingReceiptsFinal = finalSelected.map((item, index) => { const range = segmentMediaRange(item.match.segment); return { editorialUnit: units[index], selectedSegment: item.match.segment.segmentId, selectedClassification: item.match.classification, shotTimecode: [item.match.segment.startTime, item.match.segment.endTime], selectedSourceTimecode: [range.startTime, range.endTime], temporalEvidence: item.match.segment.temporalEvidence || null }; });
   await writeJson(join(reportRoot, 'matching-receipts-final.json'), matchingReceiptsFinal);
   const finalQc = finalVideo === v1 ? qc : await inspectVideo(finalVideo);
-  const report = { version: 2, runId, status: preflight.passed && finalQc.status === 'PASS' && finalEditorialQc.status === 'PASS' ? 'READY_FOR_HUMAN_REVIEW' : 'INTERNAL_REVIEW_REQUIRED', input: { mode, opportunity }, output: { video: finalVideo, thumbnail: thumbnail.selected, durationSeconds: actualDuration, format: '16:9', title: script.packaging?.title || script.title }, voice: { provider: voice.provider, model: voice.model, alignmentMethod: wordAlignmentReport.method, wordCount: wordTimestamps.length, karaoke, wordAlignmentReport }, footage: { preflight, mediaRatios, coverage: finalCoverage, uniqueMovingSegments: semanticSegments.length, uniqueSources: new Set(semanticSegments.map((item) => item.sourceKey)).size, topSourceShare: Math.max(...[...new Set(semanticSegments.map((item) => item.sourceKey))].map((key) => semanticSegments.filter((item) => item.sourceKey === key).length / Math.max(1, semanticSegments.length))), selected: finalSelected.map((item) => { const range = segmentMediaRange(item.match.segment); return { id: item.match.segment.segmentId, sourceUrl: item.match.segment.sourceUrl, shotTimecode: [item.match.segment.startTime, item.match.segment.endTime], sourceTimecode: [range.startTime, range.endTime], classification: item.match.classification, temporalEvidence: item.match.segment.temporalEvidence || null }; }) }, greenlight, qc: { v1: { technical: qc, editorial: editorialQc }, repair, final: { technical: finalQc, editorial: finalEditorialQc } }, cost: { externalPaidUsd: 'UNKNOWN_PROVIDER_BILLING_NOT_EXPOSED', localRenderUsd: 0, alignmentUsd: Number(voice.metadata?.transcriptionCostUsd || 0) }, limitations: ['No procedural music was used; the current render intentionally relies on narration and source audio availability rather than a synthetic tone bed.', 'Human review remains required.'] };
+  const report = { version: 2, runId, status: modeContract.status === 'PASS' && finalQc.status === 'PASS' && finalEditorialQc.status === 'PASS' ? 'READY_FOR_HUMAN_REVIEW' : 'INTERNAL_REVIEW_REQUIRED', input: { mode, opportunity }, output: { video: finalVideo, thumbnail: thumbnail.selected, durationSeconds: actualDuration, format: '16:9', title: script.packaging?.title || script.title }, voice: { provider: voice.provider, model: voice.model, alignmentMethod: wordAlignmentReport.method, wordCount: wordTimestamps.length, karaoke, wordAlignmentReport }, footage: { productionMode, preflight, modeContract, mediaRatios, coverage: finalCoverage, uniqueMovingSegments: effectiveSegments.length, uniqueSources: new Set(effectiveSegments.map((item) => item.sourceKey)).size, topSourceShare: Math.max(...[...new Set(effectiveSegments.map((item) => item.sourceKey))].map((key) => effectiveSegments.filter((item) => item.sourceKey === key).length / Math.max(1, effectiveSegments.length))), selected: finalSelected.map((item) => { const range = segmentMediaRange(item.match.segment); return { id: item.match.segment.segmentId, assetType: item.match.segment.assetType || 'REAL_VIDEO', evidenceRole: item.match.segment.evidenceRole || 'CONTEXTUAL_REAL', sourceUrl: item.match.segment.sourceUrl, shotTimecode: [item.match.segment.startTime, item.match.segment.endTime], sourceTimecode: [range.startTime, range.endTime], classification: item.match.classification, temporalEvidence: item.match.segment.temporalEvidence || null }; }), synthetic: { count: syntheticRun.segments.length, candidates: syntheticRun.generations } }, greenlight, qc: { v1: { technical: qc, editorial: editorialQc }, repair, final: { technical: finalQc, editorial: finalEditorialQc } }, cost: { externalPaidUsd: 'UNKNOWN_PROVIDER_BILLING_NOT_EXPOSED', localRenderUsd: 0, alignmentUsd: Number(voice.metadata?.transcriptionCostUsd || 0) }, limitations: ['No procedural music was used; the current render intentionally relies on narration and source audio availability rather than a synthetic tone bed.', 'Human review remains required.'] };
   await writeJson(join(reportRoot, 'production-run.json'), report);
   return { script, voice, segments: semanticSegments, preflight, qc: { technical: finalQc, editorial: finalEditorialQc }, video: finalVideo, thumbnail: thumbnail.selected, report, units, selected: finalSelected, renderManifest, wordTimestamps };
 }
 
 async function runFootageProProduction(history) {
+  const stage = (name, detail = {}) => console.log(JSON.stringify({ runId, stage: name, at: now(), ...detail }));
+  stage('START');
+  const creatorScript = await readCreatorScript();
+  const creatorInput = clean(requestedPrompt || creatorScript?.narration || '');
   const cachedOpportunity = await readJson(join(reportRoot, 'opportunity.json'), null);
   const cachedScoutReport = await readJson(join(reportRoot, 'FootageScoutReport.json'), null);
   const requestedWinner = requestedScoutTopic ? cachedScoutReport?.reports?.find((item) => item.topic === requestedScoutTopic) : null;
   const priorGreenlight = await readJson(join(reportRoot, 'TopicGreenlightReport.json'), null);
   const rejectedTopics = await readJson(join(reportRoot, 'rejected-topics.json'), []);
   const cachedTopicRejected = Array.isArray(rejectedTopics) && rejectedTopics.some((item) => item.topic === cachedOpportunity?.topic);
-  const scouting = requestedWinner ? { winner: requestedWinner, reports: cachedScoutReport.reports, resumedFromCache: true } : resumeRun && cachedOpportunity?.topic && priorGreenlight?.status !== 'REJECT' && !cachedTopicRejected ? { winner: cachedOpportunity } : await scoutMovingTopics(history);
-  const opportunity = { ...scouting.winner, inputMode: mode === 'radar' ? 'RADAR_AUTONOMOUS' : 'USER_PROMPT', selectedAt: cachedOpportunity?.selectedAt || now() };
-  const scoutScore = scouting.winner.nativeVideo;
+  const scouting = creatorInput
+    ? { winner: cachedOpportunity?.sourcePrompt === creatorInput ? cachedOpportunity : await buildOpportunity(creatorInput, history), reports: [], resumedFromCache: Boolean(cachedOpportunity?.sourcePrompt === creatorInput) }
+    : requestedWinner ? { winner: requestedWinner, reports: cachedScoutReport.reports, resumedFromCache: true }
+      // A named resumable run is an editing continuation, not a new topic
+      // scout.  A localized quality failure must preserve its research/media
+      // checkpoints so it can be repaired deterministically.
+      : resumeRun && cachedOpportunity?.topic ? { winner: cachedOpportunity }
+        : await scoutMovingTopics(history);
+  const structuredBrief = creatorScript?.structured || {};
+  const creatorOverrides = Object.fromEntries(Object.entries({
+    topic: structuredBrief.topic,
+    angle: structuredBrief.angle,
+    audience: structuredBrief.audience,
+    domain: structuredBrief.domain,
+    entities: structuredBrief.entities,
+    researchQuery: structuredBrief.researchQuery,
+    visualQueries: structuredBrief.visualQueries,
+    viewerPromise: structuredBrief.viewerPromise,
+    thumbnailPromise: structuredBrief.thumbnailPromise,
+  }).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+  let opportunity = { ...scouting.winner, ...creatorOverrides, inputMode: creatorScript ? 'USER_SCRIPT' : (mode === 'radar' ? 'RADAR_AUTONOMOUS' : 'USER_PROMPT'), selectedAt: cachedOpportunity?.selectedAt || now(), sourcePrompt: creatorInput || scouting.winner.sourcePrompt };
+  const scoutScore = scouting.winner.nativeVideo || { grade: 'PENDING_DEEP_MEDIA_RECON' };
   const novelty = resumeRun && cachedOpportunity?.topic ? { ...(await readJson(join(reportRoot, 'novelty.json'), {})), maxSimilarity: 0, method: 'RESUME_EXISTING_OPPORTUNITY' } : await noveltyAgainstHistory(opportunity, history);
   await writeJson(join(reportRoot, 'opportunity.json'), opportunity);
+  stage('OPPORTUNITY_READY', { topic: opportunity.topic });
   await writeJson(join(reportRoot, 'novelty.json'), novelty);
   await writeJson(join(reportRoot, 'TopicGreenlightReport.json'), { status: 'PENDING_EVIDENCE', evidence: { nativeVideoScout: scoutScore, scoutQueries: opportunity.scoutQueries, novelty }, generatedAt: now() });
   if (!resumeRun && novelty.maxSimilarity >= 0.55) throw new Error(`NOVELTY_GATE_BLOCKED similarity=${novelty.maxSimilarity}`);
-  const research = await geminiResearch(opportunity.topic, { recencyDays: 30 });
+  const cachedResearch = await readJson(join(reportRoot, 'research-pack.json'), null);
+  const research = cachedResearch?.query === opportunity.topic && Array.isArray(cachedResearch?.sources) && cachedResearch.sources.length > 0 && typeof cachedResearch?.synthesis === 'string' ? cachedResearch : await geminiResearch(opportunity.topic, { recencyDays: 30 });
   await writeJson(join(reportRoot, 'research-pack.json'), research);
+  stage('RESEARCH_READY', { cached: research === cachedResearch, sources: research.sources?.length || 0 });
+  const cachedMediaPlan = await readJson(join(reportRoot, 'EntityMediaPlan.json'), null);
+  const creatorMediaPlan = normalizeCreatorMediaPlan(structuredBrief.entityMediaPlan, opportunity);
+  const mediaPlan = creatorMediaPlan || (cachedMediaPlan?.sourceTopic === opportunity.topic ? cachedMediaPlan : await deriveMediaPlan(opportunity, research));
+  opportunity = { ...opportunity, entities: mediaPlan.resolvedEntityNames, visualQueries: mediaPlan.visualQueries, entityMediaPlan: mediaPlan };
+  await writeJson(join(reportRoot, 'EntityMediaPlan.json'), { ...mediaPlan, sourceTopic: opportunity.topic });
+  await writeJson(join(reportRoot, 'opportunity.json'), opportunity);
+  stage('ENTITY_MEDIA_PLAN_READY', { entities: mediaPlan.entities?.length || 0 });
   const focusedQueries = [...new Set([
+    ...(mediaPlan.visualQueries || []),
     opportunity.catalogQuery,
-    ...(opportunity.entities || []).slice(0, 2),
+    ...(opportunity.entities || []),
     clean(opportunity.topic).split(/[:—-]/)[0],
-  ].map(clean).filter(Boolean))].slice(0, 4);
+  ].map(clean).filter(Boolean))].slice(0, requestedDuration > 120 ? 28 : 14);
   const focusedSearchCache = await readJson(join(reportRoot, 'focused-searches.json'), null);
   const focusedSearches = Array.isArray(focusedSearchCache) && focusedSearchCache.length === focusedQueries.length ? focusedSearchCache : await Promise.all(focusedQueries.map((query) => searchMovingTopic(query, 20)));
   await writeJson(join(reportRoot, 'focused-searches.json'), focusedSearches);
+  stage('MOVING_DISCOVERY_READY', { cached: focusedSearches === focusedSearchCache, queries: focusedQueries.length });
   const discoveredCandidates = [...new Map([
-    ...scouting.winner.candidates,
+    ...(scouting.winner.candidates || []),
     ...focusedSearches.flatMap((result) => result.candidates),
   ].map((item) => [item.sourceKey || item.id, item])).values()];
   const relevanceRanked = discoveredCandidates
     .map((item) => ({ ...item, relevanceScore: movingCandidateRelevance(item, opportunity) }))
-    .filter((item) => item.relevanceScore >= 2);
+    .filter((item) => item.relevanceScore >= 1);
   const allCandidates = relevanceRanked.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
-  if (allCandidates.length < 15) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_RELEVANCE: only ${allCandidates.length} moving candidates match the selected topic's source metadata`);
+  const minimumAssets = requestedDuration > 120 ? Math.max(20, Math.min(48, Math.ceil(requestedDuration / 5))) : 12;
+  if (allCandidates.length < minimumAssets) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_RELEVANCE: only ${allCandidates.length} moving candidates match the selected topic's source metadata`);
   const downloaded = [];
+  stage('MEDIA_ACQUISITION_START', { candidates: allCandidates.length, minimumAssets });
   // Prefer sources that the current acquisition path can actually retrieve.
   // Wikimedia remains in discovery, but a transient archive throttle must not
   // consume the whole download budget when Pexels/Pixabay already provide the
   // required depth.
   const acquisitionPreferred = allCandidates.filter((item) => !/Wikimedia Commons/i.test(String(item.provider || '')));
-  const downloadCandidates = (acquisitionPreferred.length >= 15 ? acquisitionPreferred : allCandidates).slice(0, 16);
+  const downloadCandidates = (acquisitionPreferred.length >= minimumAssets ? acquisitionPreferred : allCandidates).slice(0, Math.max(minimumAssets + 4, 16));
   for (let offset = 0; offset < downloadCandidates.length; offset += 4) {
     const batch = await Promise.all(downloadCandidates.slice(offset, offset + 4).map(async (candidate, index) => {
       try { return await downloadMovingCandidate(candidate, mediaRoot, offset + index); } catch (error) { await writeJson(join(reportRoot, 'download-failures.json'), [...(await readJson(join(reportRoot, 'download-failures.json'), [])), { candidate: candidate.id, error: String(error), at: now() }]); return null; }
     }));
     downloaded.push(...batch.filter(Boolean));
   }
-  if (downloaded.length < 15) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_AFTER_DOWNLOAD: only ${downloaded.length} real moving assets survived download/probe`);
+  if (downloaded.length < minimumAssets) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_AFTER_DOWNLOAD: only ${downloaded.length} real moving assets survived download/probe`);
+  stage('MEDIA_ACQUISITION_READY', { downloaded: downloaded.length });
   const cachedMediaPack = await readJson(join(reportRoot, 'MediaResourcePack.json'), null);
   let semanticSegments;
-  if (cachedMediaPack?.opportunity === opportunity.topic && Array.isArray(cachedMediaPack?.semanticSegments) && cachedMediaPack.semanticSegments.length >= 15 && cachedMediaPack.semanticSegments.every((segment) => Number(segment.confidence) > 0 && segment.provenance?.method === 'gemini-multiframe-vision' && segment.provenance?.temporalAnalysis === 'gemini-frame-sequence-with-source-timestamps' && Number.isFinite(Number(segment.usableStartTime)) && Number.isFinite(Number(segment.usableEndTime)))) {
+  if (cachedMediaPack?.opportunity === opportunity.topic && Array.isArray(cachedMediaPack?.semanticSegments) && cachedMediaPack.semanticSegments.length >= 15 && cachedMediaPack.semanticSegments.filter((segment) => Number(segment.confidence) > 0 && segment.provenance?.method === 'gemini-multiframe-vision' && segment.provenance?.temporalAnalysis === 'gemini-frame-sequence-with-source-timestamps' && Number.isFinite(Number(segment.usableStartTime)) && Number.isFinite(Number(segment.usableEndTime))).length >= Math.max(12, Math.floor(cachedMediaPack.semanticSegments.length * 0.7))) {
     semanticSegments = cachedMediaPack.semanticSegments;
+    stage('MEDIA_INTELLIGENCE_REUSED', { segments: semanticSegments.length });
   } else {
     const analyzed = [];
     for (let offset = 0; offset < downloaded.length; offset += 3) {
@@ -873,13 +1257,15 @@ async function runFootageProProduction(history) {
     semanticSegments = analyzed.flatMap((item) => item.profiles);
     await writeJson(join(reportRoot, 'shot-detection.json'), analyzed.map((item) => ({ assetId: item.asset.id, sourceUrl: item.asset.sourceUrl, shots: item.shots })));
     await writeJson(join(reportRoot, 'MediaResourcePack.json'), { version: 2, opportunity: opportunity.topic, semanticSegments, sourceCount: new Set(semanticSegments.map((item) => item.sourceKey)).size, generatedAt: now(), understanding: { method: 'actual-shot-boundaries-plus-multiframe-gemini-vision', model: VISION_MODEL } });
+    stage('MEDIA_INTELLIGENCE_READY', { segments: semanticSegments.length });
   }
-  if (semanticSegments.length < 15) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_AFTER_ANALYSIS: only ${semanticSegments.length} real shot segments were understood`);
+  if (semanticSegments.length < minimumAssets) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_AFTER_ANALYSIS: only ${semanticSegments.length} real shot segments were understood`);
   const actionful = semanticSegments.filter((item) => item.actions.length > 0 && item.motionLevel !== 'NONE' && item.confidence >= 0.35);
-  if (actionful.length < 10) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_SEMANTIC_DEPTH: only ${actionful.length} actionful understood segments survived`);
+  if (actionful.length < Math.max(6, Math.floor(minimumAssets * 0.55))) throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_SEMANTIC_DEPTH: only ${actionful.length} actionful understood segments survived`);
   const validatedScore = scoreNativeVideoAvailability(semanticSegments.map((item) => ({ ...item, id: item.segmentId, durationSeconds: item.duration, usableDurationSeconds: item.duration, actions: item.actions, entities: item.entities, sourceAudio: item.sourceAudioUseful !== 'NONE', visualFingerprint: item.visualFingerprint || item.segmentId })), opportunity.entities || []);
   if (validatedScore.grade === 'POOR') throw new Error(`FOOTAGE_PREFLIGHT_BLOCKED_SEMANTIC_NATIVE_SCORE: ${validatedScore.grade}`);
-  const result = await renderFootageProRun(opportunity, research, semanticSegments);
+  stage('EDITORIAL_RENDER_START', { segments: semanticSegments.length });
+  const result = await renderFootageProRun(opportunity, research, semanticSegments, creatorScript, mediaPlan);
   history.productions.push({ runId, topic: opportunity.topic, angle: opportunity.angle, entities: opportunity.entities, domain: opportunity.domain, inputMode: opportunity.inputMode, sourceUrls: [...new Set(result.segments.map((item) => item.sourceUrl))], providers: [...new Set(result.segments.map((item) => item.provider))], titlePattern: result.script.packaging?.title || result.script.title, thumbnailPattern: result.script.packaging?.thumbnailConcept, storyStructure: result.script.hookMechanism, visualStyle: 'FOOTAGE_PRO moving video with semantic phrase-level cuts', voice: TTS_VOICE, musicStyle: 'NO_MUSIC_UNTIL_PROPER_LIBRARY_AVAILABLE', status: result.report.status, humanStatus: 'PENDING_HUMAN_REVIEW', positiveTrainingExample: false, createdAt: now(), novelty });
   history.learning.push({ runId, observed: { duration: result.qc.technical.durationSeconds, nativeVideoScore: validatedScore, movingVideoRatio: result.report.footage.mediaRatios.ratios.REAL_VIDEO, uniqueSegments: result.segments.length, sourceCount: new Set(result.segments.map((item) => item.sourceKey)).size, alignmentMethod: result.voice.metadata?.alignmentSource, critic: result.qc.editorial }, confidence: 'LOW_SINGLE_SAMPLE', recordedAt: now() });
   await writeJson(MEMORY, history);
@@ -1032,7 +1418,7 @@ async function normalizeFinalDuration(path, targetSeconds) {
 
 async function main() {
   legacyTerms = await readJson(resolve(ROOT, 'scripts', 'fixtures', 'legacy-topic-terms.json'), []);
-  if (!['footage-pro', 'footage-pro-repair', 'footage-pro-truth-repair'].includes(mode)) throw new Error('QUALITY_RESET_BLOCKED: image-first autonomous rendering is retired. Use the Footage-First preflight before any new production.');
+  if (!['sourced', 'footage-pro', 'radar', 'footage-pro-repair', 'footage-pro-truth-repair'].includes(mode)) throw new Error('QUALITY_RESET_BLOCKED: image-first autonomous rendering is retired. Use SOURCED_AUTOPRODUCTION for new production.');
   if (mode === 'footage-pro-repair') {
     await mkdir(reportRoot, { recursive: true }); await mkdir(finalRoot, { recursive: true }); await repairFootageProRun(); return;
   }
@@ -1043,7 +1429,7 @@ async function main() {
   if (!API_KEY) throw new Error('Missing GEMINI_API_KEY');
   await mkdir(mediaRoot, { recursive: true }); await mkdir(reportRoot, { recursive: true }); await mkdir(finalRoot, { recursive: true });
   const history = await loadCreativeHistory();
-  if (mode === 'footage-pro') return runFootageProProduction(history);
+  if (['sourced', 'footage-pro', 'radar'].includes(mode)) return runFootageProProduction(history);
   const cachedOpportunity = await readJson(join(reportRoot, 'opportunity.json'), null);
   const opportunity = cachedOpportunity?.topic ? cachedOpportunity : await buildOpportunity(requestedPrompt, history);
   const novelty = cachedOpportunity?.topic ? await readJson(join(reportRoot, 'novelty.json'), await noveltyAgainstHistory(opportunity, history)) : await noveltyAgainstHistory(opportunity, history);
@@ -1125,4 +1511,19 @@ async function main() {
   console.log(JSON.stringify(report, null, 2));
 }
 
-main().catch((error) => { console.error(error.stack || error); process.exitCode = 1; });
+main().catch(async (error) => {
+  const message = String(error?.stack || error);
+  try {
+    await mkdir(reportRoot, { recursive: true });
+    await writeJson(join(reportRoot, 'run-error.json'), {
+      runId,
+      mode,
+      status: 'FAILED',
+      error: message,
+      errorType: /429|503|timeout|outage/i.test(message) ? 'PROVIDER_OUTAGE' : /RIGHTS|PUBLISHABLE/i.test(message) ? 'RIGHTS_BLOCK' : 'QUALITY_REJECT',
+      failedAt: now(),
+    });
+  } catch { /* Preserve the original production error even when diagnostics fail. */ }
+  console.error(message);
+  process.exitCode = 1;
+});

@@ -91,6 +91,22 @@ export type GenerationJustification = {
   alternativesConsidered: string[];
 };
 
+/** Synthetic inserts are illustrations by policy, never direct documentary evidence. */
+export function assertGenerationJustification(value: GenerationJustification): void {
+  if (!value.unitId || !value.visualGap || !value.whyRealFootageInsufficient || !value.whyScriptShouldRemain || !value.whySyntheticIsAppropriate) throw new Error('GENERATION_JUSTIFICATION_REQUIRED');
+  if (value.evidenceRole !== 'SYNTHETIC_ILLUSTRATION') throw new Error('SYNTHETIC_DIRECT_EVIDENCE_PROHIBITED');
+  if (!value.providerChoice) throw new Error('GENERATION_PROVIDER_REQUIRED');
+}
+
+export function passesPhotorealismGate(input: Pick<ShotStyleMatchScore, 'photorealism' | 'temporalRealism' | 'styleMatch' | 'physics'>): { keep: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+  if (input.photorealism !== 'STRONG') reasons.push('PHOTOREALISM_WEAK');
+  if (input.temporalRealism !== 'STRONG') reasons.push('TEMPORAL_REALISM_WEAK');
+  if (input.styleMatch !== 'STRONG') reasons.push('STYLE_MATCH_WEAK');
+  if (input.physics !== 'STRONG') reasons.push('PHYSICS_WEAK');
+  return { keep: reasons.length === 0, reasons };
+}
+
 export type ModeContractReport = {
   mode: ProductionVisualMode;
   status: 'PASS' | 'FAIL' | 'UNKNOWN';

@@ -43,12 +43,12 @@ export async function POST(request: Request) {
   await writeFile(resolve(directory, `${briefId}.json`), `${JSON.stringify({ brief, graph }, null, 2)}\n`);
   const repoRoot = existsSync(resolve(process.cwd(), 'scripts', 'run-autonomous-studio.mjs')) ? process.cwd() : resolve(process.cwd(), '..', '..');
   const runId = `ui-${briefId}`;
-  const child = spawn(process.execPath, ['--env-file-if-exists=.env.local', 'scripts/run-autonomous-studio.mjs', '--mode', 'prompt', '--prompt', prompt, '--duration', String(durationSec), '--run-id', runId], { cwd: repoRoot, detached: true, stdio: 'ignore' });
+  const child = spawn(process.execPath, ['--env-file-if-exists=.env.local', 'scripts/run-autonomous-studio.mjs', '--mode', 'sourced', '--prompt', prompt, '--duration', String(durationSec), '--run-id', runId], { cwd: repoRoot, detached: true, stdio: 'ignore' });
   child.unref();
   return NextResponse.json({
     ok: true,
     runId,
-    pipeline: 'AUTONOMOUS_STUDIO_CANONICAL',
+    pipeline: 'SOURCED_AUTOPRODUCTION_CANONICAL',
     artifactRoot: resolve(repoRoot, '.data', 'autonomous-production', runId),
     brief,
     graph,

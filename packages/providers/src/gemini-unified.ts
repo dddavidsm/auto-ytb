@@ -44,6 +44,32 @@ async function referenceImageInputs(uris?:string[]){
   }
   return blocks;
 }
+async function veoReferenceImageInputs(uris:string[]|undefined,fetchFn:typeof fetch){
+  const references:any[]=[];
+  const requested=(uris??[]).slice(0,3);
+  for(const uri of requested){
+    try{
+      let bytes:Uint8Array;
+      let mimeType='image/png';
+      if(String(uri).startsWith('file://'))bytes=new Uint8Array(await readFile(fileURLToPath(String(uri))));
+      else if(!String(uri).startsWith('http'))bytes=new Uint8Array(await readFile(String(uri)));
+      else{
+        const response=await fetchFn(String(uri));
+        if(!response.ok)throw new Error(`reference download failed (${response.status})`);
+        mimeType=response.headers.get('content-type')?.split(';')[0]||mimeType;
+        bytes=new Uint8Array(await response.arrayBuffer());
+      }
+      if(!/^image\//i.test(mimeType))throw new Error(`reference is not an image (${mimeType})`);
+      references.push({image:{inlineData:{mimeType,data:base64FromBytes(bytes)}},referenceType:'asset'});
+    }catch(error){
+      // A reference-conditioned request which silently loses its reference is
+      // materially different from the requested shot, so fail rather than
+      // generating ungrounded footage and claiming otherwise.
+      throw new Error(`Unable to prepare Veo reference image ${String(uri)}: ${error instanceof Error?error.message:String(error)}`);
+    }
+  }
+  return references;
+}
 export class GeminiGoogleSearchProvider implements SearchProvider{
   readonly name='gemini-search';
   constructor(private readonly options:{apiKey:string;model?:string;endpoint?:string;fetchFn?:typeof fetch}){}
@@ -130,8 +156,15 @@ export class GeminiVideoProvider implements VideoProvider{
   readonly name='gemini-video';
   constructor(private readonly options:{apiKey:string;store:ObjectStore;model?:string;resolution?:string;endpoint?:string;pollMs?:number;timeoutMs?:number;fetchFn?:typeof fetch}){}
   async generate(input:{prompt:string;durationSeconds:number;aspectRatio:string;referenceUris?:string[]}):Promise<BinaryAsset>{
-    const fetchFn=this.options.fetchFn??fetch;const model=this.options.model??'veo-3.1-fast-generate-preview';const base=baseUrl(this.options.endpoint);const resolution=this.options.resolution??'720p';const duration=veoDuration(input.durationSeconds,resolution,Boolean(input.referenceUris?.length));
-    const create=await request(fetchFn,`${base}/models/${encodeURIComponent(model)}:predictLongRunning`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({instances:[{prompt:input.prompt}],parameters:{aspectRatio:input.aspectRatio,resolution,durationSeconds:duration}})});
-    let op=await create.json() as VideoOperation;if(!op.name)throw new Error('Gemini Veo did not return an operation name');const started=Date.now();while(!op.done){if(Date.now()-started>(this.options.timeoutMs??900000))throw new Error(`Gemini Veo operation ${op.name} timed out`);await sleep(this.options.pollMs??10000);const status=await request(fetchFn,`${base}/${op.name}`,this.options.apiKey);op=await status.json() as VideoOperation;}if(op.error)throw new Error(`Gemini Veo failed: ${op.error.message??'unknown error'}`);const uri=op.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;if(!uri)throw new Error('Gemini Veo completed without a video URI');const download=await request(fetchFn,uri,this.options.apiKey);const bytes=new Uint8Array(await download.arrayBuffer());const key=`gemini/video/${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`;const stored=await this.options.store.put({key,contentType:'video/mp4',data:bytes});return{id:key.replace(/[^a-z0-9]/gi,'-'),uri:stored.uri,mimeType:'video/mp4',bytes:stored.bytes,provider:this.name,model,metadata:{aspectRatio:input.aspectRatio,requestedDurationSeconds:input.durationSeconds,generatedDurationSeconds:duration,resolution,referenceCount:input.referenceUris?.length??0,synthId:true}};
+    const fetchFn=this.options.fetchFn??fetch;
+    const model=this.options.model??'veo-3.1-fast-generate-preview';
+    const base=baseUrl(this.options.endpoint);
+    const resolution=this.options.resolution??'720p';
+    if(input.referenceUris?.length&&!/^veo-3\.1/i.test(model))throw new Error(`Model ${model} does not declare Veo 3.1 reference-image support`);
+    const referenceImages=await veoReferenceImageInputs(input.referenceUris,fetchFn);
+    const duration=veoDuration(input.durationSeconds,resolution,referenceImages.length>0);
+    const instance={prompt:input.prompt,...(referenceImages.length?{referenceImages}:{})};
+    const create=await request(fetchFn,`${base}/models/${encodeURIComponent(model)}:predictLongRunning`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({instances:[instance],parameters:{aspectRatio:input.aspectRatio,resolution,durationSeconds:duration}})});
+    let op=await create.json() as VideoOperation;if(!op.name)throw new Error('Gemini Veo did not return an operation name');const started=Date.now();while(!op.done){if(Date.now()-started>(this.options.timeoutMs??900000))throw new Error(`Gemini Veo operation ${op.name} timed out`);await sleep(this.options.pollMs??10000);const status=await request(fetchFn,`${base}/${op.name}`,this.options.apiKey);op=await status.json() as VideoOperation;}if(op.error)throw new Error(`Gemini Veo failed: ${op.error.message??'unknown error'}`);const uri=op.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;if(!uri)throw new Error('Gemini Veo completed without a video URI');const download=await request(fetchFn,uri,this.options.apiKey);const bytes=new Uint8Array(await download.arrayBuffer());const key=`gemini/video/${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`;const stored=await this.options.store.put({key,contentType:'video/mp4',data:bytes});return{id:key.replace(/[^a-z0-9]/gi,'-'),uri:stored.uri,mimeType:'video/mp4',bytes:stored.bytes,provider:this.name,model,metadata:{aspectRatio:input.aspectRatio,requestedDurationSeconds:input.durationSeconds,generatedDurationSeconds:duration,resolution,referenceCount:referenceImages.length,referenceConditioned:referenceImages.length>0,synthId:true}};
   }
 }

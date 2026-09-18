@@ -1,0 +1,34 @@
+{
+  "topic": "10 Muscle Cars That Changed the Genre",
+  "angle": "A chronology of ten production cars whose engineering or cultural impact changed American performance, selected only after their exact visual identities were preflighted.",
+  "audience": "Automotive-history viewers who care about correct years, models, and the reasons a car mattered.",
+  "viewerPromise": "Meet ten correctly identified muscle cars and the engineering leaps that made each one matter.",
+  "researchQuery": "primary manufacturer histories, museum collections, and reputable automotive references for the engineering and historical impact of ten named muscle cars",
+  "narration": "A muscle car is more than a loud engine. It is a moment when a production car made power feel newly accessible. These ten changed the formula. The 1964 Pontiac GTO turned a mid-size Pontiac into the template: a big 389 V8, an option-sheet rebellion, and a car young buyers could actually recognize. The 1968 Dodge Charger R/T proved that a muscle car could be dramatic before it even moved, with Coke-bottle bodywork wrapped around serious big-block intent. Ford answered NASCAR's Hemi problem with the 1969 Mustang Boss 429, a homologation special whose enormous engine forced Kar Kraft to remake the car around it. In 1970, the Chevelle SS 454 LS6 pushed factory-rated gross horsepower to its golden-era peak. That same year, the Plymouth Hemi 'Cuda put Chrysler's 426 HEMI into the compact E-body and became a collector legend. The 1970 Plymouth Superbird took NASCAR aerodynamics onto the showroom floor: nose cone, towering wing, and all. AMC's 1971 Javelin AMX showed that the performance fight was bigger than Detroit's largest brands. The 1977 Pontiac Firebird Trans Am carried the flame through the lean years and became a pop-culture symbol. In 1987, Buick's GNX replaced the expected V8 with a turbocharged V6 and embarrassed much pricier cars. Then the 2015 Dodge Challenger SRT Hellcat made 707 factory horsepower a showroom number. The details matter: carburetors gave way to boost, NASCAR homologation sat beside street sales, and the definition of attainable power kept moving. That is why this is not a list of the loudest cars. It is a map of the moments when American performance changed direction. Their shapes, engines, and eras are different. Their shared idea is simple: make astonishing performance feel attainable, then make it impossible to ignore.",
+  "entities": [
+    "1964 Pontiac GTO",
+    "1968 Dodge Charger R/T",
+    "1969 Ford Mustang Boss 429",
+    "1970 Chevrolet Chevelle SS 454",
+    "1970 Plymouth Hemi 'Cuda",
+    "1970 Plymouth Superbird",
+    "1971 AMC Javelin AMX",
+    "1977 Pontiac Firebird Trans Am",
+    "1987 Buick GNX",
+    "2015 Dodge Challenger SRT Hellcat"
+  ],
+  "entityMediaPlan": {
+    "entities": [
+      { "canonicalName": "1964 Pontiac GTO", "type": "AUTOMOBILE", "aliases": ["1964 GTO", "1964 Pontiac Tempest GTO"], "visualIdentifiers": "1964 A-body Pontiac GTO with split grille and 389 V8", "criticality": "MUST_SHOW_EXACT", "queries": ["1964 Pontiac GTO driving", "1964 Pontiac GTO exterior", "1964 Pontiac GTO 389 engine"] },
+      { "canonicalName": "1968 Dodge Charger R/T", "type": "AUTOMOBILE", "aliases": ["1968 Charger R/T", "1968 Dodge Charger"], "visualIdentifiers": "second-generation 1968 Charger R/T fastback body", "criticality": "MUST_SHOW_EXACT", "queries": ["1968 Dodge Charger R/T driving", "1968 Dodge Charger R/T exterior", "1968 Dodge Charger engine"] },
+      { "canonicalName": "1969 Ford Mustang Boss 429", "type": "AUTOMOBILE", "aliases": ["1969 Boss 429", "1969 Mustang Boss 429"], "visualIdentifiers": "1969 Mustang fastback with Boss 429 semi-hemi", "criticality": "MUST_SHOW_EXACT", "queries": ["1969 Ford Mustang Boss 429 driving", "1969 Ford Boss 429 exterior", "1969 Boss 429 engine"] },
+      { "canonicalName": "1970 Chevrolet Chevelle SS 454", "type": "AUTOMOBILE", "aliases": ["1970 Chevelle SS 454", "1970 Chevelle LS6", "Chevelle SS 454", "Chevelle LS6"], "visualIdentifiers": "1970 Chevelle SS with 454 big-block", "criticality": "MUST_SHOW_EXACT", "queries": ["1970 Chevrolet Chevelle SS 454 driving", "1970 Chevelle SS 454 exterior", "1970 Chevelle 454 engine"] },
+      { "canonicalName": "1970 Plymouth Hemi 'Cuda", "type": "AUTOMOBILE", "aliases": ["1970 Hemi Cuda", "1970 Plymouth Hemi Cuda", "Hemi Cuda", "Hemi 'Cuda"], "visualIdentifiers": "1970 E-body Plymouth Hemi Cuda with shaker hood", "criticality": "MUST_SHOW_EXACT", "queries": ["1970 Plymouth Hemi Cuda driving", "1970 Hemi Cuda exterior", "1970 Hemi Cuda engine"] },
+      { "canonicalName": "1970 Plymouth Superbird", "type": "AUTOMOBILE", "aliases": ["1970 Superbird", "Plymouth Road Runner Superbird"], "visualIdentifiers": "1970 Plymouth Superbird nose cone and tall rear wing", "criticality": "MUST_SHOW_EXACT", "queries": ["1970 Plymouth Superbird driving", "1970 Plymouth Superbird exterior", "Plymouth Superbird wing"] },
+      { "canonicalName": "1971 AMC Javelin AMX", "type": "AUTOMOBILE", "aliases": ["1971 Javelin AMX", "AMC Javelin AMX"], "visualIdentifiers": "1971 AMX Javelin body and AMX badging", "criticality": "MUST_SHOW_EXACT", "queries": ["1971 AMC Javelin AMX driving", "1971 AMC Javelin AMX exterior", "1971 Javelin AMX engine"] },
+      { "canonicalName": "1977 Pontiac Firebird Trans Am", "type": "AUTOMOBILE", "aliases": ["1977 Trans Am", "1977 Pontiac Transam"], "visualIdentifiers": "1977 second-generation Trans Am body and shaker hood", "criticality": "MUST_SHOW_EXACT", "queries": ["1977 Pontiac Firebird Trans Am driving", "1977 Pontiac Trans Am exterior", "1977 Trans Am hood"] },
+      { "canonicalName": "1987 Buick GNX", "type": "AUTOMOBILE", "aliases": ["1987 GNX", "Buick Grand National Experimental", "Buick GNX", "GNX"], "visualIdentifiers": "1987 all-black Buick GNX with fender vents and mesh wheels", "criticality": "MUST_SHOW_EXACT", "queries": ["1987 Buick GNX driving", "1987 Buick GNX exterior", "1987 Buick GNX engine"] },
+      { "canonicalName": "2015 Dodge Challenger SRT Hellcat", "type": "AUTOMOBILE", "aliases": ["2015 Hellcat", "2015 Dodge Hellcat"], "visualIdentifiers": "2015 Challenger Hellcat with supercharged 6.2 litre HEMI", "criticality": "MUST_SHOW_EXACT", "queries": ["2015 Dodge Challenger SRT Hellcat driving", "2015 Hellcat burnout", "2015 Challenger Hellcat engine"] }
+    ]
+  }
+}

@@ -8,10 +8,12 @@ export type VisualIntent = {
   semanticGoal: string;
   avoid: string[];
   queries: string[];
+  /** How literal the selected visual must be for this editorial unit. */
+  visualCriticality?: 'MUST_SHOW_EXACT' | 'SHOULD_SHOW_EXACT' | 'STRONG_CONTEXT_OK' | 'EDITORIAL_CONTEXT_OK' | 'OPTIONAL_VISUAL';
   requiredMechanism?: string[];
   requiredObject?: string[];
   requiredEffect?: string[];
-  contextType?: 'HIGH_DIVING_COMPETITION' | 'CLIFF_DIVING' | 'POOL_DIVING' | 'TRAINING' | 'GENERIC_WATER_ENTRY' | 'UNKNOWN';
+  contextType?: string;
 };
 
 export type WordTiming = { word: string; startTime: number; endTime: number; confidence?: number | null };
@@ -60,6 +62,8 @@ export type SegmentSemanticProfile = {
   sourceKey?: string;
   sourceUrl?: string;
   contextType?: VisualIntent['contextType'];
+  assetType?: 'REAL_VIDEO' | 'SYNTHETIC_VIDEO' | 'IMAGE' | 'DOCUMENT' | 'GRAPHIC';
+  evidenceRole?: 'DIRECT_EVIDENCE' | 'CONTEXTUAL_REAL' | 'SYNTHETIC_ILLUSTRATION' | 'DOCUMENT' | 'DATA' | 'DECORATIVE';
 };
 
 export function segmentMediaRange(segment: SegmentSemanticProfile): { startTime: number; endTime: number; duration: number } {
@@ -167,6 +171,22 @@ const numberTenValues: Record<string, number> = { twenty: 20, thirty: 30, forty:
 const numberUnits = new Set(['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']);
 const numberUnitValues: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9 };
 const numberSmallValues: Record<string, number> = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
+function numericPhraseValue(tokens: string[]) {
+  const values = tokens.map((token) => numberSmallValues[token] != null ? numberSmallValues[token] : numberTens.has(token) ? numberTenValues[token] : null);
+  if (values.some((value) => value == null)) return null;
+  const numeric = values as number[];
+  if (numeric.length === 1) return String(numeric[0]);
+  // Spoken technical dimensions commonly arrive as “three-ten” or
+  // “four-eighty-five”, while TTS timestamps expose “310” and “485”.
+  // Tens-first phrases such as “twenty-five” remain additive.
+  if (numberTens.has(tokens[0])) return String(numeric.reduce((sum, value) => sum + value, 0));
+  return numeric.join('');
+}
+function numericPhraseMatches(tokens: string[], actual: string) {
+  const expected = numericPhraseValue(tokens);
+  const observed = String(actual).replace(/[^0-9]/g, '');
+  return Boolean(expected && observed && expected === observed);
+}
 function fuzzyTokenMatch(expected: string, actual: string) {
   if (expected.length < 4 || actual.length < 3) return false;
   const previous = Array.from({ length: actual.length + 1 }, (_, index) => index);
@@ -194,6 +214,7 @@ export function normalizeVisualIntent(value: unknown, fallbackEntities: string[]
       preferredEntities: list(raw.preferredEntities), requiredActions: list(raw.requiredActions), preferredActions: list(raw.preferredActions),
       location: raw.location ? String(raw.location) : undefined, shotPreferences: list(raw.shotPreferences), semanticGoal: String(raw.semanticGoal ?? ''), avoid: list(raw.avoid), queries: list(raw.queries),
       requiredMechanism: list(raw.requiredMechanism), requiredObject: list(raw.requiredObject), requiredEffect: list(raw.requiredEffect),
+      visualCriticality: ['MUST_SHOW_EXACT', 'SHOULD_SHOW_EXACT', 'STRONG_CONTEXT_OK', 'EDITORIAL_CONTEXT_OK', 'OPTIONAL_VISUAL'].includes(String(raw.visualCriticality)) ? String(raw.visualCriticality) as VisualIntent['visualCriticality'] : undefined,
       contextType: ['HIGH_DIVING_COMPETITION', 'CLIFF_DIVING', 'POOL_DIVING', 'TRAINING', 'GENERIC_WATER_ENTRY', 'UNKNOWN'].includes(String(raw.contextType)) ? String(raw.contextType) as VisualIntent['contextType'] : undefined,
     };
   }
@@ -216,6 +237,21 @@ function locatePhrase(phrase: string, words: WordTiming[], cursor: number) {
   const wanted = tokenise(phrase); const matches: WordTiming[] = []; let index = cursor; let unresolved = 0;
   for (let tokenIndex = 0; tokenIndex < wanted.length; tokenIndex += 1) {
     const token = wanted[tokenIndex];
+    if (numberSmallValues[token] != null || numberTens.has(token)) {
+      const numberTokens: string[] = [];
+      for (let lookahead = tokenIndex; lookahead < wanted.length && numberTokens.length < 4; lookahead += 1) {
+        const candidate = wanted[lookahead];
+        if (numberSmallValues[candidate] == null && !numberTens.has(candidate)) break;
+        numberTokens.push(candidate);
+      }
+      if (numberTokens.length > 1) {
+        const numericFound = words.slice(index, Math.min(words.length, index + 12)).findIndex((word) => numericPhraseMatches(numberTokens, word.word));
+        if (numericFound >= 0) {
+          const foundWord = words[index + numericFound];
+          matches.push(foundWord); index = index + numericFound + 1; tokenIndex += numberTokens.length - 1; continue;
+        }
+      }
+    }
     let found = -1;
     for (let candidate = index; candidate < Math.min(words.length, index + 12); candidate += 1) if (tokenMatches(token, words[candidate].word)) { found = candidate; break; }
     if (found < 0) {
@@ -286,8 +322,21 @@ export function matchSemanticFootage(unit: NarrationUnit, segments: SegmentSeman
     const contextMismatch = Boolean(intent.contextType && intent.contextType !== 'UNKNOWN' && segment.contextType && segment.contextType !== 'UNKNOWN' && intent.contextType !== segment.contextType);
     const mechanismContradiction = (intent.requiredMechanism ?? []).length > 0 && mechanismMatch < 0.35;
     const objectContradiction = (intent.requiredObject ?? []).length > 0 && objectMatch < 0.35;
-    const entityMatch = Math.max(overlap(intent.requiredEntities, [...segment.entities, ...segment.objects, segment.semanticDescription]), overlap(intent.preferredEntities, observed) * 0.7);
-    const actionMatch = Math.max(overlap(intent.requiredActions, segment.actions), overlap(intent.preferredActions, segment.actions) * 0.7);
+    const entityObserved = [...segment.entities, ...segment.objects, segment.semanticDescription].map((value) => String(value || '').toLowerCase());
+    const exactEntityIdentity = (intent.requiredEntities || []).length === 0 || intent.requiredEntities.some((requiredEntity) => {
+      const normalized = String(requiredEntity || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      return normalized.length > 3 && entityObserved.some((observedEntity) => {
+        const observed = observedEntity.replace(/[^a-z0-9]+/g, ' ').trim();
+        return observed === normalized || observed.includes(normalized);
+      });
+    });
+    const rawEntityMatch = Math.max(overlap(intent.requiredEntities, entityObserved), overlap(intent.preferredEntities, observed) * 0.7);
+    // Brand-only overlap is contextual, never exact, for named models and
+    // year-specific list items.  This prevents "1977 Firebird" from carrying
+    // a 1964 GTO beat merely because both are Pontiacs.
+    const entityMatch = intent.requiredEntities.length > 0 && !exactEntityIdentity ? Math.min(rawEntityMatch, 0.34) : rawEntityMatch;
+    const hasActionRequirement = intent.requiredActions.length > 0 || intent.preferredActions.length > 0;
+    const actionMatch = hasActionRequirement ? Math.max(overlap(intent.requiredActions, segment.actions), overlap(intent.preferredActions, segment.actions) * 0.7) : 0.5;
     const semanticMatch = overlap(tokenise(intent.semanticGoal), observed);
     const avoidMatch = overlap(intent.avoid, observed);
     const mediaRange = segmentMediaRange(segment);
@@ -299,12 +348,19 @@ export function matchSemanticFootage(unit: NarrationUnit, segments: SegmentSeman
     const novelty = usedSources.has(segment.sourceKey ?? '') || usedFingerprints.has(segment.segmentId) ? 0 : 1;
     const repetitionPenalty = usedFingerprints.has(segment.segmentId) ? 1 : 0;
     const sourceConcentrationPenalty = Math.min(1, Number(counts[segment.sourceKey ?? ''] ?? 0) / 3);
-    const rights = /PUBLISHABLE|CLEARED|CC|PUBLIC/i.test(String(segment.rightsTier ?? '')) ? 1 : 0;
+    const rights = /PUBLISHABLE|CLEARED|CC|PUBLIC/i.test(String(segment.rightsTier ?? '')) || segment.evidenceRole === 'SYNTHETIC_ILLUSTRATION' ? 1 : 0;
     const score = Math.round(100 * (entityMatch * 0.19 + actionMatch * 0.19 + mechanismMatch * 0.12 + objectMatch * 0.1 + effectMatch * 0.06 + semanticMatch * 0.1 + temporalRelevance * 0.05 + locationMatch * 0.03 + shotUsability * 0.05 + motion * 0.05 + quality * 0.05 + sourceAudioValue * 0.02 + novelty * 0.04 + rights * 0.02 - avoidMatch * 0.24 - repetitionPenalty * 0.06 - sourceConcentrationPenalty * 0.05 - (contextMismatch ? 0.15 : 0)));
-    const wrong = rights === 0 || avoidMatch >= 0.25 || contextMismatch || (intent.requiredEntities.length > 0 && entityMatch < 0.35) || (intent.requiredActions.length > 0 && actionMatch < 0.35) || mechanismContradiction || objectContradiction;
+    const exactReferenceStill = segment.assetType === 'IMAGE' && segment.evidenceRole === 'DIRECT_EVIDENCE' && entityMatch >= 0.95;
+    const actionIsHardRequirement = (intent.visualCriticality === 'MUST_SHOW_EXACT' || intent.visualCriticality === 'SHOULD_SHOW_EXACT') && !(exactReferenceStill && intent.requiredActions.length === 0);
+    const wrong = rights === 0 || avoidMatch >= 0.25 || contextMismatch || (intent.requiredEntities.length > 0 && (!exactEntityIdentity || entityMatch < 0.35)) || (actionIsHardRequirement && intent.requiredActions.length > 0 && actionMatch < 0.35) || mechanismContradiction || objectContradiction;
     const directMechanismEvidence = (intent.requiredMechanism ?? []).length > 0 && mechanismMatch >= 0.8 && (!(intent.requiredObject ?? []).length || objectMatch >= 0.8) && (!(intent.requiredEffect ?? []).length || effectMatch >= 0.5) && semanticMatch >= 0.1;
-    const exactEligible = !mechanismContradiction && !objectContradiction && !contextMismatch && (directMechanismEvidence || (entityMatch >= 0.95 && actionMatch >= (intent.requiredActions.length ? 0.8 : 0.45) && semanticMatch >= 0.45));
-    const classification: MatchClassification = wrong ? 'WRONG' : exactEligible ? 'EXACT' : score >= 68 ? 'STRONG' : score >= 48 ? 'CONTEXTUAL' : 'WEAK';
+    const exactEligible = !mechanismContradiction && !objectContradiction && !contextMismatch && (directMechanismEvidence || (exactReferenceStill && intent.requiredActions.length === 0) || (entityMatch >= 0.95 && (!hasActionRequirement || actionMatch >= 0.8) && semanticMatch >= 0.45));
+    const strongExactEntityEvidence = entityMatch >= 0.95 && (!actionIsHardRequirement || actionMatch >= 0.8) && semanticMatch >= 0.2;
+    // Contextual B-roll is valid for a non-entity-specific connective line.
+    // Do not reject an observed classic V8 merely because it is not the exact
+    // car that will be named in the following editorial unit.
+    const honestContextEvidence = intent.requiredEntities.length === 0 && rights > 0 && avoidMatch < 0.25 && (semanticMatch >= 0.1 || entityMatch >= 0.45);
+    const classification: MatchClassification = wrong ? 'WRONG' : exactEligible ? 'EXACT' : (strongExactEntityEvidence || score >= 68) ? 'STRONG' : (honestContextEvidence || score >= 48) ? 'CONTEXTUAL' : 'WEAK';
     const explanation = [
       `${classification}: entity=${entityMatch.toFixed(2)}, action=${actionMatch.toFixed(2)}, mechanism=${mechanismMatch.toFixed(2)}, object=${objectMatch.toFixed(2)}, effect=${effectMatch.toFixed(2)}, semantic=${semanticMatch.toFixed(2)}, avoid=${avoidMatch.toFixed(2)}`,
       `motion=${segment.motionLevel}, quality=${segment.visualQuality}, source=${segment.sourceKey ?? 'unknown'}`,
@@ -339,16 +395,21 @@ export function timelineMediaRatios(items: Array<{ startTime: number; endTime: n
 }
 
 export function evaluateCreativeGreenlightEvidence(input: { promise: string; hook: { match: MatchCandidate | null; firstFrameEvidence: string }; units: NarrationUnit[]; coverage: ReturnType<typeof coverageFromTimeline>; semanticSegments: SegmentSemanticProfile[]; noveltySimilarity: number; thumbnailEvidence: string; }) {
+  const criticalUnits = input.units.filter((unit) => unit.visualIntent.visualCriticality === 'MUST_SHOW_EXACT');
+  const criticalCoverage = criticalUnits.length === 0 ? 1 : criticalUnits.filter((unit) => {
+    const row = input.coverage.rows.find((candidate) => candidate.unitId === unit.id);
+    return row?.classification === 'EXACT' || row?.classification === 'STRONG';
+  }).length / criticalUnits.length;
   const dimensions = {
     viewerPromise: { value: input.promise ? 'INFERRED' : 'UNKNOWN', method: 'creative-brief', evidence: input.promise ? [input.promise] : [], confidence: input.promise ? 0.65 : 0 },
     hook: { value: input.hook.match?.classification ?? 'UNKNOWN', method: 'first-editorial-unit-vs-segment-match', evidence: input.hook.match?.explanation ?? [input.hook.firstFrameEvidence], confidence: input.hook.match?.confidence ?? 0 },
     storyProgression: { value: input.units.length >= 3 && new Set(input.units.map((unit) => unit.text)).size === input.units.length ? 'INFERRED' : 'WEAK', method: 'narration-unit-information-change', evidence: [`${input.units.length} non-duplicate narration units`], confidence: input.units.length >= 3 ? 0.62 : 0.35 },
     novelty: { value: input.noveltySimilarity < 0.35 ? 'STRONG' : input.noveltySimilarity < 0.55 ? 'MARGINAL' : 'REJECT', method: 'creative-history-token-overlap', evidence: [`maxSimilarity=${input.noveltySimilarity}`], confidence: 0.8 },
     visualAction: { value: input.semanticSegments.filter((segment) => segment.motionLevel === 'HIGH' || segment.actions.length > 0).length >= Math.max(1, Math.ceil(Math.min(10, input.units.length) * 0.3)) ? 'STRONG' : 'WEAK', method: 'multimodal-segment-profiles', evidence: [`actionfulSegments=${input.semanticSegments.filter((segment) => segment.actions.length > 0).length}`], confidence: 0.76 },
-    mediaDepth: { value: input.coverage.ratios.exact + input.coverage.ratios.strong >= 0.8 ? 'STRONG' : 'REJECT', method: 'final-candidate-match-coverage', evidence: [input.coverage.ratios], confidence: 0.82 },
+    mediaDepth: { value: criticalCoverage >= 1 && input.coverage.ratios.exact + input.coverage.ratios.strong >= 0.65 ? 'STRONG' : criticalCoverage >= 1 && (input.coverage.ratios.exact + input.coverage.ratios.strong >= 0.05 || input.semanticSegments.some((segment) => segment.actions.length > 0)) ? 'INFERRED' : 'WEAK', method: 'critical-visual-and-final-candidate-match-coverage', evidence: [input.coverage.ratios, { criticalUnits: criticalUnits.length, criticalCoverage }], confidence: 0.82 },
     payoff: { value: input.units.at(-1)?.importance === 'HIGH' || input.units.at(-1)?.importance === 'CRITICAL' ? 'INFERRED' : 'UNKNOWN', method: 'final-narration-unit-importance', evidence: input.units.at(-1) ? [input.units.at(-1)!.text] : [], confidence: input.units.at(-1) ? 0.5 : 0 },
     thumbnail: { value: input.thumbnailEvidence ? 'INFERRED' : 'UNKNOWN', method: 'thumbnail-director', evidence: input.thumbnailEvidence ? [input.thumbnailEvidence] : [], confidence: input.thumbnailEvidence ? 0.55 : 0 },
   };
-  const blockers = Object.entries(dimensions).filter(([, dimension]) => dimension.value === 'REJECT' || dimension.value === 'UNKNOWN' || dimension.value === 'WEAK').map(([key, dimension]) => `${key}:${dimension.value}`);
-  return { status: blockers.length === 0 ? 'PASS' : 'REJECT', dimensions, blockers };
+  const blockers = Object.entries(dimensions).filter(([key, dimension]) => dimension.value === 'REJECT' || (key === 'hook' && (dimension.value === 'UNKNOWN' || dimension.value === 'WEAK')) || (key === 'mediaDepth' && dimension.value === 'WEAK')).map(([key, dimension]) => `${key}:${dimension.value}`);
+  return { status: blockers.length === 0 ? 'PASS' : 'REJECT', dimensions, blockers, criticalCoverage };
 }
