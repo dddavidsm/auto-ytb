@@ -1,0 +1,9 @@
+{
+  "benchmarkId": "E",
+  "title": "A monkey makes breakfast",
+  "inputMode": "USER_SCRIPT",
+  "mode": "FULL_GENERATIVE",
+  "durationSeconds": 20,
+  "aspectRatio": "16:9",
+  "script": "A photorealistic capuchin monkey prepares a simple breakfast in a quiet kitchen: it carries a banana, places it on a plate, and reacts when a spoon clatters to the floor. The animal behaves naturally and safely."
+}

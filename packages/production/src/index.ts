@@ -28,3 +28,5 @@ export * from './reference-style.js';
 export * from './editorial-intelligence.js';
 export * from './visual-continuity.js';
 export * from './sourced-autoproduction.js';
+export * from './generative-production.js';
+export * from './video-only.js';

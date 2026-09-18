@@ -1,0 +1,14 @@
+{
+  "benchmarkId": "F",
+  "title": "How a deep-sea pressure valve works",
+  "inputMode": "USER_SCRIPT",
+  "mode": "HYBRID_EDITORIAL",
+  "durationSeconds": 60,
+  "aspectRatio": "16:9",
+  "script": "Real footage shows the vessel and the valve assembly. One missing visual is the inside of the sealed valve while pressure rises. Use a short photorealistic synthetic internal insert, keep the surrounding documentary look, then return to the real test footage.",
+  "syntheticGap": {
+    "required": true,
+    "visualIntent": "physically plausible internal pressure movement with no labels or documentary-event impersonation",
+    "evidenceRole": "SYNTHETIC_ILLUSTRATION"
+  }
+}

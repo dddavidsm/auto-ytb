@@ -1,3 +1,5 @@
+import type { CredentialStatus } from './registry.js';
+
 export type Usage = {
   inputTokens?: number;
   outputTokens?: number;
@@ -78,6 +80,44 @@ export interface AudioQualityProvider {
 export interface VideoProvider {
   readonly name: string;
   generate(input: { prompt: string; durationSeconds: number; aspectRatio: string; referenceUris?: string[] }): Promise<BinaryAsset>;
+}
+
+export type VideoGenerationMode = 'TEXT_TO_VIDEO' | 'IMAGE_TO_VIDEO' | 'VIDEO_TO_VIDEO' | 'REFERENCE_TO_VIDEO';
+export type VideoGenerationCapability = {
+  provider: string;
+  model?: string;
+  modes: readonly VideoGenerationMode[];
+  maxDurationSeconds: number;
+  aspectRatios: string[];
+  resolutions: string[];
+  referenceImageSupport: boolean;
+  firstLastFrameSupport: boolean;
+  audioSupport: boolean;
+  deterministicSeedSupport: boolean;
+  estimatedUsdPerSecond: number | null;
+  credentialStatus: CredentialStatus;
+};
+
+export type VideoGenerationRequest = {
+  prompt: string;
+  durationSeconds: number;
+  aspectRatio: string;
+  resolution?: string;
+  mode?: VideoGenerationMode;
+  referenceUris?: string[];
+  firstFrameUri?: string;
+  lastFrameUri?: string;
+  inputVideoUri?: string;
+  negativePrompt?: string;
+  seed?: number;
+  generateAudio?: boolean;
+  metadata?: Record<string, unknown>;
+};
+
+export interface GenerativeVideoProvider extends VideoProvider {
+  readonly capability: VideoGenerationCapability;
+  estimateCost(input: Pick<VideoGenerationRequest, 'durationSeconds' | 'resolution' | 'mode'>): { estimatedUsd: number | null; currency: 'USD'; source: string };
+  generateShot(input: VideoGenerationRequest): Promise<BinaryAsset & { metadata: Record<string, unknown> }>;
 }
 
 export interface ThumbnailComposer {

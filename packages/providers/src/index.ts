@@ -6,6 +6,7 @@ export * from './google-drive.js';
 export * from './gemini.js';
 export * from './gemini-unified.js';
 export * from './registry.js';
+export * from './higgsfield-video.js';
 export * from './health.js';
 export * from './credentials.js';
 export * from './blender.js';

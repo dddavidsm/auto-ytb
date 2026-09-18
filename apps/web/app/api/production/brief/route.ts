@@ -21,6 +21,10 @@ export async function POST(request: Request) {
   const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
   if (prompt.length < 8) return NextResponse.json({ error: 'Describe the video you want to create.' }, { status: 400 });
   const format = typeof body?.format === 'string' ? body.format : inferFormat(prompt);
+  const requestedMode = typeof body?.productionMode === 'string' ? body.productionMode : 'sourced';
+  const characterId = typeof body?.characterId === 'string' ? body.characterId : '';
+  const aspectRatio = typeof body?.aspectRatio === 'string' ? body.aspectRatio : '16:9';
+  const budgetUsd = Number.isFinite(Number(body?.budgetUsd)) ? Number(body?.budgetUsd) : null;
   const durationSec = Number.isFinite(Number(body?.durationSec)) ? Number(body?.durationSec) : 180;
   const qualityMode = typeof body?.qualityMode === 'string' ? body.qualityMode : 'MAX_QUALITY';
   const briefId = `brief-${Date.now()}`;
@@ -43,12 +47,16 @@ export async function POST(request: Request) {
   await writeFile(resolve(directory, `${briefId}.json`), `${JSON.stringify({ brief, graph }, null, 2)}\n`);
   const repoRoot = existsSync(resolve(process.cwd(), 'scripts', 'run-autonomous-studio.mjs')) ? process.cwd() : resolve(process.cwd(), '..', '..');
   const runId = `ui-${briefId}`;
-  const child = spawn(process.execPath, ['--env-file-if-exists=.env.local', 'scripts/run-autonomous-studio.mjs', '--mode', 'sourced', '--prompt', prompt, '--duration', String(durationSec), '--run-id', runId], { cwd: repoRoot, detached: true, stdio: 'ignore' });
+  const childArgs = ['--env-file-if-exists=.env.local', 'scripts/run-autonomous-studio.mjs', '--mode', requestedMode, '--prompt', prompt, '--duration', String(durationSec), '--aspect-ratio', aspectRatio, '--run-id', runId];
+  if (characterId) childArgs.push('--character', characterId);
+  if (budgetUsd != null) childArgs.push('--budget', String(budgetUsd));
+  const child = spawn(process.execPath, childArgs, { cwd: repoRoot, detached: true, stdio: 'ignore' });
   child.unref();
   return NextResponse.json({
     ok: true,
     runId,
-    pipeline: 'SOURCED_AUTOPRODUCTION_CANONICAL',
+    pipeline: 'AUTONOMOUS_PRODUCTION_CANONICAL',
+    requestedMode,
     artifactRoot: resolve(repoRoot, '.data', 'autonomous-production', runId),
     brief,
     graph,

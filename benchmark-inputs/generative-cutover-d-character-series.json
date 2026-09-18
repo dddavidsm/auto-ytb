@@ -1,0 +1,21 @@
+{
+  "benchmarkId": "D",
+  "title": "Orange cat rescue story",
+  "inputMode": "USER_SCRIPT",
+  "mode": "CHARACTER_SERIES",
+  "durationSeconds": 30,
+  "aspectRatio": "9:16",
+  "character": {
+    "characterId": "orange-cat-v1",
+    "name": "Orange Cat",
+    "visualDescription": "a fictional orange tabby cat with a white chest and green eyes",
+    "immutableTraits": ["orange tabby coat", "white chest", "green eyes"],
+    "visualStyle": "believable stylized production footage"
+  },
+  "world": {
+    "worldId": "orange-cat-home-v1",
+    "name": "Orange Cat Home",
+    "visualIdentity": "small warm apartment with a blue front door"
+  },
+  "script": "A curious cat hears a faint sound outside, follows it through the rain, and discovers a lost kitten beneath a porch. The cat guides the kitten home before sunrise."
+}

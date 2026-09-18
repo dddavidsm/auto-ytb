@@ -1,0 +1,49 @@
+# Generative Video Cutover
+
+The canonical production entry point is still `scripts/run-autonomous-studio.mjs`. `/create` and `production:create` invoke that same entry point. Sourced production remains retrieval-first; generative production is an additional mode, not a second product.
+
+## Modes
+
+- `FOOTAGE_PRO`: real moving footage first. A missing non-documentary visual may be generated only after the sourced path has failed and the final asset is approved.
+- `HYBRID_EDITORIAL`: real and generated moving footage can be combined.
+- `GENERATIVE_EDITORIAL`: generated editorial footage is the primary visual source.
+- `FULL_GENERATIVE`: external footage discovery is disabled; all final visual assets are generated video.
+- `CHARACTER_SERIES`: full generative production with persistent character, world, and episode registries.
+
+The runtime profile is selected from duration and aspect ratio, so Shorts and long-form share the same orchestrator and renderer.
+
+## VIDEO_ONLY
+
+Final manifests use `finalMediaPolicy: VIDEO_ONLY`. The production gate rejects `IMAGE`, `DOCUMENT`, `GRAPHIC`, placeholders, intentional stills, and synthetic footage without provenance. The renderer also rejects an image or missing asset before FFmpeg runs when that policy is present. Real video, generated video, animated maps/charts, screen captures, and motion graphics rendered as video remain valid.
+
+Reference images may be stored and passed to a provider, but they cannot be inserted into the final timeline. A sourced run with an unresolved still fallback fails loudly and must search, rewrite, or generate a moving replacement.
+
+## Providers
+
+Video providers implement the common provider contract in `packages/providers/src/types.ts`. The Higgsfield adapter uses the official REST API, `HF_CREDENTIALS` or `HF_API_KEY_ID`/`HF_API_KEY_SECRET`, and records provider/model/request metadata. It is registered alongside Gemini and Runway; the production core does not import Higgsfield-specific request shapes.
+
+Real generation is safety-gated by `REAL_GENERATION_ENABLED=true`. It is unset/false in development by default. Missing Higgsfield credentials produce `HIGGSFIELD_CREDENTIALS_REQUIRED`; no credential is invented and no purchase is attempted.
+
+## Generation, QC, and repair
+
+`GenerativeProductionOrchestrator` compiles a structured `ShotContract` using character/world references, calls the selected provider, probes the returned video, evaluates the configured quality floor, records the attempt, and either registers an approved synthetic illustration or diagnoses the failure. `RepairOrchestrator` changes the strategy (references, action complexity, camera, prompt, provider, or abort) and enforces a finite attempt count.
+
+Each attempt persists request, compiled prompt, references, provider/model, estimated/actual cost, latency, output, QC result, failure categories, and repair relation. Synthetic media is never `DIRECT_EVIDENCE`.
+
+## Cost and learning
+
+`CostOptimizer` tracks reservations, spend, rejected generation cost, accepted usable seconds, provider/model breakdown, remaining budget, and cost per accepted usable second. `GenerationPerformanceMemory` persists historical keep rate, quality, latency, failure categories, and cost per accepted second and can rank future candidates with that history.
+
+## Character and world continuity
+
+`CharacterRegistry`, `WorldRegistry`, and `SeriesEpisodeMemoryRegistry` persist versioned identities under a run's registry directory. Immutable identity fields cannot drift silently. Prompts are compiled from the registry rather than redefining a recurring character ad hoc for every shot.
+
+## Inputs and benchmarks
+
+The generic CLI accepts the existing `--mode`, `--prompt`, `--script`, `--duration`, `--aspect-ratio`, `--character`, and `--budget` conventions. Example:
+
+```text
+npm run production:create -- --mode full-generative --prompt "..." --duration 30 --aspect-ratio 9:16 --budget 2
+```
+
+`scripts/test-generative-cutover.mjs` is deterministic and does not call a paid provider. The generative benchmark briefs live in `benchmark-inputs/generative-cutover-*.json`; they are inputs, not topic-specific production logic. Real D/E/F renders require explicit real-generation enablement and provider credentials/budget.

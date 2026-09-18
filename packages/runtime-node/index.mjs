@@ -411,6 +411,9 @@ export class FfmpegRenderer {
       const asset = manifest.assets.find((candidate) => candidate.sceneId === scene.id);
       const beat = (manifest.script?.beats ?? []).find((candidate) => scene.id === candidate.id || scene.id.startsWith(`${candidate.id}-s`));
       const duration = Math.max(0.2, Number(scene.durationSec));
+      if (manifest.finalMediaPolicy === 'VIDEO_ONLY' && (!asset || !/^video\//i.test(String(asset.mimeType ?? '')))) {
+        throw new Error(`VIDEO_ONLY_RENDER_REJECTED_STATIC_OR_MISSING_ASSET:${scene.id}`);
+      }
       if (asset?.uri?.startsWith('procedural://')) {
         await this.renderProcedural({ scene, asset, beat, clip, work, index, width, height, duration });
         const sceneStart = Math.max(0, Number(scene.startSec ?? timelineCursor));
@@ -422,6 +425,7 @@ export class FfmpegRenderer {
       }
       const source = asset ? await this.materialize(asset.uri, join(work, `asset-${index}`)) : null;
       if (source && mimeFor(source).startsWith('image/')) {
+        if (manifest.finalMediaPolicy === 'VIDEO_ONLY') throw new Error(`VIDEO_ONLY_RENDER_REJECTED_IMAGE:${scene.id}`);
         // Still images stay still. FOOTAGE_PRO must source real motion; a
         // synthetic pan, shake, jitter or noise pass is never a substitute.
         const imageFilter = `scale=${Math.round(width * 1.06)}:${Math.round(height * 1.06)}:force_original_aspect_ratio=increase,crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2,format=yuv420p`;

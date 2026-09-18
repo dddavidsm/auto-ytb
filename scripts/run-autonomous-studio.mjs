@@ -6,7 +6,8 @@ import { spawn } from 'node:child_process';
 import { NodeLocalObjectStore, FfmpegRenderer } from '../packages/runtime-node/index.mjs';
 import { GeminiVoiceProvider, GeminiVideoProvider } from '../packages/providers/dist/index.js';
 import { withGeminiWordAlignment } from '../packages/runtime-node/gemini-word-alignment.mjs';
-import { searchPexelsVideo, searchPixabayVideo, searchWikimediaVideo, scoreNativeVideoAvailability, evaluateFootagePro, buildKaraokeChunks, buildNarrationUnits, matchSemanticFootage, coverageFromTimeline, timelineMediaRatios, evaluateCreativeGreenlightEvidence, evaluateModeContract, normalizeVisualIntent, parseShotBoundaries, segmentMediaRange, finalArtifactConsistencyGate, endingIntegrityReport, centralObjectEvidenceGate, SyntheticBrollEngine, assertGenerationJustification, buildVisualContinuityProfile, buildVisualGapReport, compileSyntheticShotPrompt, passesPhotorealismGate } from '../packages/production/dist/index.js';
+import { runGenerativeProduction } from './generative-production-run.mjs';
+import { ProductionDirector, searchPexelsVideo, searchPixabayVideo, searchWikimediaVideo, scoreNativeVideoAvailability, evaluateFootagePro, buildKaraokeChunks, buildNarrationUnits, matchSemanticFootage, coverageFromTimeline, timelineMediaRatios, evaluateCreativeGreenlightEvidence, evaluateModeContract, normalizeVisualIntent, parseShotBoundaries, segmentMediaRange, finalArtifactConsistencyGate, endingIntegrityReport, centralObjectEvidenceGate, SyntheticBrollEngine, assertGenerationJustification, buildVisualContinuityProfile, buildVisualGapReport, compileSyntheticShotPrompt, passesPhotorealismGate, assertFinalTimelineIsVideoOnly } from '../packages/production/dist/index.js';
 
 // Canonical generic runtime. Run-specific topics, sources and decisions are
 // always artifacts; this file contains no production fixture content.
@@ -24,11 +25,15 @@ const arg = (name, fallback = undefined) => {
   const index = process.argv.indexOf(key);
   return index >= 0 ? process.argv[index + 1] ?? fallback : fallback;
 };
-const mode = arg('mode', 'prompt');
+const normalizeMode = (value) => String(value ?? 'prompt').trim().toLowerCase().replaceAll('_', '-');
+const mode = normalizeMode(arg('mode', 'prompt'));
 const requestedPrompt = arg('prompt');
 const requestedScriptPath = arg('script') || arg('script-path');
 const requestedScoutTopic = arg('scout-topic');
 const requestedDuration = Number(arg('duration', mode === 'radar' ? 150 : 90));
+const requestedAspectRatio = arg('aspect-ratio', '16:9');
+const requestedCharacterId = arg('character');
+const requestedBudget = arg('budget');
 const runId = arg('run-id', `studio-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 7)}`);
 const resumeRun = process.argv.includes('--resume') || String(arg('resume', 'false')).toLowerCase() === 'true';
 const runRoot = join(ROOT, runId);
@@ -893,6 +898,10 @@ async function generateReferenceGroundedSegments(units, semanticSegments, mediaP
     if (entity && !unique.some((entry) => entry.entity.canonicalName === entity.canonicalName)) unique.push({ unit, entity });
   }
   const generations = []; const syntheticSegments = []; const referenceSegments = [];
+  if (String(process.env.REAL_GENERATION_ENABLED || '').toLowerCase() !== 'true') {
+    await writeJson(join(reportRoot, 'SyntheticResourcePack.json'), { version: 1, generations: exactUnits.map((unit) => ({ unitId: unit.id, decision: 'REJECT', rejectionReasons: ['REAL_GENERATION_DISABLED'] })), keptSegments: [], referenceFallbackSegments: [], generatedAt: now() });
+    return { segments: [], referenceSegments: [], generations, gaps };
+  }
   const priorSynthetic = await readJson(join(reportRoot, 'SyntheticResourcePack.json'), null);
   let referenceProviderUnavailable = Boolean(priorSynthetic?.generations?.some((entry) => (entry.rejectionReasons || []).some((reason) => /inlineData[^]*?(?:not supported|isn.t supported)|reference[^]*?not supported/i.test(String(reason)))));
   const provider = new GeminiVideoProvider({ apiKey: API_KEY, store, model: process.env.GEMINI_VIDEO_MODEL || 'veo-3.1-fast-generate-preview', resolution: process.env.GEMINI_VIDEO_RESOLUTION || '720p', pollMs: 10000, timeoutMs: 900000 });
@@ -1048,7 +1057,10 @@ async function renderFootageProRun(opportunity, research, semanticSegments, crea
   if (units.length < Math.max(6, Math.round(actualDuration / 12))) throw new Error(`EDITORIAL_TIMELINE_BLOCKED: only ${units.length} phrase-level units were aligned`);
   let effectiveSegments = semanticSegments;
   let syntheticRun = await generateReferenceGroundedSegments(units, effectiveSegments, mediaPlan, store);
-  effectiveSegments = [...effectiveSegments, ...syntheticRun.segments, ...syntheticRun.referenceSegments];
+  // Reference stills are valid conditioning inputs, never final visual
+  // assets.  A VIDEO_ONLY production may use the generated moving result or
+  // fail/rewrite; it must not silently select the still fallback.
+  effectiveSegments = [...effectiveSegments, ...syntheticRun.segments];
   let selected;
   units = relaxSecondaryVisualGaps(units, effectiveSegments, mediaPlan);
   try { selected = selectSemanticMatches(units, effectiveSegments); } catch (error) {
@@ -1065,7 +1077,7 @@ async function renderFootageProRun(opportunity, research, semanticSegments, crea
     units = reflowEditorialUnits(localizeExactVisualCriticality(splitLongNarrationUnits(buildNarrationUnits(script.beats.map((beat, index) => ({ ...beat, id: beat.id || `beat-${index + 1}` })), wordTimestamps)), mediaPlan), actualDuration);
     if (units.length < Math.max(6, Math.round(actualDuration / 12))) throw new Error(`EDITORIAL_TIMELINE_BLOCKED after VisualRewritePass: only ${units.length} phrase-level units were aligned`);
     syntheticRun = await generateReferenceGroundedSegments(units, semanticSegments, mediaPlan, store);
-    effectiveSegments = [...semanticSegments, ...syntheticRun.segments, ...syntheticRun.referenceSegments];
+    effectiveSegments = [...semanticSegments, ...syntheticRun.segments];
     units = relaxSecondaryVisualGaps(units, effectiveSegments, mediaPlan);
     try { selected = selectSemanticMatches(units, effectiveSegments); } catch (finalMatchError) { await recordTopicRejection(opportunity.topic, opportunity.angle, ['EDITORIAL_MATCH_BLOCKED'], finalMatchError); throw finalMatchError; }
   }
@@ -1095,10 +1107,11 @@ async function renderFootageProRun(opportunity, research, semanticSegments, crea
     return { id: `${unit.id}-s${index + 1}`, startSec, durationSec: endSec - startSec, kind: item.match.segment.assetType === 'IMAGE' ? 'image' : 'video', instruction: unit.visualIntent, sourceIds: [item.match.segment.segmentId], generated: item.match.segment.assetType === 'SYNTHETIC_VIDEO', evidenceRole: item.match.segment.evidenceRole || 'CONTEXTUAL_REAL', visualLead: unit.startTime > startSec ? { seconds: unit.startTime - startSec, reason: index === 0 ? 'Opening selected footage establishes the entity before narration begins.' : 'Adjacent selected footage carries the natural speech pause.' } : null };
   });
   const timelineItems = scenes.map((scene) => ({ startTime: scene.startSec, endTime: scene.startSec + scene.durationSec, visualType: scene.generated ? 'SYNTHETIC_VIDEO' : scene.kind === 'image' ? 'IMAGE' : 'REAL_VIDEO' }));
+  assertFinalTimelineIsVideoOnly(timelineItems.map((item, index) => ({ id: scenes[index].id, start: item.startTime, end: item.endTime, kind: item.visualType, metadata: { evidenceRole: scenes[index].evidenceRole, videoOnly: item.visualType === 'SYNTHETIC_VIDEO' ? true : undefined } })));
   const mediaRatios = timelineMediaRatios(timelineItems);
   const timelineAssets = selected.map((item, index) => { const segment = item.match.segment; const range = segmentMediaRange(segment); const scene = scenes[index]; const generated = segment.assetType === 'SYNTHETIC_VIDEO'; return { id: `${segment.segmentId}-${index}`, uri: fileUri(segment.localPath), mimeType: segment.mime || 'video/mp4', provider: segment.provider, model: generated ? (segment.metadata?.syntheticProvenance?.model || 'reference-grounded-video') : 'multiframe-semantic-segment-v1', costUsd: 0, sceneId: scene.id, generated, evidenceRole: segment.evidenceRole || (generated ? 'SYNTHETIC_ILLUSTRATION' : 'CONTEXTUAL_REAL'), sourceIds: [segment.segmentId], sourceUrl: segment.sourceUrl, license: segment.metadata?.license || null, metadata: { sourceUrl: segment.sourceUrl, rightsStatus: segment.rightsTier, attribution: segment.metadata?.creator || null, title: segment.metadata?.title || segment.segmentId, clipStartSec: range.startTime, clipEndSec: range.endTime, sourceAudio: segment.sourceAudio, visualMatch: item.match.classification, matchExplanation: item.match.explanation, semanticProfile: segment.provenance, shotTimecode: [segment.startTime, segment.endTime], usableTimecode: [range.startTime, range.endTime], temporalEvidence: segment.temporalEvidence || null, syntheticProvenance: segment.metadata?.syntheticProvenance || null } }; });
   const containsSyntheticMedia = timelineAssets.some((asset) => asset.generated);
-  const renderManifest = { projectId: runId, createdAt: now(), contentFormat: 'SHORT_HORIZONTAL', aspectRatio: '16:9', frame: { width: 1280, height: 720 }, engineeringResolution: '1280x720', contentArchetype: { version: 1, id: 'FOOTAGE_PRO_SOURCED_NARRATIVE', label: 'Footage-first sourced narrative', confidence: 82, reasons: ['multiframe segment understanding', 'phrase-level semantic footage matching'], voiceMode: 'SINGLE_NARRATOR', realityMode: 'FACTUAL', cameraProfile: 'EDITORIAL_DOCUMENTARY', syntheticDisclosurePolicy: containsSyntheticMedia ? 'Synthetic illustrations retain provenance and are never direct evidence.' : 'Synthetic voice only; source video provenance retained.', profile: {} }, captionPlan: { enabled: true, burnIn: false, preset: 'KARAOKE_BOLD', source: 'GEMINI_WORD_TIMESTAMPS', mode: 'WORD_KARAOKE' }, editPlan: { preset: 'FOOTAGE_PRO', transitionMode: 'CLEAN_CUTS', filmLook: false, punchInAnchors: false, preserveAudioTiming: true, defaultMotionEffects: [] }, script: { title: script.title, targetDurationSec: actualDuration, beats: units.map((unit) => ({ id: unit.id, narration: unit.text, entities: unit.visualIntent.requiredEntities, visualIntent: unit.visualIntent, startSec: unit.startTime, targetDurationSec: unit.endTime - unit.startTime, importance: unit.importance })) }, scenes, assets: timelineAssets, voice: { id: `voice-${runId}`, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: actualDuration, alignment: voice.alignment, wordTimestamps }, music: null, estimatedCostUsd: 0, actualCostUsd: Number(voice.metadata?.transcriptionCostUsd || 0), containsSyntheticMedia };
+  const renderManifest = { projectId: runId, createdAt: now(), finalMediaPolicy: 'VIDEO_ONLY', contentFormat: 'SHORT_HORIZONTAL', aspectRatio: '16:9', frame: { width: 1280, height: 720 }, engineeringResolution: '1280x720', contentArchetype: { version: 1, id: 'FOOTAGE_PRO_SOURCED_NARRATIVE', label: 'Footage-first sourced narrative', confidence: 82, reasons: ['multiframe segment understanding', 'phrase-level semantic footage matching'], voiceMode: 'SINGLE_NARRATOR', realityMode: 'FACTUAL', cameraProfile: 'EDITORIAL_DOCUMENTARY', syntheticDisclosurePolicy: containsSyntheticMedia ? 'Synthetic illustrations retain provenance and are never direct evidence.' : 'Synthetic voice only; source video provenance retained.', profile: {} }, captionPlan: { enabled: true, burnIn: false, preset: 'KARAOKE_BOLD', source: 'GEMINI_WORD_TIMESTAMPS', mode: 'WORD_KARAOKE' }, editPlan: { preset: 'FOOTAGE_PRO', transitionMode: 'CLEAN_CUTS', filmLook: false, punchInAnchors: false, preserveAudioTiming: true, defaultMotionEffects: [] }, script: { title: script.title, targetDurationSec: actualDuration, beats: units.map((unit) => ({ id: unit.id, narration: unit.text, entities: unit.visualIntent.requiredEntities, visualIntent: unit.visualIntent, startSec: unit.startTime, targetDurationSec: unit.endTime - unit.startTime, importance: unit.importance })) }, scenes, assets: timelineAssets, voice: { id: `voice-${runId}`, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: actualDuration, alignment: voice.alignment, wordTimestamps }, music: null, estimatedCostUsd: 0, actualCostUsd: Number(voice.metadata?.transcriptionCostUsd || 0), containsSyntheticMedia };
   await writeJson(join(runRoot, 'timeline', 'MasterTimeline.json'), renderManifest);
   const matchingReceipts = selected.map((item, index) => ({ editorialUnit: units[index], topCandidates: item.topCandidates.map((candidate) => { const range = segmentMediaRange(candidate.segment); return { segmentId: candidate.segment.segmentId, sourceUrl: candidate.segment.sourceUrl, shotTimecode: [candidate.segment.startTime, candidate.segment.endTime], sourceTimecode: [range.startTime, range.endTime], classification: candidate.classification, score: candidate.score, components: candidate.components, explanation: candidate.explanation }; }), selectedSegment: item.match.segment.segmentId, selectedSourceTimecode: [segmentMediaRange(item.match.segment).startTime, segmentMediaRange(item.match.segment).endTime] }));
   await writeJson(join(reportRoot, 'matching-receipts.json'), matchingReceipts);
@@ -1418,7 +1431,7 @@ async function normalizeFinalDuration(path, targetSeconds) {
 
 async function main() {
   legacyTerms = await readJson(resolve(ROOT, 'scripts', 'fixtures', 'legacy-topic-terms.json'), []);
-  if (!['sourced', 'footage-pro', 'radar', 'footage-pro-repair', 'footage-pro-truth-repair'].includes(mode)) throw new Error('QUALITY_RESET_BLOCKED: image-first autonomous rendering is retired. Use SOURCED_AUTOPRODUCTION for new production.');
+  if (!['sourced', 'footage-pro', 'radar', 'footage-pro-repair', 'footage-pro-truth-repair', 'auto', 'hybrid', 'generative-editorial', 'full-generative', 'character-series'].includes(mode)) throw new Error('QUALITY_RESET_BLOCKED: unsupported production mode. Use sourced, auto, hybrid, generative-editorial, full-generative or character-series.');
   if (mode === 'footage-pro-repair') {
     await mkdir(reportRoot, { recursive: true }); await mkdir(finalRoot, { recursive: true }); await repairFootageProRun(); return;
   }
@@ -1426,10 +1439,16 @@ async function main() {
     await mkdir(mediaRoot, { recursive: true }); await mkdir(reportRoot, { recursive: true }); await mkdir(finalRoot, { recursive: true });
     await runTruthRepairProduction(); return;
   }
+  const autoPlan = mode === 'auto' ? new ProductionDirector().createPlan({ requestedMode: 'AUTO', prompt: requestedPrompt, characterSeries: Boolean(requestedCharacterId) || /character|episode|cartoon|animated/i.test(requestedPrompt || ''), targetDurationSeconds: requestedDuration, aspectRatio: requestedAspectRatio }) : null;
+  const dispatchedMode = autoPlan?.mode === 'CHARACTER_SERIES' ? 'character-series' : autoPlan?.mode === 'GENERATIVE_EDITORIAL' ? 'generative-editorial' : autoPlan?.mode === 'FULL_GENERATIVE' ? 'full-generative' : mode;
+  if (['generative-editorial', 'full-generative', 'character-series'].includes(dispatchedMode)) {
+    await mkdir(mediaRoot, { recursive: true }); await mkdir(reportRoot, { recursive: true }); await mkdir(finalRoot, { recursive: true });
+    return runGenerativeProduction({ runId, runRoot, reportRoot, finalRoot, mode: dispatchedMode, prompt: requestedPrompt, scriptPath: requestedScriptPath, durationSeconds: requestedDuration, aspectRatio: requestedAspectRatio, characterId: requestedCharacterId, budgetUsd: requestedBudget == null ? null : Number(requestedBudget), env: process.env });
+  }
   if (!API_KEY) throw new Error('Missing GEMINI_API_KEY');
   await mkdir(mediaRoot, { recursive: true }); await mkdir(reportRoot, { recursive: true }); await mkdir(finalRoot, { recursive: true });
   const history = await loadCreativeHistory();
-  if (['sourced', 'footage-pro', 'radar'].includes(mode)) return runFootageProProduction(history);
+  if (['sourced', 'footage-pro', 'radar', 'hybrid'].includes(mode) || autoPlan?.mode === 'HYBRID_EDITORIAL' || autoPlan?.mode === 'FOOTAGE_PRO') return runFootageProProduction(history);
   const cachedOpportunity = await readJson(join(reportRoot, 'opportunity.json'), null);
   const opportunity = cachedOpportunity?.topic ? cachedOpportunity : await buildOpportunity(requestedPrompt, history);
   const novelty = cachedOpportunity?.topic ? await readJson(join(reportRoot, 'novelty.json'), await noveltyAgainstHistory(opportunity, history)) : await noveltyAgainstHistory(opportunity, history);
