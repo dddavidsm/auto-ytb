@@ -1041,9 +1041,18 @@ async function renderFootageProRun(opportunity, research, semanticSegments, crea
   const synthesizeVoice = async (text) => {
     const rawVoiceProvider = new GeminiVoiceProvider({ apiKey: API_KEY, store, model: TTS_MODEL, defaultVoice: TTS_VOICE, protocol: 'generateContent' });
     const voiceProvider = withGeminiWordAlignment(rawVoiceProvider, { apiKey: API_KEY, strict: true, minCoverage: 0.88 });
-    const synthesized = await voiceProvider.synthesize({ text, voice: TTS_VOICE, language: 'en-US' });
-    await writeJson(voiceStatePath, { ...synthesized, sourceText: text });
-    return synthesized;
+    let lastError = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const synthesized = await voiceProvider.synthesize({ text, voice: TTS_VOICE, language: 'en-US' });
+        await writeJson(voiceStatePath, { ...synthesized, sourceText: text, alignmentAttempts: attempt });
+        return synthesized;
+      } catch (error) {
+        lastError = error;
+        if (!/word alignment coverage/i.test(String(error)) || attempt === 2) throw error;
+      }
+    }
+    throw lastError ?? new Error('VOICE_ALIGNMENT_FAILED');
   };
   let voice = cachedVoice?.sourceText === script.narration && cachedVoice?.uri?.startsWith('file://') && existsSync(cachedVoice.uri.replace(/^file:\/\//, '')) && Array.isArray(cachedVoice.metadata?.wordTimestamps) ? cachedVoice : await synthesizeVoice(script.narration);
   let wordTimestamps = voice.metadata?.wordTimestamps || [];

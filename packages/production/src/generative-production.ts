@@ -277,7 +277,7 @@ export class RepairOrchestrator {
     const category = diagnoseGenerationFailure(input.quality)[0] ?? 'UNKNOWN_GENERATION_FAILURE';
     if (input.attemptNumber >= input.maxAttempts) return { category, strategy: 'ABORT', reason: 'Maximum generation attempts reached.', expectedGain: 0, estimatedCostUsd: null };
     if (/character|identity|drift/i.test(category) && !input.hasReferences) return { category, strategy: 'ADD_REFERENCE', reason: 'Identity failure needs canonical reference assets before another request.', expectedGain: 0.7, estimatedCostUsd: input.estimatedCostUsd };
-    if (/physics|anatomy|interaction|artifact/i.test(category)) return { category, strategy: 'SIMPLIFY_ACTION', reason: 'Reduce action complexity before changing provider.', expectedGain: 0.55, estimatedCostUsd: input.estimatedCostUsd };
+    if (/physics|anatomy|interaction|artifact|freeze|loop|temporal/i.test(category)) return { category, strategy: 'SIMPLIFY_ACTION', reason: 'Reduce action complexity and temporal risk before changing provider.', expectedGain: 0.55, estimatedCostUsd: input.estimatedCostUsd };
     if (/style|continuity|camera|motion/i.test(category)) return { category, strategy: 'CHANGE_CAMERA', reason: 'Change framing or motion to reduce temporal failure risk and match context.', expectedGain: 0.5, estimatedCostUsd: input.estimatedCostUsd };
     if (input.retrievalAllowed && input.mode !== 'FULL_GENERATIVE' && input.mode !== 'CHARACTER_SERIES') return { category, strategy: 'RETRIEVAL_FALLBACK', reason: 'A real asset may be more reliable for this non-core generated gap.', expectedGain: 0.6, estimatedCostUsd: 0 };
     return { category, strategy: 'MODIFY_PROMPT', reason: 'Change constraints materially; do not repeat identical generation input.', expectedGain: 0.4, estimatedCostUsd: input.estimatedCostUsd };
@@ -304,8 +304,10 @@ export class GenerativeProductionOrchestrator {
       const prompt = (this.input.promptCompiler ?? new GenerationPromptCompiler()).compile(shot, input.characters ?? [], input.world ?? null, references);
       const referenceUris = [...references.characterAssets, ...references.worldAssets, ...references.styleAssets].slice(0, 3);
       const canUseReferences = references.strategy !== 'NONE' && this.input.provider.capability.referenceImageSupport && this.input.provider.capability.modes.includes('REFERENCE_TO_VIDEO');
-      const request: VideoGenerationRequest = { prompt, durationSeconds: shot.desiredDurationSeconds, aspectRatio: shot.aspectRatio ?? '16:9', mode: canUseReferences ? 'REFERENCE_TO_VIDEO' : 'TEXT_TO_VIDEO', referenceUris: canUseReferences ? referenceUris : [] };
-      const estimate = this.input.provider.estimateCost(request); if (estimate.estimatedUsd != null) this.input.cost?.reserve(estimate.estimatedUsd, shot.shotId);
+      const request: VideoGenerationRequest = { prompt, durationSeconds: shot.desiredDurationSeconds, aspectRatio: shot.aspectRatio ?? '16:9', mode: canUseReferences ? 'REFERENCE_TO_VIDEO' : 'TEXT_TO_VIDEO', referenceUris: canUseReferences ? referenceUris : [], metadata: { shotId: shot.shotId, scene: shot.scene, importance: shot.importance } };
+      const estimate = this.input.provider.estimateCost(request);
+      if (estimate.estimatedUsd == null && this.input.cost?.snapshot().hardUsd != null) throw new Error(`GENERATION_PRICE_REQUIRED:${this.input.provider.name}`);
+      if (estimate.estimatedUsd != null) this.input.cost?.reserve(estimate.estimatedUsd, shot.shotId);
       const started = Date.now(); let asset: BinaryAsset; let error: Error | null = null;
       try { asset = await this.input.provider.generateShot(request); } catch (value) { error = value instanceof Error ? value : new Error(String(value)); asset = { id: `failed-${shot.shotId}-${attemptNumber}`, uri: '', mimeType: 'video/unknown', provider: this.input.provider.name }; }
       const latency = Date.now() - started;
