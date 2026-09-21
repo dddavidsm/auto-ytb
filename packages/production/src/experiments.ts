@@ -65,6 +65,13 @@ export function selectPackagingWithExploration(input: {
   variants: PackagingVariant[];
   profile?: PackagingLearningProfile;
   experimentSeed: string;
+  /**
+   * Maximum number of ranked variants that are eligible to win selection.
+   * The canonical pipeline materializes at most two non-Short thumbnail arms,
+   * so the default keeps selection inside that materialized pool while still
+   * scoring all generated ideas for learning/diagnostics.
+   */
+  selectionPoolSize?: number;
 }): PackagingSelection {
   if (!input.variants.length) throw new Error('At least one packaging variant is required');
   const sampleSize = input.profile?.sampleSize ?? 0;
@@ -75,12 +82,16 @@ export function selectPackagingWithExploration(input: {
     const banditScore = variant.score * 0.58 + learnedScore * 0.30 + noveltyScore * 0.12;
     return { id: variant.id, baseScore: round(variant.score), learnedScore: round(learnedScore), noveltyScore: round(noveltyScore), banditScore: round(banditScore) };
   });
-  const explore = stableUnit(`${input.experimentSeed}:mode`) < explorationRate && input.variants.length > 1;
   const ranked = [...rows].sort((a, b) => b.banditScore - a.banditScore);
-  let selectedId = ranked[0]!.id;
+  const poolSize = Math.max(1, Math.min(input.variants.length, Math.floor(input.selectionPoolSize ?? 2)));
+  const eligible = ranked.slice(0, poolSize);
+  const explore = stableUnit(`${input.experimentSeed}:mode`) < explorationRate && eligible.length > 1;
+  let selectedId = eligible[0]!.id;
   if (explore) {
-    // Explore among non-greedy variants, preferring novelty while remaining quality-aware.
-    const alternatives = ranked.slice(1).sort((a, b) => (b.noveltyScore * 0.65 + b.baseScore * 0.35) - (a.noveltyScore * 0.65 + a.baseScore * 0.35));
+    // Explore only among variants that the caller can actually materialize.
+    // This prevents a valid bandit arm from winning without a corresponding
+    // thumbnail asset, while retaining all variants in the learning scores.
+    const alternatives = eligible.slice(1).sort((a, b) => (b.noveltyScore * 0.65 + b.baseScore * 0.35) - (a.noveltyScore * 0.65 + a.baseScore * 0.35));
     const index = Math.floor(stableUnit(`${input.experimentSeed}:arm`) * alternatives.length);
     selectedId = alternatives[Math.min(index, alternatives.length - 1)]!.id;
   }
