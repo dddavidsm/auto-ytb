@@ -21,11 +21,45 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
-      - name: Require API connection
-        run: test -n "$YOUTUBE_API_KEY" || (echo "Configure repository secret YOUTUBE_API_KEY" && exit 1)
-      - run: npm run niche:live
-      - uses: actions/upload-artifact@v4
+      - name: Check market-radar readiness
+        id: readiness
+        shell: bash
+        run: |
+          mkdir -p .data
+          if [ -n "$YOUTUBE_API_KEY" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            printf '%s\n' '{"version":1,"status":"READY","provider":"youtube-data-api","reason":null}' > .data/niche-live-status.json
+            {
+              echo "### Daily Market Radar"
+              echo "Provider configuration: **READY**"
+              echo "The live YouTube market scan will run in this job."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            printf '%s\n' '{"version":1,"status":"SKIPPED_NO_CREDENTIAL","provider":"youtube-data-api","reason":"YOUTUBE_API_KEY is not configured"}' > .data/niche-live-status.json
+            echo "::warning title=Daily Market Radar skipped::Configure repository secret YOUTUBE_API_KEY to enable live market discovery. No live market result was produced."
+            {
+              echo "### Daily Market Radar"
+              echo "Provider configuration: **SKIPPED_NO_CREDENTIAL**"
+              echo "No live scan was attempted because \`YOUTUBE_API_KEY\` is not configured."
+              echo "This is a configuration state, not an application failure."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Run live niche radar
+        if: steps.readiness.outputs.ready == 'true'
+        run: npm run niche:live
+      - name: Record successful radar status
+        if: steps.readiness.outputs.ready == 'true' && success()
+        shell: bash
+        run: |
+          printf '%s\n' '{"version":1,"status":"COMPLETED","provider":"youtube-data-api","reason":null}' > .data/niche-live-status.json
+      - name: Upload radar receipts
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: niche-live-${{ github.run_id }}
-          path: .data/niche-live-latest.json
+          path: |
+            .data/niche-live-latest.json
+            .data/niche-live-status.json
+          if-no-files-found: warn
           retention-days: 30
