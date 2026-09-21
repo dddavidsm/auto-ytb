@@ -65,6 +65,14 @@ export function selectPackagingWithExploration(input: {
   variants: PackagingVariant[];
   profile?: PackagingLearningProfile;
   experimentSeed: string;
+  /**
+   * Maximum number of variants, in caller-provided order, that are eligible
+   * to win selection. The canonical pipeline materializes the first two
+   * non-Short thumbnail arms, so the default prevents selection of an idea
+   * that cannot have a matching thumbnail while still scoring every idea for
+   * diagnostics and future learning.
+   */
+  selectionPoolSize?: number;
 }): PackagingSelection {
   if (!input.variants.length) throw new Error('At least one packaging variant is required');
   const sampleSize = input.profile?.sampleSize ?? 0;
@@ -75,12 +83,16 @@ export function selectPackagingWithExploration(input: {
     const banditScore = variant.score * 0.58 + learnedScore * 0.30 + noveltyScore * 0.12;
     return { id: variant.id, baseScore: round(variant.score), learnedScore: round(learnedScore), noveltyScore: round(noveltyScore), banditScore: round(banditScore) };
   });
-  const explore = stableUnit(`${input.experimentSeed}:mode`) < explorationRate && input.variants.length > 1;
-  const ranked = [...rows].sort((a, b) => b.banditScore - a.banditScore);
-  let selectedId = ranked[0]!.id;
+  const poolSize = Math.max(1, Math.min(input.variants.length, Math.floor(input.selectionPoolSize ?? 2)));
+  const eligibleIds = new Set(input.variants.slice(0, poolSize).map((variant) => variant.id));
+  const rankedEligible = rows.filter((row) => eligibleIds.has(row.id)).sort((a, b) => b.banditScore - a.banditScore);
+  const explore = stableUnit(`${input.experimentSeed}:mode`) < explorationRate && rankedEligible.length > 1;
+  let selectedId = rankedEligible[0]!.id;
   if (explore) {
-    // Explore among non-greedy variants, preferring novelty while remaining quality-aware.
-    const alternatives = ranked.slice(1).sort((a, b) => (b.noveltyScore * 0.65 + b.baseScore * 0.35) - (a.noveltyScore * 0.65 + a.baseScore * 0.35));
+    // Explore only among variants the caller will materialize. This closes the
+    // production race where a valid third bandit arm could previously win
+    // after only two thumbnail assets had been generated.
+    const alternatives = rankedEligible.slice(1).sort((a, b) => (b.noveltyScore * 0.65 + b.baseScore * 0.35) - (a.noveltyScore * 0.65 + a.baseScore * 0.35));
     const index = Math.floor(stableUnit(`${input.experimentSeed}:arm`) * alternatives.length);
     selectedId = alternatives[Math.min(index, alternatives.length - 1)]!.id;
   }
