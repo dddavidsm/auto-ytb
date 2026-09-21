@@ -83,6 +83,7 @@ export interface VideoProvider {
 }
 
 export type VideoGenerationMode = 'TEXT_TO_VIDEO' | 'IMAGE_TO_VIDEO' | 'VIDEO_TO_VIDEO' | 'REFERENCE_TO_VIDEO';
+export type VideoReferenceUriScheme = 'file' | 'http' | 'https';
 export type VideoGenerationCapability = {
   provider: string;
   model?: string;
@@ -92,6 +93,8 @@ export type VideoGenerationCapability = {
   resolutions: string[];
   referenceImageSupport: boolean;
   firstLastFrameSupport: boolean;
+  /** URI schemes the provider can dereference for conditioning media. Omit only when unrestricted/unknown. */
+  referenceUriSchemes?: readonly VideoReferenceUriScheme[];
   audioSupport: boolean;
   deterministicSeedSupport: boolean;
   estimatedUsdPerSecond: number | null;
