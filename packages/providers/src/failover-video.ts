@@ -33,17 +33,24 @@ function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
+function requestReferenceUris(input: VideoGenerationRequest): string[] {
+  return [input.firstFrameUri, input.lastFrameUri, input.inputVideoUri, ...(input.referenceUris ?? [])]
+    .filter((value): value is string => Boolean(value));
+}
+
+function normalizedRequest(input: VideoGenerationRequest): VideoGenerationRequest {
+  if (input.mode === 'REFERENCE_TO_VIDEO' && requestReferenceUris(input).length === 0) {
+    return { ...input, mode: 'TEXT_TO_VIDEO', referenceUris: [] };
+  }
+  return input;
+}
+
 function requestedMode(input: VideoGenerationRequest): VideoGenerationMode {
   if (input.mode) return input.mode;
   if (input.inputVideoUri) return 'VIDEO_TO_VIDEO';
   if (input.firstFrameUri || input.lastFrameUri) return 'IMAGE_TO_VIDEO';
   if (input.referenceUris?.length) return 'REFERENCE_TO_VIDEO';
   return 'TEXT_TO_VIDEO';
-}
-
-function requestReferenceUris(input: VideoGenerationRequest): string[] {
-  return [input.firstFrameUri, input.lastFrameUri, input.inputVideoUri, ...(input.referenceUris ?? [])]
-    .filter((value): value is string => Boolean(value));
 }
 
 function uriScheme(uri: string): VideoReferenceUriScheme | null {
@@ -79,7 +86,7 @@ function compatible(provider: GenerativeVideoProvider, input: VideoGenerationReq
   if (capability.aspectRatios.length && !capability.aspectRatios.includes(input.aspectRatio)) return false;
   if (input.resolution && capability.resolutions.length && !capability.resolutions.includes(input.resolution)) return false;
   if (mode === 'REFERENCE_TO_VIDEO' && references.length === 0) return false;
-  if ((references.length > 0 || input.firstFrameUri || input.lastFrameUri) && mode !== 'TEXT_TO_VIDEO' && !capability.referenceImageSupport) return false;
+  if (references.length > 0 && mode !== 'TEXT_TO_VIDEO' && !capability.referenceImageSupport) return false;
   if ((input.firstFrameUri || input.lastFrameUri) && mode === 'IMAGE_TO_VIDEO' && !capability.firstLastFrameSupport) return false;
   if (references.length && capability.referenceUriSchemes?.length) {
     for (const uri of references) {
@@ -124,8 +131,6 @@ export class FailoverGenerativeVideoProvider implements GenerativeVideoProvider 
       referenceUriSchemes: unique(capabilities.flatMap((item) => [...(item.referenceUriSchemes ?? [])])),
       audioSupport: capabilities.some((item) => item.audioSupport),
       deterministicSeedSupport: capabilities.some((item) => item.deterministicSeedSupport),
-      // The wrapper reserves against the most expensive eligible provider, so
-      // this aggregate value is deliberately conservative rather than cheap.
       estimatedUsdPerSecond: knownRates.length === capabilities.length && knownRates.length ? Math.max(...knownRates) : null,
       credentialStatus,
     };
@@ -177,17 +182,18 @@ export class FailoverGenerativeVideoProvider implements GenerativeVideoProvider 
   }
 
   async generateShot(input: VideoGenerationRequest): Promise<BinaryAsset & { metadata: Record<string, unknown> }> {
-    const candidates = this.candidates(input);
-    if (!candidates.length) throw new Error(`VIDEO_PROVIDER_FAILOVER_NO_COMPATIBLE_PROVIDER:${requestedMode(input)}`);
+    const effectiveInput = normalizedRequest(input);
+    const candidates = this.candidates(effectiveInput);
+    if (!candidates.length) throw new Error(`VIDEO_PROVIDER_FAILOVER_NO_COMPATIBLE_PROVIDER:${requestedMode(effectiveInput)}`);
 
-    const reservation = this.estimateCost(input);
+    const reservation = this.estimateCost(effectiveInput);
     if (reservation.estimatedUsd == null) throw new Error(`VIDEO_PROVIDER_FAILOVER_PRICE_REQUIRED:${reservation.source}`);
 
     const attempts: VideoProviderFailoverAttempt[] = [];
     for (const provider of candidates) {
-      const estimate = provider.estimateCost(input);
+      const estimate = provider.estimateCost(effectiveInput);
       try {
-        const asset = await provider.generateShot(input);
+        const asset = await provider.generateShot(effectiveInput);
         const providerCostUsd = asset.costUsd ?? estimate.estimatedUsd;
         if (providerCostUsd != null && providerCostUsd > reservation.estimatedUsd + 1e-9) {
           throw new Error(`VIDEO_PROVIDER_FAILOVER_COST_EXCEEDS_RESERVATION:${provider.name}:${providerCostUsd}:${reservation.estimatedUsd}`);
@@ -196,10 +202,6 @@ export class FailoverGenerativeVideoProvider implements GenerativeVideoProvider 
         attempts.push({ provider: provider.name, model: provider.capability.model, outcome: 'SUCCEEDED', estimatedUsd: estimate.estimatedUsd });
         return {
           ...asset,
-          // CostOptimizer reserves once before entering the provider. Returning
-          // the same conservative ceiling prevents a fallback from silently
-          // exceeding that reservation. The selected provider's own estimate
-          // remains explicit in metadata for economic analysis.
           costUsd: reservation.estimatedUsd,
           metadata: {
             ...(asset.metadata ?? {}),
@@ -208,6 +210,8 @@ export class FailoverGenerativeVideoProvider implements GenerativeVideoProvider 
               selectedProvider: provider.name,
               selectedModel: asset.model ?? provider.capability.model ?? null,
               attempts,
+              requestedMode: requestedMode(input),
+              effectiveMode: requestedMode(effectiveInput),
               reservationUsd: reservation.estimatedUsd,
               providerEstimatedUsd: estimate.estimatedUsd,
               providerReportedCostUsd: asset.costUsd ?? null,
