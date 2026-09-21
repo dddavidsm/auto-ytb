@@ -4,9 +4,10 @@ import { promisify } from 'node:util';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NodeLocalObjectStore, FfmpegRenderer } from '../packages/runtime-node/index.mjs';
-import { GeminiVoiceProvider, GeminiVideoProvider, createHiggsfieldVideoProviderFromEnv } from '../packages/providers/dist/index.js';
+import { GeminiVoiceProvider } from '../packages/providers/dist/index.js';
 import { withGeminiWordAlignment } from '../packages/runtime-node/gemini-word-alignment.mjs';
 import { CostOptimizer, GenerationPerformanceMemory, GenerationPromptCompiler, GenerativeProductionOrchestrator, JsonRegistry, CharacterRegistry, WorldRegistry, SeriesEpisodeMemoryRegistry, ProductionDirector, RepairOrchestrator, GeneratedAssetRegistry, evaluateGeneratedClipQuality, assertFinalTimelineIsVideoOnly, probeRenderedVideoOnly, evaluateCreativeQC, redesignHighRiskShot } from '../packages/production/dist/index.js';
+import { createGenerativeVideoProviderRuntime, describeGenerativeVideoRuntime } from './generative-video-provider-runtime.mjs';
 
 const now = () => new Date().toISOString();
 const fileUri = (path) => `file://${resolve(path)}`;
@@ -106,16 +107,6 @@ function defaultWorld(worldId, timestamp, override = null) {
   return { worldId, version: 'v1', name: worldId, visualIdentity: 'consistent fictional production environment', architecture: 'stable practical environment appropriate to the story', layout: 'stable spatial layout across shots', colors: ['natural balanced palette'], lighting: 'consistent motivated lighting', weatherDefaults: ['ordinary conditions unless the brief changes them'], props: [], recurringObjects: [], referenceAssets: [], spatialRelationships: [], continuityMetadata: {}, createdAt: timestamp, updatedAt: timestamp, ...(override ?? {}) };
 }
 
-function geminiVideoRateUsdPerSecond(env, model, resolution) {
-  const configuredRaw = env.GEMINI_VIDEO_USD_PER_SECOND ?? env.GENERATION_USD_PER_SECOND;
-  const configured = configuredRaw == null || String(configuredRaw).trim() === '' ? Number.NaN : Number(configuredRaw);
-  if (Number.isFinite(configured) && configured >= 0) return configured;
-  const lower = String(model).toLowerCase();
-  if (lower.includes('fast')) return resolution === '1080p' ? 0.12 : 0.10;
-  if (lower.includes('lite')) return resolution === '1080p' ? 0.08 : 0.05;
-  return resolution === '4k' ? 0.60 : 0.40;
-}
-
 async function createGlobalBudgetGuard(path, hardCapUsd, runId) {
   const load = async () => { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return { version: 1, currency: 'USD', hardCapUsd, spentUsd: 0, reservations: [], entries: [] }; } };
   const save = async (state) => writeJson(path, state);
@@ -133,14 +124,14 @@ async function createGlobalBudgetGuard(path, hardCapUsd, runId) {
       await save(state);
       return reservationId;
     },
-    async settle(reservationId, actualCostUsd, metadata = {}) {
+    async settle(reservationId, accountingCostUsd, metadata = {}) {
       state = await load();
       const reservation = (state.reservations ?? []).find((item) => item.reservationId === reservationId);
       if (!reservation) throw new Error(`GLOBAL_BUDGET_RESERVATION_MISSING:${reservationId}`);
-      const nextSpent = Number(state.spentUsd || 0) + Number(actualCostUsd || 0);
+      const nextSpent = Number(state.spentUsd || 0) + Number(accountingCostUsd || 0);
       state.reservations = (state.reservations ?? []).filter((item) => item.reservationId !== reservationId);
       state.spentUsd = Number(nextSpent.toFixed(6));
-      state.entries = [...(state.entries ?? []), { reservationId, runId, shotId: reservation.shotId, reservedUsd: reservation.amountUsd, actualUsd: actualCostUsd, actualBillingKnown: Boolean(metadata.actualBillingKnown), settledAt: now() }];
+      state.entries = [...(state.entries ?? []), { reservationId, runId, shotId: reservation.shotId, reservedUsd: reservation.amountUsd, accountingCostUsd, actualBillingKnown: Boolean(metadata.actualBillingKnown), accountingBasis: metadata.actualBillingKnown ? 'PROVIDER_REPORTED' : 'ESTIMATED_RESERVATION', settledAt: now() }];
       await save(state);
       if (nextSpent > hardCapUsd + 1e-9) throw new Error(`GLOBAL_GENERATION_HARD_CAP_EXCEEDED:${nextSpent.toFixed(4)}`);
     },
@@ -156,20 +147,44 @@ export async function runGenerativeProduction(input) {
   if (hardBudgetUsd == null || !Number.isFinite(hardBudgetUsd) || hardBudgetUsd <= 0) throw new Error('GENERATION_HARD_BUDGET_REQUIRED: pass --budget before enabling real generation');
   if (hardBudgetUsd > Number(env.GENERATION_MAX_HARD_BUDGET_USD ?? 10)) throw new Error(`GENERATION_HARD_BUDGET_EXCEEDS_GLOBAL_CAP:${hardBudgetUsd}`);
   const store = new NodeLocalObjectStore(join(runRoot, 'storage'));
-  const videoProviderName = String(env.VIDEO_PROVIDER ?? 'gemini').toLowerCase();
-  const videoProvider = videoProviderName === 'higgsfield'
-    ? createHiggsfieldVideoProviderFromEnv(store, env)
-    : new GeminiVideoProvider({ apiKey: env.GEMINI_API_KEY, store, model: env.GEMINI_VIDEO_MODEL ?? env.VIDEO_MODEL ?? 'veo-3.1-fast-generate-preview', resolution: env.GEMINI_VIDEO_RESOLUTION ?? '720p', pollMs: 10000, timeoutMs: 900000 });
-  const generationProvider = typeof videoProvider.generateShot === 'function' ? videoProvider : {
-    ...videoProvider,
-    capability: { provider: videoProvider.name, model: env.GEMINI_VIDEO_MODEL ?? env.VIDEO_MODEL ?? 'veo-3.1-fast-generate-preview', modes: ['TEXT_TO_VIDEO', 'REFERENCE_TO_VIDEO'], maxDurationSeconds: 8, aspectRatios: ['16:9', '9:16', '1:1'], resolutions: ['720p', '1080p'], referenceImageSupport: true, firstLastFrameSupport: false, audioSupport: false, deterministicSeedSupport: false, estimatedUsdPerSecond: null, credentialStatus: 'LIVE' },
-    estimateCost: (request) => { const resolution = request.resolution ?? env.GEMINI_VIDEO_RESOLUTION ?? '720p'; const rate = geminiVideoRateUsdPerSecond(env, env.GEMINI_VIDEO_MODEL ?? env.VIDEO_MODEL ?? 'veo-3.1-fast-generate-preview', resolution); return { estimatedUsd: Number((Math.max(0, request.durationSeconds) * rate).toFixed(4)), currency: 'USD', source: env.GEMINI_VIDEO_USD_PER_SECOND || env.GENERATION_USD_PER_SECOND ? 'CONFIGURED_PRICE' : 'GOOGLE_OFFICIAL_PRICING_DEFAULT' }; },
-    generateShot: (request) => videoProvider.generate(request).then((asset) => ({ ...asset, metadata: { ...(asset.metadata ?? {}), generatedDurationSeconds: request.durationSeconds } })),
-  };
+  const generationProvider = createGenerativeVideoProviderRuntime(store, env);
+  const providerRuntime = describeGenerativeVideoRuntime(generationProvider);
   const globalCapUsd = Number(env.GENERATION_GLOBAL_HARD_CAP_USD ?? hardBudgetUsd);
   if (!Number.isFinite(globalCapUsd) || globalCapUsd <= 0 || globalCapUsd > 10) throw new Error(`GENERATION_GLOBAL_HARD_CAP_INVALID:${globalCapUsd}`);
   const globalBudget = await createGlobalBudgetGuard(env.GENERATION_GLOBAL_BUDGET_FILE ?? join(runRoot, 'global-generation-budget.json'), globalCapUsd, input.runId);
-  const guardedProvider = { ...generationProvider, generateShot: async (request) => { const estimate = generationProvider.estimateCost(request); if (estimate.estimatedUsd == null) throw new Error(`GENERATION_PRICE_REQUIRED:${generationProvider.name}`); const reservationId = await globalBudget.reserve(estimate.estimatedUsd, String(request.metadata?.shotId ?? 'shot')); try { const asset = await generationProvider.generateShot(request); const actualCost = asset.costUsd ?? estimate.estimatedUsd; await globalBudget.settle(reservationId, actualCost, { actualBillingKnown: asset.costUsd != null }); return { ...asset, metadata: { ...(asset.metadata ?? {}), globalBudgetReservationId: reservationId, estimatedCostUsd: estimate.estimatedUsd, actualCostUsd: actualCost, costBasis: asset.costUsd == null ? 'ESTIMATED' : 'PROVIDER_REPORTED' } }; } catch (error) { await globalBudget.settle(reservationId, estimate.estimatedUsd, { actualBillingKnown: false }); throw error; } } };
+  const guardedProvider = {
+    name: generationProvider.name,
+    capability: generationProvider.capability,
+    estimateCost: (request) => generationProvider.estimateCost(request),
+    generate: (request) => generationProvider.generate(request),
+    generateShot: async (request) => {
+      const estimate = generationProvider.estimateCost(request);
+      if (estimate.estimatedUsd == null) throw new Error(`GENERATION_PRICE_REQUIRED:${generationProvider.name}`);
+      const reservationId = await globalBudget.reserve(estimate.estimatedUsd, String(request.metadata?.shotId ?? 'shot'));
+      try {
+        const asset = await generationProvider.generateShot(request);
+        const failoverAccounting = asset.metadata?.failover?.costAccounting === 'CONSERVATIVE_FAILOVER_RESERVATION_CEILING';
+        const providerSaysActual = asset.metadata?.actualBillingKnown === true;
+        const actualBillingKnown = providerSaysActual && !failoverAccounting;
+        const accountingCost = asset.costUsd ?? estimate.estimatedUsd;
+        await globalBudget.settle(reservationId, accountingCost, { actualBillingKnown });
+        return {
+          ...asset,
+          metadata: {
+            ...(asset.metadata ?? {}),
+            globalBudgetReservationId: reservationId,
+            estimatedCostUsd: estimate.estimatedUsd,
+            accountingCostUsd: accountingCost,
+            actualBillingKnown,
+            costBasis: actualBillingKnown ? 'PROVIDER_REPORTED' : failoverAccounting ? 'FAILOVER_RESERVATION_CEILING' : 'ESTIMATED',
+          },
+        };
+      } catch (error) {
+        await globalBudget.settle(reservationId, estimate.estimatedUsd, { actualBillingKnown: false });
+        throw error;
+      }
+    },
+  };
   const director = new ProductionDirector();
   const requestedMode = mode === 'character-series' ? 'CHARACTER_SERIES' : mode === 'full-generative' ? 'FULL_GENERATIVE' : mode === 'hybrid' ? 'HYBRID_EDITORIAL' : 'GENERATIVE_EDITORIAL';
   const plan = director.createPlan({ requestedMode, prompt, targetDurationSeconds: durationSeconds, aspectRatio, characterSeries: mode === 'character-series', budgetUsd, qualityMode: 'MAX_QUALITY' });
@@ -204,7 +219,7 @@ export async function runGenerativeProduction(input) {
       await writeJson(join(reportRoot, 'GenerationAttempts.json'), shotResults.flatMap((item) => item.attempts));
       await writeJson(join(reportRoot, 'RepairDecisions.json'), shotResults.flatMap((item) => item.repairDecisions));
       await performance.save(performancePath);
-      await writeJson(join(reportRoot, 'CostReport.json'), { ...cost.snapshot(), global: await globalBudget.snapshot() });
+      await writeJson(join(reportRoot, 'CostReport.json'), { ...cost.snapshot(), global: await globalBudget.snapshot(), providerRuntime });
       throw new Error(`GENERATIVE_SHOT_REJECTED:${shot.shotId}`);
     }
     const frame = await extractReferenceFrame(result.asset.uri, join(runRoot, 'references', `${shot.shotId}.jpg`));
@@ -212,11 +227,13 @@ export async function runGenerativeProduction(input) {
   }
   const assetRegistry = new GeneratedAssetRegistry(new JsonRegistry(join(runRoot, 'registry', 'video-assets.json'), 'id'));
   for (const result of shotResults) await assetRegistry.approve(result.asset);
-  const scenes = shotResults.map((result, index) => ({ id: result.shot.scene, startSec: result.shot.startTime, durationSec: result.shot.desiredDurationSeconds, kind: 'video', instruction: result.shot.visualDescription, generated: true }));
-  const assets = shotResults.map((result) => ({ id: result.asset.id, uri: result.asset.uri, mimeType: result.asset.mimeType, provider: result.asset.provider, model: result.asset.model, costUsd: result.asset.costUsd ?? 0, sceneId: result.shot.scene, generated: true, evidenceRole: 'SYNTHETIC_ILLUSTRATION', metadata: { videoOnly: true, mode: plan.mode, shotId: result.shot.shotId, quality: result.finalQuality, attempts: result.attempts, repairs: result.repairDecisions } }));
+  const scenes = shotResults.map((result) => ({ id: result.shot.scene, startSec: result.shot.startTime, durationSec: result.shot.desiredDurationSeconds, kind: 'video', instruction: result.shot.visualDescription, generated: true }));
+  const assets = shotResults.map((result) => ({ id: result.asset.id, uri: result.asset.uri, mimeType: result.asset.mimeType, provider: result.asset.provider, model: result.asset.model, costUsd: result.asset.costUsd ?? 0, sceneId: result.shot.scene, generated: true, evidenceRole: 'SYNTHETIC_ILLUSTRATION', metadata: { videoOnly: true, mode: plan.mode, shotId: result.shot.shotId, quality: result.finalQuality, attempts: result.attempts, repairs: result.repairDecisions, generationMetadata: result.asset.metadata ?? {} } }));
   assertFinalTimelineIsVideoOnly(scenes.map((scene, index) => ({ id: scene.id, start: scene.startSec, end: scene.startSec + scene.durationSec, kind: 'SYNTHETIC_VIDEO', metadata: { videoOnly: assets[index].metadata.videoOnly, evidenceRole: assets[index].evidenceRole } })));
-  const manifest = { projectId: input.runId, createdAt: now(), finalMediaPolicy: 'VIDEO_ONLY', contentFormat: plan.runtimeProfile === 'SHORT_FORM' ? 'SHORT_VERTICAL' : 'SHORT_HORIZONTAL', aspectRatio, frame: aspectRatio === '9:16' ? { width: 720, height: 1280 } : { width: 1280, height: 720 }, captionPlan: { enabled: true, burnIn: false, source: 'VOICE_ALIGNMENT', preset: 'KARAOKE_BOLD' }, editPlan: { preset: 'GENERATIVE_EDITORIAL', transitionMode: 'HARD_CUT', defaultMotionEffects: [] }, script: { title: prompt, targetDurationSec: durationSeconds, beats: shots.map((shot) => ({ id: shot.scene, narration, purpose: shot.narrativePurpose, startSec: shot.startTime, targetDurationSec: shot.desiredDurationSeconds })) }, scenes, assets, voice: { id: voice.id, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: voice.durationSeconds, alignment: voice.alignment }, music: null, estimatedCostUsd: cost.snapshot().spentUsd, actualCostUsd: cost.snapshot().spentUsd, containsSyntheticMedia: true };
-  await writeJson(join(runRoot, 'timeline', 'MasterTimeline.json'), manifest); await writeJson(join(reportRoot, 'GenerationAttempts.json'), shotResults.flatMap((item) => item.attempts)); await writeJson(join(reportRoot, 'RepairDecisions.json'), shotResults.flatMap((item) => item.repairDecisions)); await performance.save(performancePath); await writeJson(join(reportRoot, 'CostReport.json'), cost.snapshot()); await writeJson(join(reportRoot, 'ProductionPlan.json'), plan);
+  const costSnapshot = cost.snapshot();
+  const allBillingKnown = assets.length > 0 && assets.every((asset) => asset.metadata.generationMetadata?.actualBillingKnown === true);
+  const manifest = { projectId: input.runId, createdAt: now(), finalMediaPolicy: 'VIDEO_ONLY', contentFormat: plan.runtimeProfile === 'SHORT_FORM' ? 'SHORT_VERTICAL' : 'SHORT_HORIZONTAL', aspectRatio, frame: aspectRatio === '9:16' ? { width: 720, height: 1280 } : { width: 1280, height: 720 }, captionPlan: { enabled: true, burnIn: false, source: 'VOICE_ALIGNMENT', preset: 'KARAOKE_BOLD' }, editPlan: { preset: 'GENERATIVE_EDITORIAL', transitionMode: 'HARD_CUT', defaultMotionEffects: [] }, script: { title: prompt, targetDurationSec: durationSeconds, beats: shots.map((shot) => ({ id: shot.scene, narration, purpose: shot.narrativePurpose, startSec: shot.startTime, targetDurationSec: shot.desiredDurationSeconds })) }, scenes, assets, voice: { id: voice.id, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: voice.durationSeconds, alignment: voice.alignment }, music: null, estimatedCostUsd: costSnapshot.spentUsd, actualCostUsd: allBillingKnown ? costSnapshot.spentUsd : null, containsSyntheticMedia: true };
+  await writeJson(join(runRoot, 'timeline', 'MasterTimeline.json'), manifest); await writeJson(join(reportRoot, 'GenerationAttempts.json'), shotResults.flatMap((item) => item.attempts)); await writeJson(join(reportRoot, 'RepairDecisions.json'), shotResults.flatMap((item) => item.repairDecisions)); await performance.save(performancePath); await writeJson(join(reportRoot, 'CostReport.json'), { ...costSnapshot, actualBillingKnown: allBillingKnown, global: await globalBudget.snapshot(), providerRuntime }); await writeJson(join(reportRoot, 'ProductionPlan.json'), plan);
   const renderer = new FfmpegRenderer({ outputRoot: join(runRoot, 'render'), width: manifest.frame.width, height: manifest.frame.height, fps: 30, targetLufs: -16, truePeakDb: -1.5, loudnessRange: 7 });
   const rendered = await renderer.render({ manifestUri: fileUri(join(runRoot, 'timeline', 'MasterTimeline.json')), outputKey: 'generated-v1.mp4' });
   const finalVideo = join(finalRoot, 'video-v1.mp4'); await mkdir(finalRoot, { recursive: true }); const renderedPath = rendered.uri.replace(/^file:\/\//, ''); await writeFile(finalVideo, await readFile(renderedPath));
@@ -225,6 +242,7 @@ export async function runGenerativeProduction(input) {
   const creativeQc = evaluateCreativeQC({ storyBeats: buildStoryBeats(narration, brief.storyBeats), shots, technicalPass: Boolean(finalProbe.hasVideo && !finalProbe.freezeDetected && !finalProbe.loopDetected), humanReviewQualityFloor: 75 });
   await writeJson(join(reportRoot, 'CreativeQC.json'), creativeQc);
   if (!creativeQc.creativePass) throw new Error(`CREATIVE_QC_FAILED:${creativeQc.reasons.join(',')}`);
-  const report = { version: 1, runId: input.runId, status: 'READY_FOR_HUMAN_REVIEW', mode: plan.mode, output: { video: finalVideo, durationSeconds: finalProbe.durationSeconds }, visualMix: { sourcedSeconds: 0, generatedSeconds: finalProbe.durationSeconds, imageSeconds: 0, graphicSeconds: 0 }, qc: { technical: { videoOnly: true, renderedProbe: finalProbe }, creative: creativeQc, generatedShots: shotResults.length, rejectedAttempts: shotResults.flatMap((item) => item.attempts).filter((item) => item.status !== 'ACCEPTED').length, quality: shotResults.map((item) => ({ shotId: item.shot.shotId, status: item.status, score: item.finalQuality?.score ?? null })) }, cost: { ...cost.snapshot(), global: await globalBudget.snapshot(), budgetType: 'HARD', pricingBasis: generationProvider.name === 'gemini-video' ? 'GOOGLE_OFFICIAL_PRICING_DEFAULT_OR_CONFIGURED' : 'PROVIDER_ESTIMATE' }, provider: { name: videoProvider.name, model: generationProvider.capability.model ?? null, credentialStatus: generationProvider.capability.credentialStatus }, characterId: characterId ?? null, limitations: ['Final human review remains required.', 'Synthetic footage is illustration and never direct documentary evidence.'] };
+  const pricingBasis = generationProvider.name === 'video-provider-failover' ? 'CONSERVATIVE_FAILOVER_RESERVATION_CEILING' : generationProvider.name === 'gemini-video' ? 'GOOGLE_OFFICIAL_PRICING_DEFAULT_OR_CONFIGURED' : 'PROVIDER_ESTIMATE';
+  const report = { version: 1, runId: input.runId, status: 'READY_FOR_HUMAN_REVIEW', mode: plan.mode, output: { video: finalVideo, durationSeconds: finalProbe.durationSeconds }, visualMix: { sourcedSeconds: 0, generatedSeconds: finalProbe.durationSeconds, imageSeconds: 0, graphicSeconds: 0 }, qc: { technical: { videoOnly: true, renderedProbe: finalProbe }, creative: creativeQc, generatedShots: shotResults.length, rejectedAttempts: shotResults.flatMap((item) => item.attempts).filter((item) => item.status !== 'ACCEPTED').length, quality: shotResults.map((item) => ({ shotId: item.shot.shotId, status: item.status, score: item.finalQuality?.score ?? null })) }, cost: { ...cost.snapshot(), global: await globalBudget.snapshot(), budgetType: 'HARD', pricingBasis, actualBillingKnown: allBillingKnown }, provider: { name: generationProvider.name, model: generationProvider.capability.model ?? null, credentialStatus: generationProvider.capability.credentialStatus, runtime: providerRuntime, selectedProviders: [...new Set(assets.map((asset) => asset.provider))] }, characterId: characterId ?? null, limitations: ['Final human review remains required.', 'Synthetic footage is illustration and never direct documentary evidence.'] };
   await writeJson(join(reportRoot, 'production-run.json'), report); return report;
 }
