@@ -26,6 +26,7 @@ jobs:
       - run: node scripts/test-higgsfield-registry.mjs
       - run: node scripts/test-video-provider-failover.mjs
       - run: node scripts/test-generative-video-runtime.mjs
+      - run: node scripts/test-packaging-selection-stability.mjs
       - run: node scripts/test-moss-open-source-phase2.mjs
       - run: npm run pipeline:mock
       - run: npm run web:build
