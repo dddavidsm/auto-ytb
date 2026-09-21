@@ -4,10 +4,11 @@ import { promisify } from 'node:util';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NodeLocalObjectStore, FfmpegRenderer } from '../packages/runtime-node/index.mjs';
-import { GeminiVoiceProvider } from '../packages/providers/dist/index.js';
+import { GeminiVoiceProvider, GeminiVisionProvider } from '../packages/providers/dist/index.js';
 import { withGeminiWordAlignment } from '../packages/runtime-node/gemini-word-alignment.mjs';
-import { CostOptimizer, GenerationPerformanceMemory, GenerationPromptCompiler, GenerativeProductionOrchestrator, JsonRegistry, CharacterRegistry, WorldRegistry, SeriesEpisodeMemoryRegistry, ProductionDirector, RepairOrchestrator, GeneratedAssetRegistry, evaluateGeneratedClipQuality, assertFinalTimelineIsVideoOnly, probeRenderedVideoOnly, evaluateCreativeQC, redesignHighRiskShot } from '../packages/production/dist/index.js';
+import { CostOptimizer, GenerationPerformanceMemory, GenerationPromptCompiler, GenerativeProductionOrchestrator, JsonRegistry, CharacterRegistry, WorldRegistry, SeriesEpisodeMemoryRegistry, ProductionDirector, RepairOrchestrator, GeneratedAssetRegistry, assertFinalTimelineIsVideoOnly, probeRenderedVideoOnly, evaluateCreativeQC, redesignHighRiskShot } from '../packages/production/dist/index.js';
 import { createGenerativeVideoProviderRuntime, describeGenerativeVideoRuntime } from './generative-video-provider-runtime.mjs';
+import { evaluateGeneratedClipSemanticQc } from './generated-clip-semantic-qc.mjs';
 
 const now = () => new Date().toISOString();
 const fileUri = (path) => `file://${resolve(path)}`;
@@ -30,9 +31,6 @@ function buildStoryBeats(narration, provided) {
 }
 
 function buildShots(narration, durationSeconds, mode, characterId, aspectRatio, providedBeats = []) {
-  // Veo 3.1 returns discrete durations. Keep the editorial plan aligned with
-  // the smallest supported 720p duration so a valid provider response cannot
-  // be rejected as unexpectedly short or padded by the renderer.
   const beats = buildStoryBeats(narration, providedBeats);
   const count = Math.max(3, Math.min(12, beats.length || Math.ceil(durationSeconds / 4)));
   const shotDuration = 4;
@@ -80,23 +78,36 @@ async function extractReferenceFrame(assetUri, outputPath) {
   } catch { return null; }
 }
 
-async function localQualityEvaluator(asset, shot) {
+async function localQualityEvaluator(asset, shot, context) {
   let technicalValidity = asset.mimeType.startsWith('video/');
-  let artifactIssues = [];
+  const technicalIssues = [];
   try {
     const probe = await probeRenderedVideoOnly(fileURLToPath(asset.uri));
     technicalValidity = technicalValidity && probe.hasVideo && probe.durationSeconds + 0.15 >= shot.desiredDurationSeconds;
-    if (!probe.hasVideo) artifactIssues.push('NO_VIDEO_STREAM');
-    if (probe.durationSeconds + 0.15 < shot.desiredDurationSeconds) artifactIssues.push('GENERATED_CLIP_SHORTER_THAN_SHOT');
-    if (probe.freezeDetected) artifactIssues.push('FREEZE_DETECTED');
-    if (probe.loopDetected) artifactIssues.push('LOOP_DETECTED');
+    if (!probe.hasVideo) technicalIssues.push('NO_VIDEO_STREAM');
+    if (probe.durationSeconds + 0.15 < shot.desiredDurationSeconds) technicalIssues.push('GENERATED_CLIP_SHORTER_THAN_SHOT');
+    if (probe.freezeDetected) technicalIssues.push('FREEZE_DETECTED');
+    if (probe.loopDetected) technicalIssues.push('LOOP_DETECTED');
   } catch (error) {
     technicalValidity = false;
-    artifactIssues.push(`FFPROBE_FAILED:${String(error).slice(0, 160)}`);
+    technicalIssues.push(`FFPROBE_FAILED:${String(error).slice(0, 160)}`);
   }
-  return evaluateGeneratedClipQuality({
-    technicalValidity, subjectCorrectness: 'STRONG', actionCorrectness: 'STRONG', characterIdentity: shot.characterIds.length ? 'STRONG' : 'NOT_APPLICABLE', worldIdentity: 'NOT_APPLICABLE', temporalCoherence: 'STRONG', physics: 'STRONG', styleMatch: 'STRONG', motion: 'STRONG', artifactIssues, method: 'provider-output-contract-plus-ffprobe', qualityFloor: shot.qualityFloor,
+
+  const semantic = await evaluateGeneratedClipSemanticQc({
+    asset,
+    shot,
+    characters: context.characters,
+    world: context.world,
+    visionProvider: context.visionProvider,
+    workDir: context.workDir,
+    technicalValidity,
+    technicalIssues,
   });
+  asset.metadata = {
+    ...(asset.metadata ?? {}),
+    semanticQc: semantic.evidence,
+  };
+  return semantic.quality;
 }
 
 function defaultCharacter(characterId, timestamp, override = null) {
@@ -149,6 +160,9 @@ export async function runGenerativeProduction(input) {
   const store = new NodeLocalObjectStore(join(runRoot, 'storage'));
   const generationProvider = createGenerativeVideoProviderRuntime(store, env);
   const providerRuntime = describeGenerativeVideoRuntime(generationProvider);
+  const geminiApiKey = env.GEMINI_API_KEY ?? env.GOOGLE_API_KEY;
+  if (!geminiApiKey) throw new Error('GENERATIVE_QUALITY_REVIEW_REQUIRES_GEMINI_API_KEY');
+  const visionProvider = new GeminiVisionProvider({ apiKey: geminiApiKey, model: env.GEMINI_VISION_MODEL ?? 'gemini-3.8-flash', endpoint: env.GEMINI_API_BASE_URL || undefined });
   const globalCapUsd = Number(env.GENERATION_GLOBAL_HARD_CAP_USD ?? hardBudgetUsd);
   if (!Number.isFinite(globalCapUsd) || globalCapUsd <= 0 || globalCapUsd > 10) throw new Error(`GENERATION_GLOBAL_HARD_CAP_INVALID:${globalCapUsd}`);
   const globalBudget = await createGlobalBudgetGuard(env.GENERATION_GLOBAL_BUDGET_FILE ?? join(runRoot, 'global-generation-budget.json'), globalCapUsd, input.runId);
@@ -190,8 +204,8 @@ export async function runGenerativeProduction(input) {
   const plan = director.createPlan({ requestedMode, prompt, targetDurationSeconds: durationSeconds, aspectRatio, characterSeries: mode === 'character-series', budgetUsd, qualityMode: 'MAX_QUALITY' });
   const brief = await readBrief(scriptPath, prompt);
   const narration = brief.narration;
-  const voiceProvider = new GeminiVoiceProvider({ apiKey: env.GEMINI_API_KEY, store, model: env.GEMINI_TTS_MODEL ?? 'gemini-2.5-flash-preview-tts', defaultVoice: env.GEMINI_VOICE_ID ?? 'Kore', protocol: 'generateContent' });
-  const voice = await withGeminiWordAlignment(voiceProvider, { apiKey: env.GEMINI_API_KEY, strict: true, minCoverage: 0.88 }).synthesize({ text: narration, voice: env.GEMINI_VOICE_ID ?? 'Kore', language: 'en-US' });
+  const voiceProvider = new GeminiVoiceProvider({ apiKey: geminiApiKey, store, model: env.GEMINI_TTS_MODEL ?? 'gemini-2.5-flash-preview-tts', defaultVoice: env.GEMINI_VOICE_ID ?? 'Kore', protocol: 'generateContent' });
+  const voice = await withGeminiWordAlignment(voiceProvider, { apiKey: geminiApiKey, strict: true, minCoverage: 0.88 }).synthesize({ text: narration, voice: env.GEMINI_VOICE_ID ?? 'Kore', language: 'en-US' });
   const shots = buildShots(narration, durationSeconds, plan.mode, characterId, plan.aspectRatio, brief.storyBeats).map(redesignHighRiskShot);
   const creativePreflight = evaluateCreativeQC({ storyBeats: buildStoryBeats(narration, brief.storyBeats), shots, technicalPass: true, humanReviewQualityFloor: plan.qualityMode === 'MAX_QUALITY' ? 75 : 70 });
   await writeJson(join(reportRoot, 'CreativePreflight.json'), creativePreflight);
@@ -213,7 +227,14 @@ export async function runGenerativeProduction(input) {
   const shotResults = [];
   const referenceFrames = [];
   for (const shot of shots) {
-    const result = await orchestrator.generateShot({ shot, characters: character ? [character] : [], world, references: { characterAssets: character?.referenceAssets ?? [], worldAssets: world?.referenceAssets ?? [], previousAcceptedShots: shotResults.filter((item) => item.status === 'ACCEPTED').map((item) => item.asset?.uri).filter(Boolean), nextPlannedShots: shots.slice(shots.indexOf(shot) + 1, shots.indexOf(shot) + 2).map((item) => item.visualDescription), styleAssets: referenceFrames.slice(-1), strategy: characterId || referenceFrames.length ? 'MASTER_REFERENCES' : 'NONE' }, evaluate: async (asset, currentShot) => localQualityEvaluator(asset, currentShot), mutateForRepair: (currentShot, decision) => decision.strategy === 'SIMPLIFY_ACTION' ? { ...currentShot, action: 'perform one simple, continuous, physically plausible action with clear contact and no fast changes', framing: 'stable medium close-up', camera: 'locked documentary camera with only subtle natural movement', motion: 'slow readable real-time motion', continuityDependencies: [...currentShot.continuityDependencies, `simplified after ${decision.category}`] } : { ...currentShot, continuityDependencies: [...currentShot.continuityDependencies, `repair ${decision.strategy}: ${decision.reason}`] } });
+    const result = await orchestrator.generateShot({
+      shot,
+      characters: character ? [character] : [],
+      world,
+      references: { characterAssets: character?.referenceAssets ?? [], worldAssets: world?.referenceAssets ?? [], previousAcceptedShots: shotResults.filter((item) => item.status === 'ACCEPTED').map((item) => item.asset?.uri).filter(Boolean), nextPlannedShots: shots.slice(shots.indexOf(shot) + 1, shots.indexOf(shot) + 2).map((item) => item.visualDescription), styleAssets: referenceFrames.slice(-1), strategy: characterId || referenceFrames.length ? 'MASTER_REFERENCES' : 'NONE' },
+      evaluate: async (asset, currentShot) => localQualityEvaluator(asset, currentShot, { visionProvider, characters: character ? [character] : [], world, workDir: join(reportRoot, 'semantic-qc') }),
+      mutateForRepair: (currentShot, decision) => decision.strategy === 'SIMPLIFY_ACTION' ? { ...currentShot, action: 'perform one simple, continuous, physically plausible action with clear contact and no fast changes', framing: 'stable medium close-up', camera: 'locked documentary camera with only subtle natural movement', motion: 'slow readable real-time motion', continuityDependencies: [...currentShot.continuityDependencies, `simplified after ${decision.category}`] } : { ...currentShot, continuityDependencies: [...currentShot.continuityDependencies, `repair ${decision.strategy}: ${decision.reason}`] },
+    });
     shotResults.push(result);
     if (result.status !== 'ACCEPTED' || !result.asset) {
       await writeJson(join(reportRoot, 'GenerationAttempts.json'), shotResults.flatMap((item) => item.attempts));
@@ -233,7 +254,12 @@ export async function runGenerativeProduction(input) {
   const costSnapshot = cost.snapshot();
   const allBillingKnown = assets.length > 0 && assets.every((asset) => asset.metadata.generationMetadata?.actualBillingKnown === true);
   const manifest = { projectId: input.runId, createdAt: now(), finalMediaPolicy: 'VIDEO_ONLY', contentFormat: plan.runtimeProfile === 'SHORT_FORM' ? 'SHORT_VERTICAL' : 'SHORT_HORIZONTAL', aspectRatio, frame: aspectRatio === '9:16' ? { width: 720, height: 1280 } : { width: 1280, height: 720 }, captionPlan: { enabled: true, burnIn: false, source: 'VOICE_ALIGNMENT', preset: 'KARAOKE_BOLD' }, editPlan: { preset: 'GENERATIVE_EDITORIAL', transitionMode: 'HARD_CUT', defaultMotionEffects: [] }, script: { title: prompt, targetDurationSec: durationSeconds, beats: shots.map((shot) => ({ id: shot.scene, narration, purpose: shot.narrativePurpose, startSec: shot.startTime, targetDurationSec: shot.desiredDurationSeconds })) }, scenes, assets, voice: { id: voice.id, uri: voice.uri, mimeType: voice.mimeType, provider: voice.provider, model: voice.model, durationSeconds: voice.durationSeconds, alignment: voice.alignment }, music: null, estimatedCostUsd: costSnapshot.spentUsd, actualCostUsd: allBillingKnown ? costSnapshot.spentUsd : null, containsSyntheticMedia: true };
-  await writeJson(join(runRoot, 'timeline', 'MasterTimeline.json'), manifest); await writeJson(join(reportRoot, 'GenerationAttempts.json'), shotResults.flatMap((item) => item.attempts)); await writeJson(join(reportRoot, 'RepairDecisions.json'), shotResults.flatMap((item) => item.repairDecisions)); await performance.save(performancePath); await writeJson(join(reportRoot, 'CostReport.json'), { ...costSnapshot, actualBillingKnown: allBillingKnown, global: await globalBudget.snapshot(), providerRuntime }); await writeJson(join(reportRoot, 'ProductionPlan.json'), plan);
+  await writeJson(join(runRoot, 'timeline', 'MasterTimeline.json'), manifest);
+  await writeJson(join(reportRoot, 'GenerationAttempts.json'), shotResults.flatMap((item) => item.attempts));
+  await writeJson(join(reportRoot, 'RepairDecisions.json'), shotResults.flatMap((item) => item.repairDecisions));
+  await performance.save(performancePath);
+  await writeJson(join(reportRoot, 'CostReport.json'), { ...costSnapshot, actualBillingKnown: allBillingKnown, global: await globalBudget.snapshot(), providerRuntime, semanticQcBilling: 'VISION_TOKEN_USAGE_RECORDED_BUT_EXPLICIT_PROVIDER_COST_UNAVAILABLE' });
+  await writeJson(join(reportRoot, 'ProductionPlan.json'), plan);
   const renderer = new FfmpegRenderer({ outputRoot: join(runRoot, 'render'), width: manifest.frame.width, height: manifest.frame.height, fps: 30, targetLufs: -16, truePeakDb: -1.5, loudnessRange: 7 });
   const rendered = await renderer.render({ manifestUri: fileUri(join(runRoot, 'timeline', 'MasterTimeline.json')), outputKey: 'generated-v1.mp4' });
   const finalVideo = join(finalRoot, 'video-v1.mp4'); await mkdir(finalRoot, { recursive: true }); const renderedPath = rendered.uri.replace(/^file:\/\//, ''); await writeFile(finalVideo, await readFile(renderedPath));
@@ -243,6 +269,7 @@ export async function runGenerativeProduction(input) {
   await writeJson(join(reportRoot, 'CreativeQC.json'), creativeQc);
   if (!creativeQc.creativePass) throw new Error(`CREATIVE_QC_FAILED:${creativeQc.reasons.join(',')}`);
   const pricingBasis = generationProvider.name === 'video-provider-failover' ? 'CONSERVATIVE_FAILOVER_RESERVATION_CEILING' : generationProvider.name === 'gemini-video' ? 'GOOGLE_OFFICIAL_PRICING_DEFAULT_OR_CONFIGURED' : 'PROVIDER_ESTIMATE';
-  const report = { version: 1, runId: input.runId, status: 'READY_FOR_HUMAN_REVIEW', mode: plan.mode, output: { video: finalVideo, durationSeconds: finalProbe.durationSeconds }, visualMix: { sourcedSeconds: 0, generatedSeconds: finalProbe.durationSeconds, imageSeconds: 0, graphicSeconds: 0 }, qc: { technical: { videoOnly: true, renderedProbe: finalProbe }, creative: creativeQc, generatedShots: shotResults.length, rejectedAttempts: shotResults.flatMap((item) => item.attempts).filter((item) => item.status !== 'ACCEPTED').length, quality: shotResults.map((item) => ({ shotId: item.shot.shotId, status: item.status, score: item.finalQuality?.score ?? null })) }, cost: { ...cost.snapshot(), global: await globalBudget.snapshot(), budgetType: 'HARD', pricingBasis, actualBillingKnown: allBillingKnown }, provider: { name: generationProvider.name, model: generationProvider.capability.model ?? null, credentialStatus: generationProvider.capability.credentialStatus, runtime: providerRuntime, selectedProviders: [...new Set(assets.map((asset) => asset.provider))] }, characterId: characterId ?? null, limitations: ['Final human review remains required.', 'Synthetic footage is illustration and never direct documentary evidence.'] };
-  await writeJson(join(reportRoot, 'production-run.json'), report); return report;
+  const report = { version: 1, runId: input.runId, status: 'READY_FOR_HUMAN_REVIEW', mode: plan.mode, output: { video: finalVideo, durationSeconds: finalProbe.durationSeconds }, visualMix: { sourcedSeconds: 0, generatedSeconds: finalProbe.durationSeconds, imageSeconds: 0, graphicSeconds: 0 }, qc: { technical: { videoOnly: true, renderedProbe: finalProbe }, semantic: { provider: visionProvider.name, method: 'temporal-contact-sheet-vision', failClosed: true }, creative: creativeQc, generatedShots: shotResults.length, rejectedAttempts: shotResults.flatMap((item) => item.attempts).filter((item) => item.status !== 'ACCEPTED').length, quality: shotResults.map((item) => ({ shotId: item.shot.shotId, status: item.status, score: item.finalQuality?.score ?? null, method: item.finalQuality?.method ?? null })) }, cost: { ...cost.snapshot(), global: await globalBudget.snapshot(), budgetType: 'HARD', pricingBasis, actualBillingKnown: allBillingKnown, semanticQcBilling: 'VISION_TOKEN_USAGE_RECORDED_BUT_EXPLICIT_PROVIDER_COST_UNAVAILABLE' }, provider: { name: generationProvider.name, model: generationProvider.capability.model ?? null, credentialStatus: generationProvider.capability.credentialStatus, runtime: providerRuntime, selectedProviders: [...new Set(assets.map((asset) => asset.provider))] }, characterId: characterId ?? null, limitations: ['Final human review remains required.', 'Synthetic footage is illustration and never direct documentary evidence.', 'Semantic QC records provider token usage, but explicit vision-review billing is not reported as exact cost.'] };
+  await writeJson(join(reportRoot, 'production-run.json'), report);
+  return report;
 }

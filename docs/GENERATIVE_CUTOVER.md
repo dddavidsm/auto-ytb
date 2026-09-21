@@ -22,17 +22,27 @@ Reference images may be stored and passed to a provider, but they cannot be inse
 
 Video providers implement the common provider contract in `packages/providers/src/types.ts`. The Higgsfield adapter uses the official REST API, `HF_CREDENTIALS` or `HF_API_KEY_ID`/`HF_API_KEY_SECRET`, and records provider/model/request metadata. It is registered alongside Gemini and Runway; the production core does not import Higgsfield-specific request shapes.
 
-Real generation is safety-gated by `REAL_GENERATION_ENABLED=true`. It is unset/false in development by default. Missing Higgsfield credentials produce `HIGGSFIELD_CREDENTIALS_REQUIRED`; no credential is invented and no purchase is attempted.
+Higgsfield Seedance 2.5 is model-aware in AUTO-YTB and can expose text-to-video, image-to-video, reference-to-video and video-edit through the common provider contract. A ChatGPT/MCP Higgsfield connection is deliberately not treated as a server-side AUTO-YTB credential. See `docs/HIGGSFIELD_INTEGRATION.md`.
+
+The generative runtime can compose multiple legitimately configured video providers through a circuit-broken failover wrapper. Safe availability/quota/auth failures can move a compatible shot to the next provider; invalid requests and ambiguous post-submit timeouts do not trigger blind duplicate paid generations. Provider pricing must be known or conservatively estimated before generation.
+
+Real generation is safety-gated by `REAL_GENERATION_ENABLED=true`. It is unset/false in development by default. Missing Higgsfield credentials produce a configuration error; no credential is invented and no purchase is attempted.
 
 ## Generation, QC, and repair
 
 `GenerativeProductionOrchestrator` compiles a structured `ShotContract` using character/world references, calls the selected provider, probes the returned video, evaluates the configured quality floor, records the attempt, and either registers an approved synthetic illustration or diagnoses the failure. `RepairOrchestrator` changes the strategy (references, action complexity, camera, prompt, provider, or abort) and enforces a finite attempt count.
+
+Generated clips are not accepted merely because they are valid moving MP4s. In MAX_QUALITY generative runs, the runtime creates a chronological temporal contact sheet from each generated clip and sends it through the existing `VisionProvider` contract. The reviewer is grounded on the exact semantic shot contract (subject, action, object, cause/result, character identity, world identity, style and motion). Material mismatches such as action/object failure, character/world drift, anatomy, impossible physics, object disappearance, morphing, temporal incoherence or style mismatch are hard rejection reasons. FFmpeg VIDEO_ONLY/freeze/loop checks remain independent hard gates.
+
+The semantic QC evidence is persisted in asset metadata and receipts: reviewer, sampled-frame count, observed meaning, relevance, continuity, artifact quality, issue codes and token usage. The pipeline does not claim exact vision-review cost when the provider only reports token usage. If semantic review cannot run, the MAX_QUALITY path fails closed rather than promoting an unverified clip.
 
 Each attempt persists request, compiled prompt, references, provider/model, estimated/actual cost, latency, output, QC result, failure categories, and repair relation. Synthetic media is never `DIRECT_EVIDENCE`.
 
 ## Cost and learning
 
 `CostOptimizer` tracks reservations, spend, rejected generation cost, accepted usable seconds, provider/model breakdown, remaining budget, and cost per accepted usable second. `GenerationPerformanceMemory` persists historical keep rate, quality, latency, failure categories, and cost per accepted second and can rank future candidates with that history.
+
+Provider-reported billing is distinguished from estimated accounting. Failover uses a conservative reservation ceiling so a fallback cannot silently exceed the amount reserved for a shot. Vision-review token usage is recorded separately when the provider does not return authoritative billing.
 
 ## Character and world continuity
 
@@ -47,6 +57,7 @@ npm run production:create -- --mode full-generative --prompt "..." --duration 30
 ```
 
 `scripts/test-generative-cutover.mjs` is deterministic and does not call a paid provider. The generative benchmark briefs live in `benchmark-inputs/generative-cutover-*.json`; they are inputs, not topic-specific production logic. Real D/E/F renders require explicit real-generation enablement and provider credentials/budget.
+
 ## Real Generative Validation (2026-09-18)
 
 This section records an actual controlled validation run, not a contract fixture.
@@ -68,4 +79,10 @@ The recovery pass adds a structured creative gate before generation and before f
 
 High-risk shot plans are redesigned into one continuous, filmable action while retaining the subject, object, cause, result, emotion, and story-beat contract. Provider quota/authentication failures now trip a finite abort path instead of spending on identical retries. Failed generative runs persist attempts, repair decisions, cost, and provider failure categories before exiting.
 
-The closeout run used the isolated `.data/autonomous-production/validation-closeout-budget.json` ledger. Gemini returned `429 RESOURCE_EXHAUSTED` for both the Lite and Fast D hook attempts; the new iteration therefore recorded $1.20 of estimated rejected generation cost and stopped further calls. No Higgsfield credential was configured. This is an external quota limitation, not a successful D/E validation. A and C remain valid and were not regenerated; F recovered word alignment but still stopped at an honest visual-match failure for the hyperbaric-chamber beat; B still requires exact moving replacements for its historical still scenes.
+The closeout run used the isolated `.data/autonomous-production/validation-closeout-budget.json` ledger. Gemini returned `429 RESOURCE_EXHAUSTED` for both the Lite and Fast D hook attempts; the new iteration therefore recorded $1.20 of estimated rejected generation cost and stopped further calls. No Higgsfield server credential was configured. This is an external quota limitation, not a successful D/E validation. A and C remain valid and were not regenerated; F recovered word alignment but still stopped at an honest visual-match failure for the hyperbaric-chamber beat; B still requires exact moving replacements for its historical still scenes.
+
+## Temporal semantic quality gate (2026-09-22)
+
+The post-validation hardening removes the old assumption that provider success plus an FFprobe-valid MP4 implies semantic success. Each generated clip now receives temporal visual review before it can enter the approved asset registry. A deterministic FFmpeg regression verifies the contact-sheet extraction, while fake `VisionProvider` fixtures cover strong acceptance, action mismatch, identity/anatomy failure and preservation of independent freeze/VIDEO_ONLY failures without making paid calls in CI.
+
+This directly targets the failure class observed in D/E: visually polished but narratively generic footage, missing interactions, anatomy drift and temporal inconsistency can no longer receive hardcoded `STRONG` quality dimensions merely because the file moves and decodes correctly.
