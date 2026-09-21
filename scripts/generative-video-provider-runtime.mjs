@@ -7,6 +7,14 @@ import {
 const clean = (value) => String(value ?? '').trim();
 const truthy = (value) => ['1', 'true', 'yes', 'on'].includes(clean(value).toLowerCase());
 
+function normalizeReferenceRequest(request) {
+  const refs = [request.firstFrameUri, request.lastFrameUri, request.inputVideoUri, ...(request.referenceUris ?? [])].filter(Boolean);
+  if (request.mode === 'REFERENCE_TO_VIDEO' && refs.length === 0) {
+    return { ...request, mode: 'TEXT_TO_VIDEO', referenceUris: [] };
+  }
+  return request;
+}
+
 function geminiRateUsdPerSecond(env, model, resolution) {
   const configuredRaw = env.GEMINI_VIDEO_USD_PER_SECOND ?? env.GENERATION_USD_PER_SECOND;
   const configured = configuredRaw == null || clean(configuredRaw) === '' ? Number.NaN : Number(configuredRaw);
@@ -47,7 +55,6 @@ function createGeminiGenerativeProvider(store, env) {
       resolutions: ['720p', '1080p'],
       referenceImageSupport: true,
       firstLastFrameSupport: false,
-      // Gemini runtime can inline local references as well as consume remote media.
       referenceUriSchemes: ['file', 'http', 'https'],
       audioSupport: false,
       deterministicSeedSupport: false,
@@ -55,10 +62,11 @@ function createGeminiGenerativeProvider(store, env) {
       credentialStatus: 'LIVE',
     },
     estimateCost(request) {
-      const targetResolution = request.resolution ?? resolution;
+      const effective = normalizeReferenceRequest(request);
+      const targetResolution = effective.resolution ?? resolution;
       const rate = geminiRateUsdPerSecond(env, model, targetResolution);
       return {
-        estimatedUsd: Number((Math.max(0, request.durationSeconds) * rate).toFixed(4)),
+        estimatedUsd: Number((Math.max(0, effective.durationSeconds) * rate).toFixed(4)),
         currency: 'USD',
         source: env.GEMINI_VIDEO_USD_PER_SECOND || env.GENERATION_USD_PER_SECOND
           ? 'CONFIGURED_PRICE'
@@ -69,14 +77,17 @@ function createGeminiGenerativeProvider(store, env) {
       return videoProvider.generate(input);
     },
     generateShot(request) {
+      const effective = normalizeReferenceRequest(request);
       const operation = typeof videoProvider.generateShot === 'function'
-        ? videoProvider.generateShot(request)
-        : videoProvider.generate(request);
+        ? videoProvider.generateShot(effective)
+        : videoProvider.generate(effective);
       return operation.then((asset) => ({
         ...asset,
         metadata: {
           ...(asset.metadata ?? {}),
-          generatedDurationSeconds: request.durationSeconds,
+          requestedMode: request.mode ?? 'TEXT_TO_VIDEO',
+          effectiveMode: effective.mode ?? 'TEXT_TO_VIDEO',
+          generatedDurationSeconds: effective.durationSeconds,
         },
       }));
     },
@@ -91,14 +102,22 @@ function createHiggsfieldGenerativeProvider(store, env) {
     get capability() {
       return {
         ...provider.capability,
-        // Higgsfield REST dereferences reference media by URL; local file://
-        // references must be published through an approved media layer first.
         referenceUriSchemes: ['http', 'https'],
       };
     },
-    estimateCost(request) { return provider.estimateCost(request); },
+    estimateCost(request) { return provider.estimateCost(normalizeReferenceRequest(request)); },
     generate(request) { return provider.generate(request); },
-    generateShot(request) { return provider.generateShot(request); },
+    generateShot(request) {
+      const effective = normalizeReferenceRequest(request);
+      return provider.generateShot(effective).then((asset) => ({
+        ...asset,
+        metadata: {
+          ...(asset.metadata ?? {}),
+          requestedMode: request.mode ?? 'TEXT_TO_VIDEO',
+          effectiveMode: effective.mode ?? 'TEXT_TO_VIDEO',
+        },
+      }));
+    },
   };
 }
 
