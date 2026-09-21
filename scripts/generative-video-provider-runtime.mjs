@@ -36,8 +36,6 @@ function createGeminiGenerativeProvider(store, env) {
     timeoutMs: Number(env.GEMINI_VIDEO_TIMEOUT_MS ?? 900_000),
   });
 
-  if (typeof videoProvider.generateShot === 'function' && videoProvider.capability && typeof videoProvider.estimateCost === 'function') return videoProvider;
-
   return {
     name: videoProvider.name,
     capability: {
@@ -49,6 +47,8 @@ function createGeminiGenerativeProvider(store, env) {
       resolutions: ['720p', '1080p'],
       referenceImageSupport: true,
       firstLastFrameSupport: false,
+      // Gemini runtime can inline local references as well as consume remote media.
+      referenceUriSchemes: ['file', 'http', 'https'],
       audioSupport: false,
       deterministicSeedSupport: false,
       estimatedUsdPerSecond: geminiRateUsdPerSecond(env, model, resolution),
@@ -69,7 +69,10 @@ function createGeminiGenerativeProvider(store, env) {
       return videoProvider.generate(input);
     },
     generateShot(request) {
-      return videoProvider.generate(request).then((asset) => ({
+      const operation = typeof videoProvider.generateShot === 'function'
+        ? videoProvider.generateShot(request)
+        : videoProvider.generate(request);
+      return operation.then((asset) => ({
         ...asset,
         metadata: {
           ...(asset.metadata ?? {}),
@@ -82,7 +85,21 @@ function createGeminiGenerativeProvider(store, env) {
 
 function createHiggsfieldGenerativeProvider(store, env) {
   if (!hasHiggsfieldCredentials(env)) return null;
-  return createHiggsfieldVideoProviderFromEnv(store, env);
+  const provider = createHiggsfieldVideoProviderFromEnv(store, env);
+  return {
+    name: provider.name,
+    get capability() {
+      return {
+        ...provider.capability,
+        // Higgsfield REST dereferences reference media by URL; local file://
+        // references must be published through an approved media layer first.
+        referenceUriSchemes: ['http', 'https'],
+      };
+    },
+    estimateCost(request) { return provider.estimateCost(request); },
+    generate(request) { return provider.generate(request); },
+    generateShot(request) { return provider.generateShot(request); },
+  };
 }
 
 function orderedProviderNames(env, requested) {
