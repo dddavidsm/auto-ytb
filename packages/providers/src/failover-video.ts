@@ -4,6 +4,7 @@ import type {
   VideoGenerationCapability,
   VideoGenerationMode,
   VideoGenerationRequest,
+  VideoReferenceUriScheme,
 } from './types.js';
 
 type ProviderHealth = {
@@ -40,6 +41,18 @@ function requestedMode(input: VideoGenerationRequest): VideoGenerationMode {
   return 'TEXT_TO_VIDEO';
 }
 
+function requestReferenceUris(input: VideoGenerationRequest): string[] {
+  return [input.firstFrameUri, input.lastFrameUri, input.inputVideoUri, ...(input.referenceUris ?? [])]
+    .filter((value): value is string => Boolean(value));
+}
+
+function uriScheme(uri: string): VideoReferenceUriScheme | null {
+  if (/^file:\/\//i.test(uri)) return 'file';
+  if (/^https:\/\//i.test(uri)) return 'https';
+  if (/^http:\/\//i.test(uri)) return 'http';
+  return null;
+}
+
 function errorCode(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.split(/\n|\r/)[0].slice(0, 180);
@@ -59,13 +72,21 @@ function credentialRank(value: VideoGenerationCapability['credentialStatus']): n
 function compatible(provider: GenerativeVideoProvider, input: VideoGenerationRequest): boolean {
   const capability = provider.capability;
   const mode = requestedMode(input);
+  const references = requestReferenceUris(input);
   if (credentialRank(capability.credentialStatus) === 0) return false;
   if (!capability.modes.includes(mode)) return false;
   if (input.durationSeconds > capability.maxDurationSeconds + 1e-9) return false;
   if (capability.aspectRatios.length && !capability.aspectRatios.includes(input.aspectRatio)) return false;
   if (input.resolution && capability.resolutions.length && !capability.resolutions.includes(input.resolution)) return false;
-  if ((input.referenceUris?.length || input.firstFrameUri || input.lastFrameUri) && mode !== 'TEXT_TO_VIDEO' && !capability.referenceImageSupport) return false;
+  if (mode === 'REFERENCE_TO_VIDEO' && references.length === 0) return false;
+  if ((references.length > 0 || input.firstFrameUri || input.lastFrameUri) && mode !== 'TEXT_TO_VIDEO' && !capability.referenceImageSupport) return false;
   if ((input.firstFrameUri || input.lastFrameUri) && mode === 'IMAGE_TO_VIDEO' && !capability.firstLastFrameSupport) return false;
+  if (references.length && capability.referenceUriSchemes?.length) {
+    for (const uri of references) {
+      const scheme = uriScheme(uri);
+      if (!scheme || !capability.referenceUriSchemes.includes(scheme)) return false;
+    }
+  }
   return true;
 }
 
@@ -100,6 +121,7 @@ export class FailoverGenerativeVideoProvider implements GenerativeVideoProvider 
       resolutions: unique(capabilities.flatMap((item) => item.resolutions)),
       referenceImageSupport: capabilities.some((item) => item.referenceImageSupport),
       firstLastFrameSupport: capabilities.some((item) => item.firstLastFrameSupport),
+      referenceUriSchemes: unique(capabilities.flatMap((item) => [...(item.referenceUriSchemes ?? [])])),
       audioSupport: capabilities.some((item) => item.audioSupport),
       deterministicSeedSupport: capabilities.some((item) => item.deterministicSeedSupport),
       // The wrapper reserves against the most expensive eligible provider, so
