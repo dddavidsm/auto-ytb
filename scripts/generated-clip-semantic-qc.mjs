@@ -63,13 +63,13 @@ export async function extractTemporalContactSheet({ videoUri, durationSeconds, o
   return { imageData: new Uint8Array(await readFile(target)), mimeType: 'image/jpeg', outputPath: target, frameCount: count };
 }
 
-export function mapVisionEvaluationToGeneratedClipQuality({ evaluation, shot, technicalValidity = true, technicalIssues = [], method = 'temporal-contact-sheet-vision' }) {
+export function mapVisionEvaluationToGeneratedClipQuality({ evaluation, shot, world = null, technicalValidity = true, technicalIssues = [], method = 'temporal-contact-sheet-vision' }) {
   const issues = [...new Set([...(technicalIssues ?? []), ...(evaluation.issues ?? []).filter((issue) => BLOCKING_ISSUE.test(String(issue)))].map(String))];
   const relevance = Number(evaluation.relevanceScore ?? 0);
   const continuity = Number(evaluation.continuityScore ?? 0);
   const artifact = Number(evaluation.artifactQualityScore ?? 0);
   const hasCharacter = Boolean(shot.characterIds?.length);
-  const hasWorld = Boolean(shot.worldId);
+  const hasWorld = Boolean(world || shot.worldId);
   return evaluateGeneratedClipQuality({
     technicalValidity,
     subjectCorrectness: strength(relevance, issues, [/^SUBJECT_MISMATCH/i]),
@@ -97,7 +97,7 @@ export async function evaluateGeneratedClipSemanticQc({ asset, shot, characters 
   });
   const prompt = buildTemporalSemanticPrompt({ shot, characters, world });
   const evaluation = await visionProvider.evaluate({ prompt, imageData: contactSheet.imageData, mimeType: contactSheet.mimeType });
-  const quality = mapVisionEvaluationToGeneratedClipQuality({ evaluation, shot, technicalValidity, technicalIssues });
+  const quality = mapVisionEvaluationToGeneratedClipQuality({ evaluation, shot, world, technicalValidity, technicalIssues });
   return {
     quality,
     evidence: {
