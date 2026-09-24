@@ -25,7 +25,16 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["AutoYtbProductionWebContainer"]
+      "new_sqlite_classes": ["AutoYtbWebContainer"]
+    },
+    {
+      "tag": "v2",
+      "renamed_classes": [
+        {
+          "from": "AutoYtbWebContainer",
+          "to": "AutoYtbProductionWebContainer"
+        }
+      ]
     }
   ],
   "vars": {

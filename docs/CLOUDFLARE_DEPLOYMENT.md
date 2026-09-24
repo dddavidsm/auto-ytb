@@ -9,6 +9,7 @@ AUTO-YTB uses Cloudflare as the public control-plane edge and a Cloudflare Conta
 - Container image: repository `Dockerfile`
 - Public Worker name: `auto-ytb-production`
 - Container class: `AutoYtbProductionWebContainer`
+- Durable Object migration: the production namespace is explicitly renamed from the bootstrap class to the production class, preserving only this Worker's own state.
 - Default container port: `3000`
 - Container sleep policy: `30m`
 - Maximum production instances: `1` until workload evidence justifies scaling
