@@ -16,6 +16,8 @@ AUTO-YTB uses Cloudflare as the public control-plane edge and a Cloudflare Conta
 
 The container runs the existing Next.js control plane. Docker Compose still overrides the Dockerfile command for the local worker, scheduler and web services, so the local development topology remains unchanged.
 
+This deployment is intentionally isolated: it owns its Worker, Durable Object namespace and container application, and does not bind to any other project's storage, database or runtime resources.
+
 ## Cloudflare prerequisites
 
 Cloudflare Containers requires the Workers Paid plan. The account must also have a Docker-compatible build path: local Docker Desktop, or Workers Builds connected to this GitHub repository. The account used for the canonical deployment is `davidsanchezmora17@gmail.com`.
