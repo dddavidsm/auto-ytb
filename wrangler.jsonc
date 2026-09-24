@@ -1,6 +1,8 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "auto-ytb",
+  "account_id": "920501c64c3c0d2e8052baac85973480",
+  "workers_dev": true,
   "main": "cloudflare/index.mjs",
   "compatibility_date": "2026-09-24",
   "containers": [
