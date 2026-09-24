@@ -7,7 +7,7 @@ AUTO-YTB uses Cloudflare as the public control-plane edge and a Cloudflare Conta
 - Wrangler config: `wrangler.jsonc`
 - Worker entrypoint: `cloudflare/index.mjs`
 - Container image: repository `Dockerfile`
-- Public Worker name: `auto-ytb`
+- Public Worker name: `auto-ytb-production`
 - Container class: `AutoYtbWebContainer`
 - Default container port: `3000`
 - Container sleep policy: `30m`
@@ -44,9 +44,9 @@ npx wrangler whoami
 npx wrangler types
 npx wrangler deploy --dry-run
 npx wrangler deploy
-curl https://auto-ytb.<account-subdomain>.workers.dev/login
+npx wrangler tail auto-ytb-production
 npx wrangler containers list
-npx wrangler tail auto-ytb
+curl https://auto-ytb-production.<account-subdomain>.workers.dev/login
 ```
 
 The deploy is not considered complete until the Worker URL reaches the Next.js login page, the first container becomes healthy, the application can authenticate, and a protected dashboard request is verified against the configured database. A successful upload alone is not sufficient evidence.
