@@ -14,7 +14,13 @@ function loadRootEnv(path=resolve('.env.local')){
       if((value.startsWith('"')&&value.endsWith('"'))||(value.startsWith("'")&&value.endsWith("'")))value=value.slice(1,-1);
       if(!(key in process.env))process.env[key]=value;
     }
-  }catch(error){throw new Error(`Cannot load ${path}: ${error instanceof Error?error.message:String(error)}`);}
+  }catch(error){
+    // Production containers receive secrets through the runtime environment,
+    // so .env.local is intentionally absent from the image. Keep local files
+    // optional while preserving failures for malformed/unreadable files.
+    if(error?.code==='ENOENT')return;
+    throw new Error(`Cannot load ${path}: ${error instanceof Error?error.message:String(error)}`);
+  }
 }
 
 const webHost=process.env.CONTROL_PLANE_HOST?.trim()||'127.0.0.1';

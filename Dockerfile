@@ -19,6 +19,7 @@ RUN npm install --no-audit --no-fund \
   && npm run build \
   && npm run web:build
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    CONTROL_PLANE_HOST=0.0.0.0
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["npm","run","web:start"]
