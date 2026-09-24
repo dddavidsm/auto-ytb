@@ -22,7 +22,7 @@ export default async function VideoPage({params}:{params:Promise<{id:string}>}){
   const gate=autonomousPublication?.gateSnapshot??null;
   const releaseSafety=gate?.releaseSafety??null;
   const renderUri=String(run.metadata?.renderUri??'');
-  const canPreview=renderUri.startsWith('file://')||renderUri.startsWith('/')||renderUri.startsWith('.');
+  const canPreview=renderUri.startsWith('file://')||renderUri.startsWith('/')||renderUri.startsWith('.')||Boolean(run.metadata?.remoteMediaKey);
   const productionJob=run.metadata?.productionJob??null;
   const readiness=run.metadata?.productionReadiness??null;
   const fingerprint=run.fingerprint?.fingerprint??run.fingerprint??{};

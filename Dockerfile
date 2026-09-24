@@ -22,4 +22,4 @@ RUN npm install --no-audit --no-fund \
 ENV NODE_ENV=production \
     CONTROL_PLANE_HOST=0.0.0.0
 ENTRYPOINT ["/usr/bin/tini","--"]
-CMD ["npm","run","web:start"]
+CMD ["node","scripts/container-production.mjs"]

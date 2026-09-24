@@ -28,11 +28,15 @@ const productionEnv = {
   YOUTUBE_CLIENT_SECRET: env.YOUTUBE_CLIENT_SECRET || '',
   DRIVE_CLIENT_ID: env.DRIVE_CLIENT_ID || '',
   DRIVE_CLIENT_SECRET: env.DRIVE_CLIENT_SECRET || '',
+  RUN_BACKGROUND_WORKERS: env.RUN_BACKGROUND_WORKERS || 'false',
+  SCHEDULER_INTERVAL_MS: env.SCHEDULER_INTERVAL_MS || '900000',
+  SCHEDULER_RUN_IMMEDIATELY: env.SCHEDULER_RUN_IMMEDIATELY || 'false',
+  AUTO_YTB_MEDIA_PROXY_URL: env.AUTO_YTB_MEDIA_PROXY_URL || '',
 };
 
 export class AutoYtbProductionWebContainer extends Container {
   defaultPort = 3000;
-  sleepAfter = '30m';
+  sleepAfter = '10m';
   enableInternet = true;
   envVars = productionEnv;
 
@@ -51,7 +55,45 @@ export class AutoYtbProductionWebContainer extends Container {
 
 export default {
   async fetch(request, workerEnv) {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith('/__internal/media')) {
+      return handleMedia(request, workerEnv, url);
+    }
     const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web');
     return instance.fetch(request);
   },
+  async scheduled(_controller, workerEnv) {
+    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web');
+    await instance.startAndWaitForPorts();
+    instance.renewActivityTimeout();
+    console.log('AUTO-YTB autonomous container activity renewed');
+  },
 };
+
+async function handleMedia(request, workerEnv, url) {
+  const expected = String(workerEnv.CONTROL_PLANE_TOKEN || '');
+  const received = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || '';
+  if (!expected || received !== expected) return new Response('Unauthorized', { status: 401 });
+  const bucket = workerEnv.AUTOYTB_MEDIA;
+  if (!bucket) return new Response('Media storage is not configured', { status: 503 });
+  const key = url.searchParams.get('key')?.replace(/^\/+/, '');
+  if (!key || key.length > 1024 || key.includes('..')) return new Response('Invalid media key', { status: 400 });
+  if (request.method === 'PUT') {
+    await bucket.put(key, request.body, { httpMetadata: { contentType: request.headers.get('content-type') || 'application/octet-stream' } });
+    return Response.json({ ok: true, key });
+  }
+  if (request.method === 'DELETE') {
+    await bucket.delete(key);
+    return Response.json({ ok: true, key });
+  }
+  if (request.method === 'GET' || request.method === 'HEAD') {
+    const object = await bucket.get(key, { range: request.headers });
+    if (!object) return new Response('Not found', { status: 404 });
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('etag', object.httpEtag);
+    if (object.size != null) headers.set('content-length', String(object.size));
+    return new Response(request.method === 'HEAD' ? null : object.body, { headers });
+  }
+  return new Response('Method not allowed', { status: 405, headers: { allow: 'GET, HEAD, PUT, DELETE' } });
+}

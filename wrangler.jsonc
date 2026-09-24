@@ -22,6 +22,15 @@
       }
     ]
   },
+  "r2_buckets": [
+    {
+      "binding": "AUTOYTB_MEDIA",
+      "bucket_name": "auto-ytb-production-media"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "migrations": [
     {
       "tag": "v1",
@@ -40,7 +49,10 @@
   "vars": {
     "REAL_GENERATION_ENABLED": "false",
     "AUTO_UPLOAD_PRIVATE": "false",
-    "AUTO_YTB_RUNTIME_REVISION": "2026-09-24T22:29:27Z"
+    "AUTO_YTB_RUNTIME_REVISION": "2026-09-25T00:00:00Z",
+    "RUN_BACKGROUND_WORKERS": "true",
+    "SCHEDULER_INTERVAL_MS": "900000",
+    "SCHEDULER_RUN_IMMEDIATELY": "false"
   },
   "observability": {
     "enabled": true,
