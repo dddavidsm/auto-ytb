@@ -24,6 +24,8 @@ Cloudflare Containers requires the Workers Paid plan. The account must also have
 
 When local Docker is unavailable, use Workers Builds with a full `npx wrangler deploy` command. A Worker-only `versions upload` is not enough for Containers because it does not publish or roll out the image.
 
+The production build is connected to the `main` branch and uses Cloudflare's remote build environment for the container image.
+
 ## Runtime secrets
 
 Do not commit these values. Configure them as encrypted Worker secrets after the database and provider accounts are ready:
