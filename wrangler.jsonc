@@ -40,7 +40,7 @@
   "vars": {
     "REAL_GENERATION_ENABLED": "false",
     "AUTO_UPLOAD_PRIVATE": "false",
-    "AUTO_YTB_RUNTIME_REVISION": "2026-09-24T22:10:33Z"
+    "AUTO_YTB_RUNTIME_REVISION": "2026-09-24T22:29:27Z"
   },
   "observability": {
     "enabled": true,
