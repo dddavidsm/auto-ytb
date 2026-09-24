@@ -11,11 +11,13 @@ AUTO-YTB uses Cloudflare as the public control-plane edge and a Cloudflare Conta
 - Container class: `AutoYtbProductionWebContainer`
 - Durable Object migration: the production namespace is explicitly renamed from the bootstrap class to the production class, preserving only this Worker's own state.
 - Default container port: `3000`
-- Container sleep policy: `30m`
+- Container sleep policy: `10m`, renewed by the Worker cron while autonomous services are enabled
 - Maximum production instances: `1` until workload evidence justifies scaling
 - Real generation and automatic publishing are disabled by default
 
-The container runs the existing Next.js control plane. Docker Compose still overrides the Dockerfile command for the local worker, scheduler and web services, so the local development topology remains unchanged.
+The production container starts the Next.js control plane plus the PostgreSQL-backed worker and scheduler through `scripts/container-production.mjs`. Docker Compose still overrides the Dockerfile command for the local worker, scheduler and web services, so the local development topology remains unchanged.
+
+Final renders are mirrored to the dedicated R2 bucket through an authenticated Worker endpoint. PostgreSQL state lives in the dedicated hosted database configured as `DATABASE_URL`; the container filesystem remains a working cache and is not treated as durable storage.
 
 This deployment is intentionally isolated: it owns its Worker, Durable Object namespace and container application, and does not bind to any other project's storage, database or runtime resources.
 
@@ -37,6 +39,7 @@ Do not commit these values. Configure them as encrypted Worker secrets after the
 - `CONTROL_PLANE_TOKEN` — emergency/operator token
 - `CONTROL_GOOGLE_ALLOWED_EMAILS` — allowlist including the operator email
 - `CONTROL_GOOGLE_CLIENT_ID`, `CONTROL_GOOGLE_CLIENT_SECRET`, `CONTROL_GOOGLE_REDIRECT_URI` — Google control-plane OAuth
+- `AUTO_YTB_MEDIA_PROXY_URL` — encrypted URL for the Worker’s private R2 media proxy
 - Provider credentials such as `GEMINI_API_KEY`, `HF_CREDENTIALS` or `HF_API_KEY_ID`/`HF_API_KEY_SECRET`, and `RUNWAY_API_KEY` only when legitimately configured
 - YouTube and Drive OAuth credentials only when private upload/distribution is intentionally enabled
 
@@ -54,7 +57,7 @@ npx wrangler containers list
 curl https://auto-ytb-production.<account-subdomain>.workers.dev/login
 ```
 
-The deploy is not considered complete until the Worker URL reaches the Next.js login page, the first container becomes healthy, the application can authenticate, and a protected dashboard request is verified against the configured database. A successful upload alone is not sufficient evidence.
+The deploy is not considered complete until the Worker URL reaches the Next.js login page, the first container becomes healthy, the application can authenticate, a protected dashboard request is verified against the configured database, both autonomous heartbeats are fresh, and a private R2 write/read/delete smoke test passes. A successful upload alone is not sufficient evidence.
 
 ## Why not Workers-only
 
