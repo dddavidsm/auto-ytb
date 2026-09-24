@@ -7,7 +7,7 @@
   "compatibility_date": "2026-09-24",
   "containers": [
     {
-      "class_name": "AutoYtbWebContainer",
+        "class_name": "AutoYtbProductionWebContainer",
       "image": "./Dockerfile",
       "instance_type": "basic",
       "max_instances": 1,
@@ -18,14 +18,14 @@
     "bindings": [
       {
         "name": "AUTOYTB_WEB",
-        "class_name": "AutoYtbWebContainer"
+        "class_name": "AutoYtbProductionWebContainer"
       }
     ]
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["AutoYtbWebContainer"]
+      "new_sqlite_classes": ["AutoYtbProductionWebContainer"]
     }
   ],
   "vars": {

@@ -29,7 +29,7 @@ const productionEnv = {
   DRIVE_CLIENT_SECRET: env.DRIVE_CLIENT_SECRET || '',
 };
 
-export class AutoYtbWebContainer extends Container {
+export class AutoYtbProductionWebContainer extends Container {
   defaultPort = 3000;
   sleepAfter = '30m';
   enableInternet = true;
