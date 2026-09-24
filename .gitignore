@@ -12,3 +12,5 @@ coverage/
 assets/source-footage/
 
 *.tsbuildinfo
+.wrangler/
+apps/web/.next/

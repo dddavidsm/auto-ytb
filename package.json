@@ -3,7 +3,10 @@
   "version": "0.16.0",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "test:editorial-intelligence": "npm run build && node scripts/test-editorial-intelligence.mjs",
     "test:editorial-cutover": "node scripts/test-editorial-cutover-regressions.mjs",
@@ -114,6 +117,11 @@
     "ops:schedule": "npm run build && node scripts/schedule-branding.mjs && node scripts/schedule-intelligence.mjs && node scripts/series-automation-profile-sync.mjs && node scripts/series-memory-sync.mjs && node scripts/series-kids-quality-sync.mjs && node scripts/series-visual-continuity-sync.mjs && node scripts/series-performance-sync.mjs && node scripts/recheck-series-publication.mjs && node scripts/series-episode-planner.mjs && node scripts/schedule-production-series.mjs && node scripts/schedule-maintenance.mjs",
     "ops:tick": "npm run build && node scripts/schedule-branding.mjs && node scripts/schedule-intelligence.mjs && node scripts/series-automation-profile-sync.mjs && node scripts/series-memory-sync.mjs && node scripts/series-kids-quality-sync.mjs && node scripts/series-visual-continuity-sync.mjs && node scripts/series-performance-sync.mjs && node scripts/recheck-series-publication.mjs && node scripts/series-episode-planner.mjs && node scripts/schedule-production-series.mjs && node scripts/schedule-maintenance.mjs && node scripts/worker.mjs --once"
   },
-  "dependencies": { "pg": "^8.16.3" },
-  "devDependencies": { "typescript": "^5.8.3" }
+  "dependencies": {
+    "pg": "^8.16.3"
+  },
+  "devDependencies": {
+    "@cloudflare/containers": "^0.3.7",
+    "typescript": "^5.8.3"
+  }
 }

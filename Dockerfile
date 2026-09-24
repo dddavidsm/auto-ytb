@@ -21,4 +21,4 @@ RUN npm install --no-audit --no-fund \
 
 ENV NODE_ENV=production
 ENTRYPOINT ["/usr/bin/tini","--"]
-CMD ["node","scripts/worker.mjs"]
+CMD ["npm","run","web:start"]

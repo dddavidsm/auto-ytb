@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "auto-ytb",
+  "main": "cloudflare/index.mjs",
+  "compatibility_date": "2026-09-24",
+  "containers": [
+    {
+      "class_name": "AutoYtbWebContainer",
+      "image": "./Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 1,
+      "rollout_step_percentage": 100
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "AUTOYTB_WEB",
+        "class_name": "AutoYtbWebContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AutoYtbWebContainer"]
+    }
+  ],
+  "vars": {
+    "REAL_GENERATION_ENABLED": "false",
+    "AUTO_UPLOAD_PRIVATE": "false"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

@@ -17,7 +17,7 @@ function loadRootEnv(path=resolve('.env.local')){
   }catch(error){throw new Error(`Cannot load ${path}: ${error instanceof Error?error.message:String(error)}`);}
 }
 
-const webHost='127.0.0.1';
+const webHost=process.env.CONTROL_PLANE_HOST?.trim()||'127.0.0.1';
 
 async function portAvailable(port){
   return await new Promise((resolvePort)=>{
