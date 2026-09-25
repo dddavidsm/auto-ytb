@@ -33,7 +33,9 @@ export function controlGoogleConfig(){
   return {clientId,clientSecret,redirectUri};
 }
 export function publicAppOrigin(request?:Request){
-  const configured=(process.env.PUBLIC_APP_URL||process.env.CONTROL_GOOGLE_REDIRECT_URI||'').trim();
+  const forwardedOrigin=(request?.headers.get('x-auto-ytb-public-origin')||'').trim();
+  if(forwardedOrigin){try{return new URL(forwardedOrigin).origin;}catch{}}
+  const configured=(process.env.CONTROL_GOOGLE_REDIRECT_URI||'').trim();
   if(configured){try{return new URL(configured).origin;}catch{}}
   const forwardedHost=request?.headers.get('x-forwarded-host')||request?.headers.get('host')||'localhost:3000';
   const forwardedProto=request?.headers.get('x-forwarded-proto')||'https';
