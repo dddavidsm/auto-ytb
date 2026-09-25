@@ -6,7 +6,12 @@ import { NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
-const allowed = new Set(['idea-lab-demo-01.mp4', 'idea-lab-demo-02.mp4']);
+const allowed = new Set([
+  'idea-lab-demo-01.mp4',
+  'idea-lab-demo-02.mp4',
+  'battery-grid-2026.mp4',
+  'misterio-rayos-x.mp4',
+]);
 
 async function serve(request: Request, path: string) {
   const info = await stat(path).catch(() => null);
