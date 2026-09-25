@@ -9,3 +9,4 @@ export function pool(){
   return globalThis.__autoYtbWebPool;
 }
 export async function query<T=Record<string,unknown>>(text:string,values:unknown[]=[]){const result=await pool().query(text,values);return result.rows as T[];}
+export async function transaction<T>(callback:(client:import('pg').PoolClient)=>Promise<T>){const client=await pool().connect();try{await client.query('begin');const result=await callback(client);await client.query('commit');return result;}catch(error){await client.query('rollback').catch(()=>{});throw error;}finally{client.release();}}

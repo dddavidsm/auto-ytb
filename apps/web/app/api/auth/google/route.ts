@@ -4,6 +4,12 @@ import { controlGoogleConfig, googleOauthStateCookieName } from '../../../../lib
 
 export const runtime='nodejs';
 
+function loginRedirect(request:NextRequest,error:string){
+  const url=new URL('/login',request.url);
+  url.searchParams.set('error',error);
+  return NextResponse.redirect(url);
+}
+
 export async function GET(request:NextRequest){
   // OAuth state is host-only. Use the browser's actual Host header (not nextUrl.hostname,
   // which Next dev may normalize) to canonicalize localhost to 127.0.0.1 exactly once.
@@ -17,7 +23,7 @@ export async function GET(request:NextRequest){
   }
 
   const {clientId,redirectUri}=controlGoogleConfig();
-  if(!clientId)return NextResponse.json({ok:false,error:'Google control-plane login is not configured'},{status:503});
+  if(!clientId)return loginRedirect(request,'oauth_config');
   const state=randomBytes(32).toString('base64url');
   const params=new URLSearchParams({
     client_id:clientId,
