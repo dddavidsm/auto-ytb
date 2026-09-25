@@ -47,6 +47,7 @@
     }
   ],
   "vars": {
+    "PUBLIC_APP_URL": "https://auto-ytb-production.taipbeats.workers.dev",
     "REAL_GENERATION_ENABLED": "false",
     "AUTO_UPLOAD_PRIVATE": "false",
     "AUTO_YTB_RUNTIME_REVISION": "2026-09-25T04:48:18Z",
