@@ -26,8 +26,8 @@ const demos: GalleryVideo[] = [
 ];
 
 const production: GalleryVideo[] = [
-  { id: 'battery-grid-2026', title: 'Baterías: la red que viene', concept: 'Por qué el almacenamiento eléctrico está creciendo a toda velocidad', format: 'DOCUMENTAL · HORIZONTAL', duration: '30,0 s', resolution: '1280 × 720', audio: 'AAC · 48 kHz · estéreo', size: '7,8 MB', provider: 'Editorial local + voz ES', cost: '$0.00', state: 'READY_TO_UPLOAD', publication: 'NO PUBLICADO', accent: '#19435b', source: 'IEA Global Energy Review 2026' },
-  { id: 'misterio-rayos-x', title: 'El misterio de los rayos X', concept: 'Siete objetos extraños que están desafiando a la astronomía', format: 'DOCUMENTAL · HORIZONTAL', duration: '32,6 s', resolution: '1280 × 720', audio: 'AAC · 48 kHz · estéreo', size: '6,8 MB', provider: 'Editorial local + voz ES', cost: '$0.00', state: 'READY_TO_UPLOAD', publication: 'NO PUBLICADO', accent: '#34245f', source: 'NASA Chandra · septiembre de 2026' },
+  { id: 'battery-grid-2026', title: 'Baterías: la red que viene', concept: 'Explicador animado sobre almacenamiento, red y demanda eléctrica', format: 'DOCUMENTAL · MOTION GRAPHICS', duration: '40,0 s', resolution: '1280 × 720', audio: 'AAC · 48 kHz · estéreo', size: '0,9 MB', provider: 'Motion graphics + voz ES', cost: '$0.00', state: 'READY_TO_UPLOAD', publication: 'NO PUBLICADO', accent: '#19435b', source: 'IEA Global Energy Review 2026' },
+  { id: 'misterio-rayos-x', title: 'El misterio de los rayos X', concept: 'Explicador animado sobre siete objetos que desafían a la astronomía', format: 'DOCUMENTAL · MOTION GRAPHICS', duration: '40,0 s', resolution: '1280 × 720', audio: 'AAC · 48 kHz · estéreo', size: '0,9 MB', provider: 'Motion graphics + voz ES', cost: '$0.00', state: 'READY_TO_UPLOAD', publication: 'NO PUBLICADO', accent: '#34245f', source: 'NASA Chandra · septiembre de 2026' },
 ];
 
 const videos: GalleryVideo[] = [...production, ...demos];
