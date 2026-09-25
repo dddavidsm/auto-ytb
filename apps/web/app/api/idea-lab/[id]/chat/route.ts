@@ -31,7 +31,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       researchJobId = job?.id ?? ((await client.query(`select id from jobs where job_key=$1`, [jobKey])).rows[0]?.id ?? null);
       if (researchJobId) await client.query(`insert into job_events (job_id,event_type,detail) values ($1,'idea_lab_research_requested',$2::jsonb)`, [researchJobId, JSON.stringify({ opportunityId: id, request: message })]);
     } else {
-      updatedIdeaLab.angle = action === 'regenerate' ? `${current.angle} Nueva versión solicitada: ${message}`.slice(0, 1200) : current.angle;
+      updatedIdeaLab.title = action === 'regenerate' ? `${existing.title || 'Propuesta'} · versión ${revisionCount}`.slice(0, 180) : existing.title;
+      updatedIdeaLab.angle = `${current.angle} ${action === 'regenerate' ? 'Nueva versión solicitada' : 'Edición solicitada'}: ${message}`.slice(0, 1200);
       updatedIdeaLab.revisionNote = message;
       await client.query(`update opportunities set angle=$2,status='candidate',decision='REVIEW',signals=$3::jsonb,detected_at=now(),expires_at=now()+interval '30 days' where id=$1`, [id, updatedIdeaLab.angle, JSON.stringify({ ...(current.signals || {}), ideaLab: updatedIdeaLab })]);
     }

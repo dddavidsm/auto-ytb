@@ -36,7 +36,9 @@ export default function IdeaLabClient() {
     const response = await fetch('/api/idea-lab', { cache: 'no-store' });
     if (!response.ok) return;
     const payload = await response.json();
-    setIdeas((payload.ideas || []).map(normalize));
+    const loaded = (payload.ideas || []).map(normalize);
+    setIdeas(loaded);
+    setChat(Object.fromEntries(loaded.map((idea: Idea) => [idea.id, (idea.signals?.ideaLab?.chatHistory || []).map((line: any) => ({ role: line.role === 'assistant' ? 'assistant' : 'user', content: String(line.content || '') }))])));
   }
 
   useEffect(() => { void loadIdeas(); }, []);
