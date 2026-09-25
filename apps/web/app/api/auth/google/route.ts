@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { controlGoogleConfig, googleOauthStateCookieName } from '../../../../lib/auth';
+import { controlGoogleConfig, googleOauthStateCookieName, publicAppOrigin } from '../../../../lib/auth';
 
 export const runtime='nodejs';
 
 function loginRedirect(request:NextRequest,error:string){
-  const url=new URL('/login',request.url);
+  const url=new URL('/login',publicAppOrigin(request));
   url.searchParams.set('error',error);
   return NextResponse.redirect(url);
 }

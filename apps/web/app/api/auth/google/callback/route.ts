@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { controlGoogleConfig, createGoogleCompletionTicket, googleOauthStateCookieName, isAllowedControlEmail } from '../../../../../lib/auth';
+import { controlGoogleConfig, createGoogleCompletionTicket, googleOauthStateCookieName, isAllowedControlEmail, publicAppOrigin } from '../../../../../lib/auth';
 
 export const runtime='nodejs';
 
 function loginError(request:NextRequest,reason:string){
-  const url=new URL('/login',request.url);url.searchParams.set('error',reason);return NextResponse.redirect(url);
+  const url=new URL('/login',publicAppOrigin(request));url.searchParams.set('error',reason);return NextResponse.redirect(url);
 }
 
 export async function GET(request:NextRequest){
@@ -37,7 +37,7 @@ export async function GET(request:NextRequest){
   // Complete session creation on a same-site hop. Some browsers/dev stacks do not
   // reliably persist the final session cookie when it is set directly on the external
   // Google callback response. The short-lived signed ticket contains no OAuth token.
-  const complete=new URL('/api/auth/google/complete',request.url);
+  const complete=new URL('/api/auth/google/complete',publicAppOrigin(request));
   complete.searchParams.set('ticket',createGoogleCompletionTicket(email));
   const response=NextResponse.redirect(complete);
   response.cookies.set(googleOauthStateCookieName,'',{httpOnly:true,sameSite:'lax',secure:process.env.NODE_ENV==='production',path:'/',maxAge:0});

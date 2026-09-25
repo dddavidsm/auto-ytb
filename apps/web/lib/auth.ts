@@ -32,6 +32,13 @@ export function controlGoogleConfig(){
   const redirectUri=(process.env.CONTROL_GOOGLE_REDIRECT_URI||'http://localhost:53683/oauth2/callback').trim();
   return {clientId,clientSecret,redirectUri};
 }
+export function publicAppOrigin(request?:Request){
+  const configured=(process.env.PUBLIC_APP_URL||process.env.CONTROL_GOOGLE_REDIRECT_URI||'').trim();
+  if(configured){try{return new URL(configured).origin;}catch{}}
+  const forwardedHost=request?.headers.get('x-forwarded-host')||request?.headers.get('host')||'localhost:3000';
+  const forwardedProto=request?.headers.get('x-forwarded-proto')||'https';
+  return `${forwardedProto}://${forwardedHost}`;
+}
 export function createSessionToken(options:{email?:string;auth?:'google'|'token';now?:number}={}){
   const now=options.now??Date.now();
   const payload:SessionPayload={exp:Math.floor(now/1000)+MAX_AGE_SECONDS,scope:'control-plane',...(options.email?{email:options.email.toLowerCase()}:{}),...(options.auth?{auth:options.auth}:{})};
