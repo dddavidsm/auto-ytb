@@ -81,13 +81,13 @@ export default {
     // Bump this id whenever the container image or its injected secrets change.
     // Cloudflare keeps a live named instance warm; a revisioned name ensures a
     // new deployment does not keep serving an older image/environment snapshot.
-    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v3');
+    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v4');
     const headers = new Headers(request.headers);
     headers.set('x-auto-ytb-public-origin', url.origin);
     return instance.fetch(new Request(request, { headers }));
   },
   async scheduled(_controller, workerEnv) {
-    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v3');
+    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v4');
     await instance.startAndWaitForPorts();
     instance.renewActivityTimeout();
     console.log('AUTO-YTB autonomous container activity renewed');
