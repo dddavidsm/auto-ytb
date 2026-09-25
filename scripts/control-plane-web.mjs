@@ -55,15 +55,21 @@ const runId=`${webPort}-${process.pid}-${Date.now()}`;
 
 if(webPort!==3000)console.log(`Port 3000 is busy. AUTO-YTB will use ${webBase} instead.`);
 
-const bridge=createServer((req,res)=>{
-  const incoming=new URL(req.url||'/',`http://${req.headers.host||`${bridgeHost}:${bridgePort}`}`);
-  if(incoming.pathname!==redirectUri.pathname){res.writeHead(404,{'content-type':'text/plain'});res.end('Not found');return;}
-  const target=new URL('/api/auth/google/callback',webBase);
-  target.search=incoming.search;
-  res.writeHead(302,{location:target.toString(),'cache-control':'no-store'});res.end();
-});
-bridge.on('error',(error)=>{console.error(`Control OAuth bridge failed on ${bridgeHost}:${bridgePort}:`,error.message);process.exitCode=1;});
-bridge.listen(bridgePort,bridgeHost,()=>console.log(`Control OAuth bridge READY: ${redirectUri.toString()} -> ${webBase}/api/auth/google/callback`));
+let bridge=null;
+const localOAuthHost=['localhost','127.0.0.1','::1'].includes(bridgeHost);
+if(localOAuthHost){
+  bridge=createServer((req,res)=>{
+    const incoming=new URL(req.url||'/',`http://${req.headers.host||`${bridgeHost}:${bridgePort}`}`);
+    if(incoming.pathname!==redirectUri.pathname){res.writeHead(404,{'content-type':'text/plain'});res.end('Not found');return;}
+    const target=new URL('/api/auth/google/callback',webBase);
+    target.search=incoming.search;
+    res.writeHead(302,{location:target.toString(),'cache-control':'no-store'});res.end();
+  });
+  bridge.on('error',(error)=>{console.error(`Control OAuth bridge failed on ${bridgeHost}:${bridgePort}:`,error.message);process.exitCode=1;});
+  bridge.listen(bridgePort,bridgeHost,()=>console.log(`Control OAuth bridge READY: ${redirectUri.toString()} -> ${webBase}/api/auth/google/callback`));
+}else{
+  console.log(`Production OAuth callback configured at ${redirectUri.toString()}; local bridge disabled.`);
+}
 
 const childEnv={...process.env,PORT:String(webPort),CONTROL_PLANE_PORT:String(webPort),CONTROL_PLANE_RUN_ID:runId};
 let child;
