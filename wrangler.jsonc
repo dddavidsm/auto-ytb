@@ -48,6 +48,7 @@
   ],
   "vars": {
     "REAL_GENERATION_ENABLED": "false",
+    "AUTO_YTB_VIDEO_ONLY": "true",
     "AUTO_UPLOAD_PRIVATE": "false",
     "AUTO_YTB_RUNTIME_REVISION": "2026-09-25T04:48:18Z",
     "RUN_BACKGROUND_WORKERS": "true",

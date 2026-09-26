@@ -26,7 +26,8 @@ export async function POST(request: Request) {
   const requestedFormat = typeof body?.format === 'string' ? body.format.toUpperCase() : '';
   const opportunityId = safeText(body?.opportunityId, '', 80);
   const contentFormat = requestedFormat === 'SHORT_VERTICAL' || requestedFormat === 'LONG_HORIZONTAL' ? requestedFormat : inferFormat(prompt);
-  const requestedMode = safeText(body?.productionMode, 'sourced', 40).toLowerCase();
+  const requestedMode = safeText(body?.productionMode, 'full-generative', 40).toLowerCase();
+  const videoOnly = body?.videoOnly !== false;
   const aspectRatio = safeText(body?.aspectRatio, contentFormat === 'SHORT_VERTICAL' ? '9:16' : '16:9', 10);
   const durationSec = Math.max(10, Math.min(3600, Math.round(Number(body?.durationSec) || (contentFormat === 'SHORT_VERTICAL' ? 45 : 180))));
   const qualityMode = safeText(body?.qualityMode, 'MAX_QUALITY', 40).toUpperCase();
@@ -34,7 +35,7 @@ export async function POST(request: Request) {
   const jobKey = `ui-production:${briefId}`;
   const topic = prompt.slice(0, 240);
   const workingTitle = prompt.slice(0, 180);
-  const opportunitySignals = { source: 'control-plane-ui', userPrompt: prompt, requestedMode, aspectRatio, durationSec, qualityMode };
+  const opportunitySignals = { source: 'control-plane-ui', userPrompt: prompt, requestedMode, aspectRatio, durationSec, qualityMode, videoOnly };
   const formatRecommendation = { primary: contentFormat, scores: { LONG_HORIZONTAL: contentFormat === 'LONG_HORIZONTAL' ? 100 : 0, SHORT_VERTICAL: contentFormat === 'SHORT_VERTICAL' ? 100 : 0 }, reason: 'Explicit control-plane request' };
   const graph = createUniversalProductionGraph([contentFormat, 'PACKAGING', 'ANALYTICS']);
 
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
       const seriesProfile = opportunity.signals?.ideaLab?.seriesProfile ?? null;
       const ideaFormat = seriesProfile ? 'series' : productionFormat === 'SHORT_VERTICAL' ? 'short' : 'long';
       const idea = (await client.query(`insert into content_ideas (opportunity_id,format,working_title,premise,target_viewer,hook_hypothesis,status) values ($1,$2,$3,$4,$5,$6,'approved') returning id`, [opportunity.id, ideaFormat, workingTitle, productionAngle, seriesProfile?.ageRange || 'Defined by the control-plane request', seriesProfile?.episodeEngine || 'Open with the strongest concrete promise from the requested brief'])).rows[0];
-      const payload = { topic: productionTopic, angle: productionAngle, channelId: channel.id, channelKey: channel.channel_key, channelConfigPath: channel.config_path || 'config/channels/future-tech-business.example.json', credentialsRef: channel.credentials_ref || 'PRIMARY', budgetDate: new Date().toISOString().slice(0, 10), score: 100, productionPriority: 100, learningBoost: 0, reservedCostUsd: 0, contentFormat: productionFormat, formatRecommendation: { ...formatRecommendation, primary: productionFormat }, derivativeStrategy: 'NONE', styleFingerprint: { source: 'control-plane-ui', format: productionFormat }, brandContext: {}, seriesContext: seriesProfile ? { ...seriesProfile, seriesKey: String(seriesProfile.seriesName || workingTitle).slice(0, 120), automationProfileVersion: 'idea-lab-v1' } : null, ui: { briefId, requestedMode, aspectRatio, durationSec, qualityMode, prompt, opportunityId: opportunity.id } };
+      const payload = { topic: productionTopic, angle: productionAngle, channelId: channel.id, channelKey: channel.channel_key, channelConfigPath: channel.config_path || 'config/channels/future-tech-business.example.json', credentialsRef: channel.credentials_ref || 'PRIMARY', budgetDate: new Date().toISOString().slice(0, 10), score: 100, productionPriority: 100, learningBoost: 0, reservedCostUsd: 0, contentFormat: productionFormat, formatRecommendation: { ...formatRecommendation, primary: productionFormat }, derivativeStrategy: 'NONE', styleFingerprint: { source: 'control-plane-ui', format: productionFormat }, brandContext: {}, seriesContext: seriesProfile ? { ...seriesProfile, seriesKey: String(seriesProfile.seriesName || workingTitle).slice(0, 120), automationProfileVersion: 'idea-lab-v1' } : null, ui: { briefId, requestedMode, aspectRatio, durationSec, qualityMode, videoOnly, prompt, opportunityId: opportunity.id } };
       const job = (await client.query(`insert into jobs (job_key,kind,channel_id,opportunity_id,state,priority,max_attempts,payload) values ($1,'produce_opportunity',$2,$3,'queued',100,$4,$5::jsonb) returning id,state,created_at`, [jobKey, channel.id, opportunity.id, Math.max(1, Math.min(20, Number(process.env.JOB_MAX_ATTEMPTS || 4))), JSON.stringify(payload)])).rows[0];
       await client.query(`insert into job_events (job_id,event_type,detail) values ($1,'ui_request_queued',$2::jsonb)`, [job.id, JSON.stringify({ briefId, opportunityId: opportunity.id, contentIdeaId: idea.id, channelKey: channel.channel_key })]);
       return { job, channelKey: channel.channel_key };

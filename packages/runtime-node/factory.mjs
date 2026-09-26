@@ -13,7 +13,7 @@ import { withContinuityBridgeVideo } from './continuity-video.mjs';
 import { withLicensedSoundtrack } from './soundtrack.mjs';
 import { withArchetypeEditorialFinish } from './editorial-finish.mjs';
 import { inferContentArchetype } from '@auto-ytb/os';
-import { TavilySearchProvider, OpenAIResponsesTextModel, GeminiGenerateContentTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, RunwayVideoProvider, GoogleDriveLibraryProvider, GeminiGoogleSearchProvider, GeminiVoiceProvider, GeminiImageProvider, GeminiVisionProvider, GeminiAudioQualityProvider, GeminiVideoProvider } from '@auto-ytb/providers';
+import { TavilySearchProvider, OpenAIResponsesTextModel, GeminiGenerateContentTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, RunwayVideoProvider, HiggsfieldVideoProvider, GoogleDriveLibraryProvider, GeminiGoogleSearchProvider, GeminiVoiceProvider, GeminiImageProvider, GeminiVisionProvider, GeminiAudioQualityProvider, GeminiVideoProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
 
 const reqFrom=(env,name)=>{const value=env[name]?.trim();if(!value)throw new Error(`Missing required environment variable ${name}`);return value;};
@@ -80,6 +80,12 @@ export function createLiveRuntime(env=process.env){
     const videoModel=env.VIDEO_MODEL||'veo-3.1-fast-generate-preview';const raw=new GeminiVideoProvider({apiKey:geminiKey||reqFrom(env,'GEMINI_API_KEY'),store,model:videoModel,resolution:env.GEMINI_VIDEO_RESOLUTION||'720p',endpoint:geminiEndpoint});const archetypeVideo=bindVideoProviderToContentArchetype(meterVideoProvider(raw,meter,{model:videoModel}),archetypeProfile);const capture=withCaptureAesthetic(archetypeVideo,archetypeProfile,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});video=(brandContext?.referenceUris?.length??0)>=2&&image?withContinuityBridgeVideo(capture,image,brandContext):bindMediaProviderToBrand(capture,brandContext);
   }else if(videoProvider==='runway'){
     const runwayKey=String(env.VIDEO_API_KEY||env.IMAGE_API_KEY||'').trim();if(!runwayKey)throw new Error('Runway video is configured but VIDEO_API_KEY/IMAGE_API_KEY is missing');const runway=new RunwayVideoProvider({apiKey:runwayKey,store});const archetypeVideo=bindVideoProviderToContentArchetype(meterVideoProvider(runway,meter,{model:env.VIDEO_MODEL||'wan3'}),archetypeProfile);const capture=withCaptureAesthetic(archetypeVideo,archetypeProfile,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});video=bindMediaProviderToBrand(capture,brandContext);
+  }else if(videoProvider==='higgsfield'){
+    const credentials=String(env.HF_CREDENTIALS||((env.HF_API_KEY_ID&&env.HF_API_KEY_SECRET)?`${env.HF_API_KEY_ID}:${env.HF_API_KEY_SECRET}`:'')).trim();
+    if(!credentials)throw new Error('Higgsfield video is configured but HF_CREDENTIALS (or HF_API_KEY_ID/HF_API_KEY_SECRET) is missing');
+    const model=env.HIGGSFIELD_VIDEO_MODEL||env.VIDEO_MODEL||'wan/v2.7/text-to-video';
+    const raw=new HiggsfieldVideoProvider({credentials,store,model,baseUrl:env.HIGGSFIELD_API_BASE_URL||'https://api.higgsfield.ai',pollMs:numFrom(env,'HIGGSFIELD_POLL_MS',5000),timeoutMs:numFrom(env,'HIGGSFIELD_TIMEOUT_MS',900000),estimatedUsdPerSecond:env.HIGGSFIELD_USD_PER_SECOND?Number(env.HIGGSFIELD_USD_PER_SECOND):null});
+    const archetypeVideo=bindVideoProviderToContentArchetype(meterVideoProvider(raw,meter,{model}),archetypeProfile);const capture=withCaptureAesthetic(archetypeVideo,archetypeProfile,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});video=bindMediaProviderToBrand(capture,brandContext);
   }else if(videoProvider!=='none')throw new Error(`Unsupported VIDEO_PROVIDER: ${videoProvider}`);
   const visionProvider=String(env.VISION_PROVIDER||'gemini').toLowerCase()==='gemini'&&geminiKey?new GeminiVisionProvider({apiKey:geminiKey,model:env.VISION_MODEL||env.GEMINI_VISION_MODEL||env.GEMINI_TEXT_MODEL||'gemini-3.8-flash',endpoint:geminiEndpoint}):undefined;const audioQualityProvider=String(env.AUDIO_QC_PROVIDER||'gemini').toLowerCase()==='gemini'&&geminiKey?new GeminiAudioQualityProvider({apiKey:geminiKey,model:env.AUDIO_QC_MODEL||env.GEMINI_TEXT_MODEL||'gemini-3.8-flash',endpoint:geminiEndpoint}):undefined;
 

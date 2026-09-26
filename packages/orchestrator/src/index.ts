@@ -175,10 +175,13 @@ export async function runContentPipeline(input: {
   minAttentionScore?: number;
   maxAttentionRevisionPasses?: number;
   sourceFootage?: SourceFootage[];
+  /** When enabled, every non-source visual beat must be a real video clip. */
+  videoOnly?: boolean;
 }): Promise<{ state: PipelineState; events: PipelineEvent[]; dossier?: ResearchDossier; manifest?: ProductionManifest; qa?: QaReport; attention?: AttentionReview; finalInspection?: FinalMediaInspection; renderUri?: string; externalId?: string }> {
   const events: PipelineEvent[] = [];
   const event = (state: PipelineState, message: string) => events.push({ at: new Date().toISOString(), state, message });
   const contentFormat = input.contentFormat ?? 'LONG_HORIZONTAL';
+  const videoOnly = input.videoOnly === true;
   const isVertical = contentFormat === 'SHORT_VERTICAL';
   const isCompact = contentFormat !== 'LONG_HORIZONTAL';
   const aspectRatio = isVertical ? '9:16' as const : '16:9' as const;
@@ -252,6 +255,10 @@ export async function runContentPipeline(input: {
 
     event('PLAN', `Planning ${aspectRatio} ${executionPlan.visualMode} timeline for attention pass ${attempt+1}`);
     draftScenes=planScenes(draftScript,{targetSceneDurationSec:adaptiveSceneDuration,sources:dossier.sources,sourceFootage:input.sourceFootage,visualMode:executionPlan.visualMode,generativeSpendBias:executionPlan.generativeSpendBias,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile,visualMixPolicy:'MIXED_MEDIA'});
+    if(videoOnly){
+      draftScenes=draftScenes.map((scene)=>scene.kind==='broll'?scene:{...scene,kind:'ai_video',generated:true,selectionReason:`VIDEO_ONLY contract: replaced ${scene.kind} with a generated moving shot.`});
+      event('PLAN','VIDEO_ONLY contract active: stills, charts, cards, text and procedural graphics are disabled inside the video.');
+    }
     const spendSoFar=Math.max(0,Number(input.additionalCostUsd?.() ?? input.model.getNonAssetCostUsd?.() ?? 0));
     const budgetFit=fitScenePlanToBudget({scenes:draftScenes,maxCostUsd:input.maxCostUsd,narrationSeconds:executionPlan.voiceRequired?input.targetDurationSec:0,voiceRequired:executionPlan.voiceRequired,fixedCostUsd:spendSoFar,isShort:isVertical,packagingCount:thumbnailVariantCount,imageAvailable:Boolean(input.imageProvider)});
     draftScenes=budgetFit.scenes;projectedCostUsd=budgetFit.projectedCostUsd;
@@ -308,6 +315,9 @@ export async function runContentPipeline(input: {
   const editorialCostPreMedia=Math.max(0,Number(input.additionalCostUsd?.() ?? input.model.getNonAssetCostUsd?.() ?? 0));
   const postVoiceBudget=fitScenePlanToBudget({scenes,maxCostUsd:input.maxCostUsd,narrationSeconds:voice?.durationSeconds??0,voiceRequired:executionPlan.voiceRequired,voiceCostUsd:Number(voice?.costUsd??0),fixedCostUsd:editorialCostPreMedia,isShort:isVertical,packagingCount:thumbnailVariantCount,imageAvailable:Boolean(input.imageProvider)});
   scenes=postVoiceBudget.scenes;projectedCostUsd=postVoiceBudget.projectedCostUsd;
+  if(videoOnly){
+    scenes=scenes.map((scene)=>scene.kind==='broll'?scene:{...scene,kind:'ai_video',generated:true,selectionReason:`VIDEO_ONLY contract: preserved as a generated moving shot after budget planning.`});
+  }
   if(postVoiceBudget.changed){
     event('PLAN',`Post-voice budget guard downgraded ${postVoiceBudget.downgrades.length} scene(s): ${postVoiceBudget.downgrades.join(', ')} · projected $${projectedCostUsd.toFixed(2)} / cap $${input.maxCostUsd.toFixed(2)}`);
     attention=reviewAttentionBlueprint({script,packaging,scenes,contentFormat,executionPlan,selectedPackagingId:packagingChoice.selected.id,minScore:minAttentionScore});
@@ -376,6 +386,7 @@ export async function runContentPipeline(input: {
       }catch(error){videoError=error;videoFallbackDisabled=true;}
       if(videoError||videoFallbackDisabled){
         const reason=String(videoError instanceof Error?videoError.message:videoError??'video provider disabled after an earlier failure').slice(0,240);
+        if(videoOnly)throw new Error(`VIDEO_ONLY_PROVIDER_FAILED:${scene.id}:${reason}`);
         if(!input.imageProvider)throw(videoError??new Error('Video fallback requires an image provider'));
         event('ASSETS',`Video unavailable for ${scene.id}; falling back to AI image plus local motion (${reason})`);
         const fallbackPrompt=`${visualPrompt} Produce one strong documentary keyframe for a local slow camera move. Preserve the subject, composition and visual meaning; no text, logos or watermarks.`;
