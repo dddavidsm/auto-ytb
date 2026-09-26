@@ -58,7 +58,10 @@ export function createLiveRuntime(env=process.env){
 
   let voice;const voiceMode=String(archetypeProfile?.voiceMode??'SINGLE_NARRATOR');
   if(voiceMode!=='NONE'){
-    const provider=String(env.VOICE_PROVIDER||'gemini').toLowerCase();
+    const requestedVoiceProvider=String(env.VOICE_PROVIDER||'gemini').toLowerCase();
+    const provider=requestedVoiceProvider==='auto'
+      ? (String(env.VOICE_API_KEY||env.ELEVENLABS_API_KEY||'').trim()?'elevenlabs':geminiKey?'gemini':'none')
+      : requestedVoiceProvider;
     if(provider==='gemini'){
       const voiceModel=env.VOICE_MODEL||'gemini-3.1-flash-tts-preview';
       const rawVoice=new GeminiVoiceProvider({apiKey:geminiKey||reqFrom(env,'GEMINI_API_KEY'),store,model:voiceModel,defaultVoice:env.GEMINI_VOICE_ID||env.VOICE_ID||'Kore',endpoint:geminiEndpoint});
@@ -66,7 +69,8 @@ export function createLiveRuntime(env=process.env){
       const metered=withGeminiAlignmentMeter(meterVoiceProvider(aligned,meter,{model:voiceModel}),meter);voice=bindDialogueVoiceProviderToSeries(metered,seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
     }else if(provider==='elevenlabs'){
       const voiceModel=env.VOICE_MODEL||'eleven_multilingual_v2';const voiceApiKey=String(env.VOICE_API_KEY||env.ELEVENLABS_API_KEY||'').trim();if(!voiceApiKey)throw new Error('Missing required environment variable VOICE_API_KEY (or ELEVENLABS_API_KEY)');const rawVoice=new ElevenLabsVoiceProvider({apiKey:voiceApiKey,store,modelId:voiceModel,useTimestamps:env.VOICE_TIMESTAMPS!=='false'});const controlled=withElevenLabsVoiceControls(rawVoice,{apiKey:voiceApiKey,store,modelId:voiceModel});voice=bindDialogueVoiceProviderToSeries(meterVoiceProvider(controlled,meter,{model:voiceModel}),seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
-    }else throw new Error(`Unsupported VOICE_PROVIDER: ${provider}`);
+    }else if(provider==='none')throw new Error('No voice provider is configured: set ELEVENLABS_API_KEY (preferred) or GEMINI_API_KEY');
+    else throw new Error(`Unsupported VOICE_PROVIDER: ${provider}`);
   }
 
   let image;let video;const imageProvider=String(env.IMAGE_PROVIDER||'gemini').toLowerCase();const videoProvider=String(env.VIDEO_PROVIDER||'gemini').toLowerCase();

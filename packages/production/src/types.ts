@@ -225,4 +225,5 @@ export type ProductionManifest = {
   estimatedCostUsd: number;
   actualCostUsd: number;
   containsSyntheticMedia: boolean;
+  finalMediaPolicy?: 'VIDEO_ONLY' | 'MIXED_MEDIA';
 };

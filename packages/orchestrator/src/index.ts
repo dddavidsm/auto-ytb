@@ -177,6 +177,9 @@ export async function runContentPipeline(input: {
   sourceFootage?: SourceFootage[];
   /** When enabled, every non-source visual beat must be a real video clip. */
   videoOnly?: boolean;
+  /** When enabled, every scene must use an authorized moving source clip. */
+  sourcedOnly?: boolean;
+  visualMixPolicy?: 'MIXED_MEDIA' | 'SOURCE_FIRST';
 }): Promise<{ state: PipelineState; events: PipelineEvent[]; dossier?: ResearchDossier; manifest?: ProductionManifest; qa?: QaReport; attention?: AttentionReview; finalInspection?: FinalMediaInspection; renderUri?: string; externalId?: string }> {
   const events: PipelineEvent[] = [];
   const event = (state: PipelineState, message: string) => events.push({ at: new Date().toISOString(), state, message });
@@ -254,7 +257,14 @@ export async function runContentPipeline(input: {
     draftScript=ensureOpeningPromise({script:draftScript,packaging,selectedPackagingId:packagingChoice.selected.id,contentFormat,visualAction:executionPlan.scriptMode==='VISUAL_ACTION'});
 
     event('PLAN', `Planning ${aspectRatio} ${executionPlan.visualMode} timeline for attention pass ${attempt+1}`);
-    draftScenes=planScenes(draftScript,{targetSceneDurationSec:adaptiveSceneDuration,sources:dossier.sources,sourceFootage:input.sourceFootage,visualMode:executionPlan.visualMode,generativeSpendBias:executionPlan.generativeSpendBias,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile,visualMixPolicy:'MIXED_MEDIA'});
+    draftScenes=planScenes(draftScript,{targetSceneDurationSec:adaptiveSceneDuration,sources:dossier.sources,sourceFootage:input.sourceFootage,visualMode:executionPlan.visualMode,generativeSpendBias:executionPlan.generativeSpendBias,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile,visualMixPolicy:input.visualMixPolicy??'MIXED_MEDIA'});
+    if(input.sourcedOnly){
+      const uncovered=draftScenes.filter((scene)=>scene.kind!=='broll').map((scene)=>scene.id);
+      if(uncovered.length){
+        event('BLOCKED',`SOURCED_ONLY_INSUFFICIENT_FOOTAGE: ${uncovered.length} scene(s) have no authorized moving source coverage (${uncovered.slice(0,8).join(', ')})`);
+        return{state:'BLOCKED',events,dossier,attention};
+      }
+    }
     if(videoOnly){
       draftScenes=draftScenes.map((scene)=>scene.kind==='broll'?scene:{...scene,kind:'ai_video',generated:true,selectionReason:`VIDEO_ONLY contract: replaced ${scene.kind} with a generated moving shot.`});
       event('PLAN','VIDEO_ONLY contract active: stills, charts, cards, text and procedural graphics are disabled inside the video.');
@@ -413,7 +423,7 @@ export async function runContentPipeline(input: {
   const manifest: ProductionManifest = {
     projectId:input.projectId,createdAt:new Date().toISOString(),contentFormat,aspectRatio,frame,
     contentArchetype:{version:1,id:String(contentArchetype?.archetype??profile.id??executionPlan.archetypeId),label:String(profile.label??contentArchetype?.archetype??executionPlan.archetypeId),confidence:Number(contentArchetype?.confidence??0),reasons:contentArchetype?.reasons??[],voiceMode:executionPlan.voiceMode,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile,syntheticDisclosurePolicy:executionPlan.syntheticDisclosurePolicy,profile},
-    executionPlan,script,packaging,thumbnails,selectedPackagingId:packagingChoice.selected.id,packagingSelection:{mode:packagingChoice.mode,explorationRate:packagingChoice.explorationRate,scores:packagingChoice.scores},scenes,assets,sourceFootage:input.sourceFootage,voice,estimatedCostUsd,actualCostUsd:editorialCostUsd+mediaCostUsd,containsSyntheticMedia:scenes.some((scene)=>scene.generated)||assets.some((asset)=>asset.generated)
+    executionPlan,script,packaging,thumbnails,selectedPackagingId:packagingChoice.selected.id,packagingSelection:{mode:packagingChoice.mode,explorationRate:packagingChoice.explorationRate,scores:packagingChoice.scores},scenes,assets,sourceFootage:input.sourceFootage,voice,estimatedCostUsd,actualCostUsd:editorialCostUsd+mediaCostUsd,containsSyntheticMedia:scenes.some((scene)=>scene.generated)||assets.some((asset)=>asset.generated),finalMediaPolicy:videoOnly?'VIDEO_ONLY':'MIXED_MEDIA'
   };
   event('PLAN', `Metered pre-render spend $${manifest.actualCostUsd.toFixed(4)} · conservative plan $${manifest.estimatedCostUsd.toFixed(4)} · editorial $${editorialCostUsd.toFixed(4)} · media $${mediaCostUsd.toFixed(4)} · cap $${input.maxCostUsd.toFixed(2)}`);
   if(Math.max(manifest.actualCostUsd,manifest.estimatedCostUsd)>input.maxCostUsd){event('BLOCKED',`Hard cost guard tripped before render: $${Math.max(manifest.actualCostUsd,manifest.estimatedCostUsd).toFixed(2)} / $${input.maxCostUsd.toFixed(2)}`);return{state:'BLOCKED',events,dossier,manifest,attention};}

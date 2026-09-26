@@ -1,8 +1,11 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import { runContentPipeline } from '@auto-ytb/orchestrator';
-import { selectStructuralExperiment } from '@auto-ytb/production';
+import { searchPexelsVideo, searchPixabayVideo, searchWikimediaVideo, selectStructuralExperiment } from '@auto-ytb/production';
+import { inferContentArchetype } from '@auto-ytb/os';
 import { ResearchRepository, ScriptRepository, ProductionRepository, PublicationRepository } from '@auto-ytb/persistence';
 import { createLiveRuntime } from '../packages/runtime-node/factory.mjs';
 import { buildCreativeLearningGuidance } from './lib/creative-guidance.mjs';
@@ -28,7 +31,108 @@ const channel=JSON.parse(await readFile(configPath,'utf8'));
 const requestedFormat=String(arg('format',channel.preferredFormat==='SHORT_VERTICAL'?'SHORT_VERTICAL':'LONG_HORIZONTAL')).toUpperCase();
 const contentFormat=['SHORT_VERTICAL','SHORT_HORIZONTAL'].includes(requestedFormat)?requestedFormat:'LONG_HORIZONTAL';
 const isShort=contentFormat!=='LONG_HORIZONTAL';
+const requestedProductionMode=String(process.env.AUTO_YTB_PRODUCTION_MODE||'AUTO').trim().toUpperCase();
+const channelNiche=[channel.id,channel.positioning,...(channel.themes??[]),...(channel.channelType==='UMBRELLA_OPPORTUNITY_DRIVEN'?['documentary','explainer','factual','research','evidence-led']:[])].filter(Boolean).join(' ');
+const routedArchetype=inferContentArchetype({topic,contentFormat,channelNiche});
+const sourceFirst=Boolean(sourceFootage?.length)
+  || requestedProductionMode==='SOURCE_FIRST'
+  || (requestedProductionMode==='AUTO'
+    && routedArchetype?.profile?.researchRequired!==false
+    && routedArchetype?.profile?.requiresCanonicalCast!==true
+    && routedArchetype?.profile?.realityMode!=='REALISTIC_SYNTHETIC');
+const sourcedOnly=sourceFirst && (requestedProductionMode==='AUTO'||requestedProductionMode==='SOURCE_FIRST'||Boolean(sourceFootagePath));
 console.log(`[live-pipeline] start format=${contentFormat} topic=${topic.slice(0,120)}`);
+
+const sourceDiscovery={mode:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',requestedMode:requestedProductionMode,queries:[],providers:[],selected:[],failed:[]};
+const sourceFootageCacheRoot=resolve(process.env.LOCAL_STORAGE_ROOT||'.data/storage','source-cache');
+const safeFilePart=(value)=>String(value||'source').replace(/[^a-z0-9._-]+/gi,'-').slice(0,80)||'source';
+const extensionFor=(candidate)=>{
+  const mime=String(candidate?.metadata?.mime||'').toLowerCase();
+  if(mime.includes('webm'))return 'webm';
+  if(mime.includes('quicktime'))return 'mov';
+  return 'mp4';
+};
+async function cacheMovingVideo(candidate){
+  const downloadUrl=String(candidate?.metadata?.downloadUrl||'').trim();
+  if(!downloadUrl)throw new Error(`Source candidate ${candidate?.id||'unknown'} has no download URL`);
+  const digest=createHash('sha256').update(`${candidate.sourceKey||candidate.id}|${downloadUrl}`).digest('hex').slice(0,24);
+  const dir=resolve(sourceFootageCacheRoot,digest);
+  const localPath=resolve(dir,`${safeFilePart(candidate.id)}.${extensionFor(candidate)}`);
+  let info;
+  try{info=await stat(localPath);}catch{info=null;}
+  if(!info?.isFile()||info.size<1024){
+    const response=await fetch(downloadUrl,{headers:{'user-agent':'AUTO-YTB/1.0 rights-aware footage cache'}});
+    if(!response.ok)throw new Error(`Source download failed ${response.status} for ${candidate.id}`);
+    const contentLength=Number(response.headers.get('content-length')||0);
+    if(contentLength>180*1024*1024)throw new Error(`Source candidate ${candidate.id} exceeds 180 MB safety limit`);
+    const bytes=new Uint8Array(await response.arrayBuffer());
+    if(bytes.byteLength<1024)throw new Error(`Source candidate ${candidate.id} returned an empty media file`);
+    await mkdir(dir,{recursive:true});
+    await writeFile(localPath,bytes);
+    info=await stat(localPath);
+  }
+  return {localPath,uri:pathToFileURL(localPath).toString(),size:info.size,digest};
+}
+async function discoverMovingSourceFootage(){
+  const queries=[topic,`${topic} real video footage`,`${topic} process demonstration`].map((value)=>String(value).replace(/\s+/g,' ').trim()).filter(Boolean).filter((value,index,array)=>array.indexOf(value)===index).slice(0,3);
+  sourceDiscovery.queries=queries;
+  const providers=[
+    ['Pexels',searchPexelsVideo],
+    ['Pixabay',searchPixabayVideo],
+    ['Wikimedia Commons',searchWikimediaVideo],
+  ];
+  const raw=[];
+  for(const query of queries){
+    const results=await Promise.all(providers.map(async([name,search])=>{
+      try{
+        const result=await search(query,{orientation:isShort?'portrait':undefined,limit:20,perPage:20});
+        sourceDiscovery.providers.push({provider:result.provider||name,query,capability:result.capability,totalResults:result.totalResults??null});
+        return result;
+      }catch(error){
+        sourceDiscovery.failed.push({provider:name,query,error:String(error?.message||error).slice(0,240)});
+        return null;
+      }
+    }));
+    raw.push(...results.filter(Boolean).flatMap((result)=>result.candidates||[]));
+  }
+  const seen=new Set();
+  const eligible=raw.filter((candidate)=>{
+    const key=String(candidate.sourceKey||candidate.visualFingerprint||candidate.id);
+    const duration=Number(candidate.usableDurationSeconds??candidate.durationSeconds??0);
+    const rights=['PUBLISHABLE_CONFIRMED','PUBLISHABLE_WITH_ATTRIBUTION'].includes(String(candidate.rightsTier));
+    if(seen.has(key)||!rights||duration<3||!candidate?.metadata?.downloadUrl)return false;
+    seen.add(key);return true;
+  }).sort((a,b)=>{
+    const rightsScore=(candidate)=>String(candidate.rightsTier)==='PUBLISHABLE_CONFIRMED'?2:1;
+    return rightsScore(b)-rightsScore(a)
+      || Number(b.width||0)*Number(b.height||0)-Number(a.width||0)*Number(a.height||0)
+      || Number(b.usableDurationSeconds||b.durationSeconds||0)-Number(a.usableDurationSeconds||a.durationSeconds||0);
+  }).slice(0,Number(process.env.SOURCE_FOOTAGE_MAX_CLIPS||24));
+  for(const candidate of eligible){
+    try{
+      const cached=await cacheMovingVideo(candidate);
+      const remote=await mirrorFile(cached.uri,`source-cache/${cached.digest}.${extensionFor(candidate)}`,String(candidate?.metadata?.mime||'video/mp4'));
+      const duration=Number(candidate.usableDurationSeconds??candidate.durationSeconds??0);
+      const license=String(candidate?.metadata?.license||`${candidate.provider} ${candidate.rightsTier}; attribution required`).replace(/\s+/g,' ').trim();
+      const footage={id:`discovered-${safeFilePart(candidate.id)}`,uri:cached.uri,title:String(candidate?.metadata?.title||candidate.id),sourceUrl:String(candidate.sourceUrl||candidate?.metadata?.sourceUrl||''),sourceId:String(candidate.sourceKey||candidate.id),license,rightsStatus:'CLEARED',startSec:0,...(duration>0?{endSec:duration}:{}),cropMode:'CENTER'};
+      sourceFootage.push(footage);
+      sourceDiscovery.selected.push({id:footage.id,provider:candidate.provider,sourceKey:candidate.sourceKey||candidate.id,title:footage.title,sourceUrl:footage.sourceUrl,license,localBytes:cached.size,remoteKey:remote?.key??null});
+    }catch(error){
+      sourceDiscovery.failed.push({provider:candidate.provider,id:candidate.id,error:String(error?.message||error).slice(0,240)});
+    }
+  }
+  await mkdir(resolve(sourceFootageCacheRoot),{recursive:true});
+  await writeFile(resolve(sourceFootageCacheRoot,`discovery-${createHash('sha256').update(`${topic}|${Date.now()}`).digest('hex').slice(0,16)}.json`),JSON.stringify(sourceDiscovery,null,2));
+  if(!sourceFootage.length)throw new Error('SOURCE_FIRST_NO_PUBLISHABLE_FOOTAGE: no se encontró ningún clip de vídeo en movimiento con derechos publicables y descarga válida');
+}
+if(!Array.isArray(sourceFootage))sourceFootage=[];
+if(sourceFootage.length){
+  sourceDiscovery.selected=sourceFootage.map((clip)=>({id:clip.id,provider:'supplied',sourceKey:clip.sourceId??clip.id,title:clip.title??clip.id,sourceUrl:clip.sourceUrl??null,license:clip.license,rightsStatus:clip.rightsStatus}));
+}
+if(sourceFirst&&!sourceFootage.length)await discoverMovingSourceFootage();
+if(sourceFirst){
+  sourceFootageGuidance=[sourceFootageGuidance,'SOURCE-FIRST EDITORIAL CONTRACT: use only authorized moving video clips matched to the beats; no stills, slides, charts, source cards, generated images, fake motion or synthetic filler; block the run when a beat lacks moving-footage coverage.'].filter(Boolean).join('\n');
+}
 
 function archiveProductionRun(runId, channelConfigPath){
   return new Promise((resolveArchive,rejectArchive)=>{
@@ -42,7 +146,7 @@ function archiveProductionRun(runId, channelConfigPath){
 }
 // Content-archetype inference must see the selected channel domain. Without this context a
 // factual AI/business opportunity can fall through to GENERAL_STORY (creative fiction).
-const runtimeEnv={...process.env,AUTO_YTB_CONTENT_TOPIC:topic,AUTO_YTB_CONTENT_FORMAT:contentFormat,AUTO_YTB_CHANNEL_NICHE:[channel.id,channel.positioning,...(channel.themes??[]),...(channel.channelType==='UMBRELLA_OPPORTUNITY_DRIVEN'?['documentary','explainer','factual','research','evidence-led']:[])].filter(Boolean).join(' ')};
+const runtimeEnv={...process.env,AUTO_YTB_CONTENT_TOPIC:topic,AUTO_YTB_CONTENT_FORMAT:contentFormat,AUTO_YTB_CHANNEL_NICHE:channelNiche,...(sourceFirst?{VIDEO_PROVIDER:'none',...(isShort?{IMAGE_PROVIDER:'none'}:{})}:{}),AUTO_YTB_PRODUCTION_MODE:requestedProductionMode};
 const runtime=createLiveRuntime(runtimeEnv);
 if(!runtime.db)throw new Error('DATABASE_URL is required for live pipeline durability');
 console.log(`[live-pipeline] runtime ready archetype=${runtime.archetypeDecision?.archetype??'unknown'} db=ready`);
@@ -125,18 +229,18 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   const arm=structuralExperiment.selected,durationBounds=isShort?{min:20,max:180}:{min:480,max:900},sceneBounds=isShort?{min:2.5,max:8}:{min:5,max:16},costFloor=isShort?2:8;
   const productionProfile={...learnedProfile,targetDurationSec:Math.round(Math.max(durationBounds.min,Math.min(durationBounds.max,learnedProfile.targetDurationSec*arm.targetDurationFactor))),targetSceneDurationSec:Math.round(Math.max(sceneBounds.min,Math.min(sceneBounds.max,learnedProfile.targetSceneDurationSec*arm.targetSceneDurationFactor))*10)/10,maxCostUsd:Math.round(Math.max(costFloor,Math.min(baseMaxCostUsd*1.25,learnedProfile.maxCostUsd*arm.maxCostFactor))*100)/100,scriptGuidance:[learnedProfile.scriptGuidance,arm.scriptGuidance].filter(Boolean).join('\n')||undefined,structuralExperiment,structuralLearning,creativeLearning,contentFormat,contentArchetype:runtime.archetypeDecision?.archetype??null};
   const productionRepo=new ProductionRepository(db);
-  productionRunId=await productionRepo.createRun({contentIdeaId,state:runtime.archetypeProfile?.researchRequired===false?'SCRIPT':'RESEARCH',metadata:{topic,channelConfig:channel.id,channelKey,opportunityId,contentFormat,contentArchetype:runtime.archetypeDecision??null,packagingGuidance:packagingGuidance??null,productionProfile,packagingLearning,structuralLearning,creativeLearning,structuralExperiment}});
+  productionRunId=await productionRepo.createRun({contentIdeaId,state:runtime.archetypeProfile?.researchRequired===false?'SCRIPT':'RESEARCH',metadata:{topic,channelConfig:channel.id,channelKey,opportunityId,contentFormat,contentArchetype:runtime.archetypeDecision??null,packagingGuidance:packagingGuidance??null,productionProfile,packagingLearning,structuralLearning,creativeLearning,structuralExperiment,productionRouting:{requestedMode:requestedProductionMode,sourceFirst,sourcedOnly,archetype:routedArchetype?.archetype??null},sourceDiscovery}});
 
-  const activeVoiceProvider=String(process.env.VOICE_PROVIDER||'gemini').toLowerCase();
+  const activeVoiceProvider=String(runtime.voice?.name||process.env.VOICE_PROVIDER||'gemini').toLowerCase().includes('eleven')?'elevenlabs':'gemini';
   const configuredVoiceProvider=String(channel.voiceProfile?.provider||'').toLowerCase();
   const providerVoiceId=activeVoiceProvider==='elevenlabs'?process.env.ELEVENLABS_VOICE_ID:activeVoiceProvider==='gemini'?process.env.GEMINI_VOICE_ID:null;
   const voiceId=providerVoiceId||process.env.VOICE_ID||(configuredVoiceProvider===activeVoiceProvider?channel.voiceProfile?.voiceId:null)||(activeVoiceProvider==='gemini'?'Kore':channel.voiceProfile?.voiceId||channel.voice);
-  const result=await runContentPipeline({projectId:productionRunId,topic,language:channel.language,contentFormat,targetDurationSec:productionProfile.targetDurationSec,targetSceneDurationSec:productionProfile.targetSceneDurationSec,voice:voiceId,maxCostUsd:productionProfile.maxCostUsd,search:runtime.search,model:runtime.model,voiceProvider:runtime.voice,imageProvider:runtime.image,videoProvider:runtime.video,thumbnailComposer:runtime.thumbnailComposer,store:runtime.store,renderer:runtime.renderer,publisher:runtime.publisher,contentArchetype:runtime.archetypeDecision,autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE==='true',videoOnly:String(process.env.AUTO_YTB_VIDEO_ONLY||'false').toLowerCase()==='true',packagingGuidance:[packagingGuidance,creativeLearning.guidance].filter(Boolean).join('\n')||undefined,scriptGuidance:[productionProfile.scriptGuidance,sourceFootageGuidance].filter(Boolean).join('\n')||undefined,packagingLearning,sourceFootage,additionalCostUsd:()=>runtime.meter?.nonAssetCostUsd??0,minAttentionScore:Number(process.env.MIN_ATTENTION_SCORE||86),maxAttentionRevisionPasses:Number(process.env.MAX_ATTENTION_REVISION_PASSES||2)});
+  const result=await runContentPipeline({projectId:productionRunId,topic,language:channel.language,contentFormat,targetDurationSec:productionProfile.targetDurationSec,targetSceneDurationSec:productionProfile.targetSceneDurationSec,voice:voiceId,maxCostUsd:productionProfile.maxCostUsd,search:runtime.search,model:runtime.model,voiceProvider:runtime.voice,imageProvider:runtime.image,videoProvider:runtime.video,thumbnailComposer:runtime.thumbnailComposer,store:runtime.store,renderer:runtime.renderer,publisher:runtime.publisher,contentArchetype:runtime.archetypeDecision,autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE==='true',videoOnly:String(process.env.AUTO_YTB_VIDEO_ONLY||'false').toLowerCase()==='true',sourcedOnly,visualMixPolicy:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',packagingGuidance:[packagingGuidance,creativeLearning.guidance].filter(Boolean).join('\n')||undefined,scriptGuidance:[productionProfile.scriptGuidance,sourceFootageGuidance].filter(Boolean).join('\n')||undefined,packagingLearning,sourceFootage,additionalCostUsd:()=>runtime.meter?.nonAssetCostUsd??0,minAttentionScore:Number(process.env.MIN_ATTENTION_SCORE||86),maxAttentionRevisionPasses:Number(process.env.MAX_ATTENTION_REVISION_PASSES||2)});
 
   const durableCost=Math.max(Number(result.manifest?.actualCostUsd??0),Number(runtime.meter?.totalCostUsd??0));
   const remoteRender = await mirrorFile(result.renderUri, `projects/${productionRunId}/final.mp4`, 'video/mp4');
   const renderPersistence = { renderUri: result.renderUri, remoteMediaKey: remoteRender?.key ?? null, remoteMediaUrl: remoteRender?.url ?? null };
-  await productionRepo.updateRun(productionRunId,{state:result.state,totalCostUsd:durableCost,metadata:{events:result.events,...renderPersistence,finalInspection:result.finalInspection??null,attention:result.attention??null,qaBlockers:result.qa?.blockers??[],opportunityId,contentFormat,contentArchetype:result.manifest?.contentArchetype??runtime.archetypeDecision??null,executionPlan:result.manifest?.executionPlan??null,packagingGuidance:packagingGuidance??null,productionProfile,packagingLearning,structuralLearning,creativeLearning,packagingSelection:result.manifest?.packagingSelection??null,structuralExperiment,meter:runtime.meter?.snapshot?.()??null}});
+  await productionRepo.updateRun(productionRunId,{state:result.state,totalCostUsd:durableCost,metadata:{events:result.events,...renderPersistence,finalInspection:result.finalInspection??null,attention:result.attention??null,qaBlockers:result.qa?.blockers??[],opportunityId,contentFormat,contentArchetype:result.manifest?.contentArchetype??runtime.archetypeDecision??null,executionPlan:result.manifest?.executionPlan??null,packagingGuidance:packagingGuidance??null,productionProfile,packagingLearning,structuralLearning,creativeLearning,packagingSelection:result.manifest?.packagingSelection??null,structuralExperiment,meter:runtime.meter?.snapshot?.()??null,productionRouting:{requestedMode:requestedProductionMode,sourceFirst,sourcedOnly,archetype:routedArchetype?.archetype??null},sourceDiscovery}});
   let researchDossierId=null;
   if(result.dossier)researchDossierId=await new ResearchRepository(db).create({opportunityId,topic,researchConfidence:result.dossier.researchConfidence,executiveSummary:result.dossier.executiveSummary,blockingIssues:result.dossier.blockingIssues,dossier:result.dossier});
   if(result.manifest?.script){

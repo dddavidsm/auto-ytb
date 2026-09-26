@@ -49,6 +49,7 @@
   "vars": {
     "REAL_GENERATION_ENABLED": "false",
     "AUTO_YTB_VIDEO_ONLY": "true",
+    "AUTO_YTB_PRODUCTION_MODE": "AUTO",
     "AUTO_UPLOAD_PRIVATE": "false",
     "AUTO_YTB_RUNTIME_REVISION": "2026-09-25T04:48:18Z",
     "RUN_BACKGROUND_WORKERS": "true",
@@ -62,7 +63,7 @@
     "TEXT_MODEL_CREATIVE": "gemini-3.8-flash",
     "TEXT_MODEL_VISION": "gemini-3.8-flash",
     "GEMINI_TEXT_MODEL": "gemini-3.8-flash",
-    "VOICE_PROVIDER": "gemini",
+    "VOICE_PROVIDER": "auto",
     "VOICE_ID": "Kore",
     "GEMINI_VOICE_ID": "Kore",
     "VOICE_MODEL": "gemini-3.1-flash-tts-preview",

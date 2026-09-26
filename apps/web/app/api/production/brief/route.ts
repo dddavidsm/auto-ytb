@@ -26,8 +26,10 @@ export async function POST(request: Request) {
   const requestedFormat = typeof body?.format === 'string' ? body.format.toUpperCase() : '';
   const opportunityId = safeText(body?.opportunityId, '', 80);
   const contentFormat = requestedFormat === 'SHORT_VERTICAL' || requestedFormat === 'LONG_HORIZONTAL' ? requestedFormat : inferFormat(prompt);
-  const requestedMode = safeText(body?.productionMode, 'full-generative', 40).toLowerCase();
-  const videoOnly = body?.videoOnly !== false;
+  const requestedMode = safeText(body?.productionMode, 'AUTO', 40).toUpperCase();
+  // AUTO-YTB is a video product: never accept a request that silently permits
+  // stills, slides or generated-image filler inside the final video.
+  const videoOnly = true;
   const aspectRatio = safeText(body?.aspectRatio, contentFormat === 'SHORT_VERTICAL' ? '9:16' : '16:9', 10);
   const durationSec = Math.max(10, Math.min(3600, Math.round(Number(body?.durationSec) || (contentFormat === 'SHORT_VERTICAL' ? 45 : 180))));
   const qualityMode = safeText(body?.qualityMode, 'MAX_QUALITY', 40).toUpperCase();
