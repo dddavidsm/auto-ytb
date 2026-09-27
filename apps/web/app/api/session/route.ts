@@ -8,7 +8,8 @@ export async function POST(request:Request){
   let token='';
   if(contentType.includes('application/json')){const body=await request.json().catch(()=>({}));token=String(body?.token??'');}
   else{const form=await request.formData();token=String(form.get('token')??'');}
-  if(!verifyControlToken(token))return NextResponse.json({ok:false,error:'Invalid credentials'},{status:401,headers:{'Cache-Control':'no-store'}});
+  const workerAuthorized=request.headers.get('x-auto-ytb-control-authorized')==='1';
+  if(!workerAuthorized&&!verifyControlToken(token))return NextResponse.json({ok:false,error:'Invalid credentials'},{status:401,headers:{'Cache-Control':'no-store'}});
   await setSessionCookie({auth:'token'});
   return NextResponse.json({ok:true},{headers:{'Cache-Control':'no-store'}});
 }

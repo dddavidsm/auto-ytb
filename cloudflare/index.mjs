@@ -93,6 +93,13 @@ export default {
     const currentEnv = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, workerEnv[name] ?? productionEnv[name]]));
     await instance.start({ envVars: currentEnv });
     const headers = new Headers(request.headers);
+    headers.delete('x-auto-ytb-control-authorized');
+    if (url.pathname === '/api/session' && request.method === 'POST') {
+      const body = await request.clone().json().catch(() => ({}));
+      const supplied = String(body?.token || '');
+      const expected = String(workerEnv.CONTROL_PLANE_TOKEN || '');
+      if (expected && supplied === expected) headers.set('x-auto-ytb-control-authorized', '1');
+    }
     headers.set('x-auto-ytb-public-origin', url.origin);
     return instance.fetch(new Request(request, { headers }));
   },
