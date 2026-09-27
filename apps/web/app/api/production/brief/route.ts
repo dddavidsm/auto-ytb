@@ -50,7 +50,7 @@ export async function POST(request: Request) {
       let productionAngle = prompt;
       let productionFormat = contentFormat;
       if (opportunityId) {
-        opportunity = (await client.query(`select o.id,o.topic_id,o.angle,o.recommended_format,o.signals,t.canonical_name from opportunities o left join topics t on t.id=o.topic_id where o.id=$1 for update`, [opportunityId])).rows[0];
+        opportunity = (await client.query(`select o.id,o.topic_id,o.angle,o.recommended_format,o.signals,t.canonical_name from opportunities o left join topics t on t.id=o.topic_id where o.id=$1 for update of o`, [opportunityId])).rows[0];
         if (!opportunity) throw new Error('La idea seleccionada ya no existe.');
         productionTopic = String(opportunity.canonical_name || prompt).slice(0, 240);
         productionAngle = String(opportunity.angle || prompt).slice(0, 1200);
