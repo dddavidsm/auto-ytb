@@ -13,20 +13,30 @@ function textFromResponse(json:any):string{
 
 export class GeminiGenerateContentTextModel implements TextModel{
   readonly name:string;
-  constructor(private readonly options:{apiKey:string;model:string;endpoint?:string;fetchFn?:typeof fetch}){this.name=`gemini:${options.model}`;}
+  constructor(private readonly options:{apiKey:string;model:string;endpoint?:string;fetchFn?:typeof fetch;timeoutMs?:number}){this.name=`gemini:${options.model}`;}
   async generateJson<T>(input:{system:string;prompt:string;schemaName:string;temperature?:number}):Promise<{value:T;usage?:Usage}>{
     const schema=SCHEMAS[input.schemaName];if(!schema)throw new Error(`No built-in JSON schema for ${input.schemaName}`);
     const fetchFn=this.options.fetchFn??fetch;
     const base=(this.options.endpoint??'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/,'');
-    const response=await fetchFn(`${base}/models/${encodeURIComponent(this.options.model)}:generateContent`,{
-      method:'POST',
-      headers:{'x-goog-api-key':this.options.apiKey,'content-type':'application/json'},
-      body:JSON.stringify({
-        systemInstruction:{parts:[{text:input.system}]},
-        contents:[{role:'user',parts:[{text:input.prompt}]}],
-        generationConfig:{responseMimeType:'application/json',responseJsonSchema:schema,...(Number.isFinite(input.temperature)?{temperature:input.temperature}:{})}
-      })
-    });
+    const controller=new AbortController();
+    const timeoutMs=Math.max(15_000,Number(this.options.timeoutMs??180_000));
+    const timer=setTimeout(()=>controller.abort(),timeoutMs);
+    let response:Response;
+    try{
+      response=await fetchFn(`${base}/models/${encodeURIComponent(this.options.model)}:generateContent`,{
+        method:'POST',
+        headers:{'x-goog-api-key':this.options.apiKey,'content-type':'application/json'},
+        body:JSON.stringify({
+          systemInstruction:{parts:[{text:input.system}]},
+          contents:[{role:'user',parts:[{text:input.prompt}]}],
+          generationConfig:{responseMimeType:'application/json',responseJsonSchema:schema,...(Number.isFinite(input.temperature)?{temperature:input.temperature}:{})}
+        }),
+        signal:controller.signal,
+      });
+    }catch(error){
+      if(controller.signal.aborted)throw new Error(`Gemini generateContent timed out after ${timeoutMs}ms`);
+      throw error;
+    }finally{clearTimeout(timer);}
     if(!response.ok)throw new Error(`Gemini generateContent failed ${response.status}: ${(await response.text()).slice(0,800)}`);
     const json=await response.json() as any;
     const parsed=JSON.parse(textFromResponse(json));
