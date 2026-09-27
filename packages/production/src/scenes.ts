@@ -152,12 +152,21 @@ function sourceMatchScore(beat:ScriptBeat, clip:SourceFootage):number {
     [/wind|solar|renewable|turbine|power plant/,/wind|solar|renewable|turbine|power plant/,5],
   ];
   let score=0;
+  let beatHasSpecificVisual=false;
   for(const [beatPattern,clipPattern,weight] of groups){
-    if(beatPattern.test(beatText)&&clipPattern.test(title))score+=weight;
+    if(beatPattern.test(beatText)){
+      beatHasSpecificVisual=true;
+      if(clipPattern.test(title))score+=weight;
+    }
   }
   const beatWords=new Set(beatText.replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter((word)=>word.length>=6));
   const titleWords=new Set(title.replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter((word)=>word.length>=6));
   for(const word of beatWords)if(titleWords.has(word))score+=1;
+  // Abstract documentary beats still need moving proof. If they name no
+  // concrete visual subject, use the strongest same-domain clip as context;
+  // explicit subjects (battery, server, etc.) remain strict and cannot fall
+  // back to an unrelated object.
+  if(score===0&&!beatHasSpecificVisual&&/wind|solar|turbine|grid|transmission|substation|transformer|utility|power|electric|energy|data center|server/i.test(title))score=1;
   return score;
 }
 
