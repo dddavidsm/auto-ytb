@@ -451,8 +451,13 @@ export class FfmpegRenderer {
         // stable CFR output so every clip starts on the intended motion.
          const sourceDuration = await this.probeDuration(source);
          const availableDuration = Math.max(0, (clipEnd ?? sourceDuration) - clipStart);
-         if (availableDuration + 0.05 < duration) throw new Error(`RENDER_PLAN_INVALID: scene ${scene.id} requests ${duration.toFixed(3)}s but source provides ${availableDuration.toFixed(3)}s`);
-         const inputArgs = ['-y','-i',source];
+         const sourceBacked = asset?.provider === 'user-source-footage';
+         const repeatMovingSource = sourceBacked && availableDuration + 0.05 < duration;
+         if (availableDuration + 0.05 < duration && !repeatMovingSource) throw new Error(`RENDER_PLAN_INVALID: scene ${scene.id} requests ${duration.toFixed(3)}s but source provides ${availableDuration.toFixed(3)}s`);
+         // A short, rights-cleared moving source may be reused to cover a
+         // longer narration beat. This repeats real motion only; it never
+         // substitutes a still, zoom, shake or procedural placeholder.
+         const inputArgs = repeatMovingSource ? ['-y','-stream_loop','-1','-i',source] : ['-y','-i',source];
         if (clipStart > 0) inputArgs.push('-ss',String(clipStart));
         inputArgs.push('-t',String(duration),'-vf',`${videoFilter},setpts=PTS-STARTPTS`,'-fps_mode','cfr','-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast','-avoid_negative_ts','make_zero',clip);
         await run(this.ffmpeg, inputArgs);

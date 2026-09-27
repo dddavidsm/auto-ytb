@@ -394,10 +394,11 @@ export async function runContentPipeline(input: {
       const plannedUses=Math.max(1,sourceWindowCount.get(footage.id)??1);
       const available=baseEnd==null?null:Math.max(0,baseEnd-baseStart);
       const slotSize=available==null?0:available/plannedUses;
-      const clipStartSec=available==null?baseStart:baseStart+usage*slotSize;
-      const clipEndSec=baseEnd==null?null:Math.min(baseEnd,clipStartSec+Math.max(0.2,Math.min(shotDuration,slotSize)));
+      const sourceFirstReuse=Boolean(input.sourcedOnly);
+      const clipStartSec=sourceFirstReuse||available==null?baseStart:baseStart+usage*slotSize;
+      const clipEndSec=baseEnd==null?null:sourceFirstReuse?baseEnd:Math.min(baseEnd,clipStartSec+Math.max(0.2,Math.min(shotDuration,slotSize)));
       sourceWindowUse.set(footage.id,usage+1);
-      assets.push({id:`footage-${scene.id}`,uri:footage.uri,mimeType:'video/mp4',provider:'user-source-footage',model:'source-clip-v1',costUsd:0,sceneId:scene.id,generated:false,sourceIds:scene.sourceIds,sourceUrl:footage.sourceUrl,license:footage.rightsStatus==='CLEARED'?footage.license:'verify-before-public',metadata:{kind:'broll',sourceFootageId:footage.id,title:footage.title??null,rightsStatus:footage.rightsStatus,clipStartSec,clipEndSec,cropMode:footage.cropMode??'CENTER',sourceId:footage.sourceId??null,sourceRefs:scene.sourceRefs??[],instruction:scene.instruction,windowStrategy:'non-overlapping-source-slots-v2'}});
+      assets.push({id:`footage-${scene.id}`,uri:footage.uri,mimeType:'video/mp4',provider:'user-source-footage',model:'source-clip-v1',costUsd:0,sceneId:scene.id,generated:false,sourceIds:scene.sourceIds,sourceUrl:footage.sourceUrl,license:footage.rightsStatus==='CLEARED'?footage.license:'verify-before-public',metadata:{kind:'broll',sourceFootageId:footage.id,title:footage.title??null,rightsStatus:footage.rightsStatus,clipStartSec,clipEndSec,cropMode:footage.cropMode??'CENTER',sourceId:footage.sourceId??null,sourceRefs:scene.sourceRefs??[],instruction:scene.instruction,windowStrategy:sourceFirstReuse?'source-first-full-window-reuse-v1':'non-overlapping-source-slots-v2'}});
       continue;
     }
     const direct = scene.kind === 'source_card' ? scene.sourceRefs?.find((ref) => ref.policy === 'DIRECT_ASSET_ALLOWED' && ref.url) : undefined;
