@@ -158,15 +158,17 @@ async function discoverMovingSourceFootage(){
     try{
       const cached=await cacheMovingVideo(candidate);
       let remote=null;
-      try{
-        remote=await mirrorFile(cached.uri,`source-cache/${cached.digest}.${extensionFor(candidate)}`,String(candidate?.metadata?.mime||'video/mp4'));
-      }catch(error){
-        // R2 mirroring is durable provenance, but it is not required to render a
-        // freshly downloaded, rights-cleared local source clip. Provider-side
-        // proxy auth/rate-limit jitter must not turn valid footage into an empty
-        // source catalogue; the final MP4 still goes through the required R2
-        // persistence gate later in the pipeline.
-        sourceDiscovery.failed.push({provider:candidate.provider,id:candidate.id,error:`Media mirror deferred: ${String(error?.message||error).slice(0,240)}`});
+      if(String(process.env.AUTO_YTB_SOURCE_CACHE_MIRROR||'false').toLowerCase()==='true'){
+        try{
+          remote=await mirrorFile(cached.uri,`source-cache/${cached.digest}.${extensionFor(candidate)}`,String(candidate?.metadata?.mime||'video/mp4'));
+        }catch(error){
+          // R2 mirroring is durable provenance, but it is not required to render a
+          // freshly downloaded, rights-cleared local source clip. Provider-side
+          // proxy auth/rate-limit jitter must not turn valid footage into an empty
+          // source catalogue; the final MP4 still goes through the required R2
+          // persistence gate later in the pipeline.
+          sourceDiscovery.failed.push({provider:candidate.provider,id:candidate.id,error:`Media mirror deferred: ${String(error?.message||error).slice(0,240)}`});
+        }
       }
       const duration=Number(candidate.usableDurationSeconds??candidate.durationSeconds??0);
       const license=String(candidate?.metadata?.license||`${candidate.provider} ${candidate.rightsTier}; attribution required`).replace(/\s+/g,' ').trim();
