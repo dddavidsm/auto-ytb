@@ -10,9 +10,20 @@ async function run(command, args) {
   await new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
+    let timedOut = false;
+    const timeoutMs = Math.max(30_000, Number(process.env.AUTO_YTB_FFMPEG_TIMEOUT_MS ?? 300_000));
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      setTimeout(() => child.kill('SIGKILL'), 5_000).unref?.();
+    }, timeoutMs);
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-    child.on('error', reject);
-    child.on('close', (code) => code === 0 ? resolvePromise() : reject(new Error(`${command} exited ${code}: ${stderr.length > 6000 ? `${stderr.slice(0, 6000)}\n...` : stderr}`)));
+    child.on('error', (error) => { clearTimeout(timeout); reject(error); });
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      if (timedOut) return reject(new Error(`${command} timed out after ${timeoutMs}ms`));
+      return code === 0 ? resolvePromise() : reject(new Error(`${command} exited ${code}: ${stderr.length > 6000 ? `${stderr.slice(0, 6000)}\n...` : stderr}`));
+    });
   });
 }
 
@@ -390,8 +401,21 @@ export class FfmpegRenderer {
     return await new Promise((resolvePromise, reject) => {
       const child = spawn(this.ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', source], { stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = ''; let stderr = '';
+      let timedOut = false;
+      const timeoutMs = Math.max(10_000, Number(process.env.AUTO_YTB_FFPROBE_TIMEOUT_MS ?? 60_000));
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGTERM');
+        setTimeout(() => child.kill('SIGKILL'), 5_000).unref?.();
+      }, timeoutMs);
       child.stdout.on('data', (chunk) => { stdout += chunk.toString(); }); child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-      child.on('error', reject); child.on('close', (code) => { const duration = Number(stdout.trim()); if (code !== 0 || !Number.isFinite(duration)) reject(new Error(`Unable to probe source duration: ${source} ${stderr.slice(0, 500)}`)); else resolvePromise(duration); });
+      child.on('error', (error) => { clearTimeout(timeout); reject(error); });
+      child.on('close', (code) => {
+        clearTimeout(timeout);
+        if (timedOut) return reject(new Error(`ffprobe timed out after ${timeoutMs}ms: ${source}`));
+        const duration = Number(stdout.trim());
+        if (code !== 0 || !Number.isFinite(duration)) reject(new Error(`Unable to probe source duration: ${source} ${stderr.slice(0, 500)}`)); else resolvePromise(duration);
+      });
     });
   }
 
