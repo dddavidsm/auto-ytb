@@ -341,7 +341,11 @@ export async function runContentPipeline(input: {
     if(!input.voiceProvider||!input.voice){event('BLOCKED',`${executionPlan.voiceMode} requires a configured voice provider and voice id`);return{state:'BLOCKED',events,dossier,attention};}
     event('ASSETS', `Generating ${input.language} ${executionPlan.voiceMode} audio with timestamp alignment`);
     const narrationText=draftScript.beats.map((beat) => beat.narration).join('\n\n');
-    voice = await input.voiceProvider.synthesize({ text:narrationText, voice: input.voice, language: input.language });
+    voice = await withEditorialTimeout(
+      input.voiceProvider.synthesize({ text:narrationText, voice: input.voice, language: input.language }),
+      180_000,
+      'Voice synthesis',
+    );
     const sync=synchronizeTimelineToVoice(draftScript,draftScenes,voice.alignment,voice.durationSeconds);
     script=sync.script;
     scenes=sync.scenes;
