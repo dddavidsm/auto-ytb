@@ -56,6 +56,17 @@ const extensionFor=(candidate)=>{
 };
 function sourceTopicProfile(value){
   const text=String(value||'').toLowerCase();
+  if(/solar farm|solar farms|solar panel|solar panels|photovoltaic|solar power/.test(text)){
+    return{
+      queries:[
+        'solar panels solar farm photovoltaic electricity video',
+        'solar power plant panels renewable energy video',
+        'solar farm power grid transmission infrastructure video',
+      ],
+      include:/solar panel|solar farm|photovoltaic|solar array|solar power|renewable|power grid|electric|electricity|substation|transmission|transformer|utility|infrastructure/i,
+      exclude:/wind turbine|wind farm|wind energy|person|people|passersby|hiker|hiking|forest trail|railway|railroad|train|plane|aircraft|airliner|jet|airport|prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration/i,
+    };
+  }
   if(/battery|batteries|grid-scale storage|energy storage|renewable electricity|wind and solar/.test(text)){
     return{
       queries:[

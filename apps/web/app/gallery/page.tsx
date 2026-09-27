@@ -21,14 +21,16 @@ export default async function GalleryPage() {
             const metadata = run.metadata ?? {};
             const renderUri = String(metadata.renderUri ?? '');
             const hasRemote = Boolean(metadata.remoteMediaKey);
-            const seconds = metadata.durationSeconds ?? metadata.targetDurationSec ?? metadata.script?.targetDurationSec ?? '—';
-            const frame = metadata.frame ?? {};
+            const inspection = metadata.finalInspection ?? {};
+            const seconds = inspection.durationSeconds ?? metadata.durationSeconds ?? metadata.targetDurationSec ?? metadata.script?.targetDurationSec ?? '—';
+            const frame = metadata.frame ?? inspection;
             const resolution = frame.width && frame.height ? `${frame.width} × ${frame.height}` : metadata.resolution ?? 'Ver metadatos';
+            const qaScore = inspection.score ?? run.qa_score;
             const isReady = ['READY_FOR_REVIEW','COMPLETED','SUCCEEDED'].includes(String(run.state).toUpperCase());
             return <article className="card gallery-card" key={run.id}>
               <div className="gallery-player" style={{ background: '#111' }}>{renderUri || hasRemote ? <video controls preload="metadata" src={`/api/videos/${run.id}/stream`} /> : <div className="muted">Render no disponible</div>}</div>
               <div className="row" style={{ marginTop: 14 }}><div><h3>{run.working_title || run.angle || run.id}</h3><div className="meta">{run.premise || 'Producción persistida'}</div></div><span className={`pill ${isReady ? 'good' : 'warn'}`}>{isReady ? 'LISTO PARA REVISAR' : String(run.state || 'PENDIENTE')}</span></div>
-              <div className="gallery-stats"><div><span>Estado</span><strong>{run.state}</strong></div><div><span>Formato</span><strong>{run.format}</strong></div><div><span>Duración</span><strong>{seconds}{seconds === '—' ? '' : ' s'}</strong></div><div><span>Resolución</span><strong>{resolution}</strong></div><div><span>Vídeo real</span><strong>{run.video_asset_count ?? 0} clips</strong></div><div><span>Recursos</span><strong>{run.asset_count ?? 0}</strong></div><div><span>Proveedor</span><strong>{run.providers || 'No indicado'}</strong></div><div><span>Coste</span><strong>{run.total_cost_usd == null ? '—' : `$${Number(run.total_cost_usd).toFixed(2)}`}</strong></div><div><span>Publicación</span><strong>{run.publication_state || 'NO PUBLICADO'}</strong></div><div><span>QA</span><strong>{run.qa_score == null ? '—' : `${Math.round(Number(run.qa_score))}/100`}</strong></div></div>
+              <div className="gallery-stats"><div><span>Estado</span><strong>{run.state}</strong></div><div><span>Formato</span><strong>{run.format}</strong></div><div><span>Duración</span><strong>{seconds}{seconds === '—' ? '' : ' s'}</strong></div><div><span>Resolución</span><strong>{resolution}</strong></div><div><span>Vídeo real</span><strong>{run.video_asset_count ?? 0} clips</strong></div><div><span>Recursos</span><strong>{run.asset_count ?? 0}</strong></div><div><span>Proveedor</span><strong>{run.providers || 'No indicado'}</strong></div><div><span>Coste</span><strong>{run.total_cost_usd == null ? '—' : `$${Number(run.total_cost_usd).toFixed(2)}`}</strong></div><div><span>Publicación</span><strong>{run.publication_state || 'NO PUBLICADO'}</strong></div><div><span>QA</span><strong>{qaScore == null ? '—' : `${Math.round(Number(qaScore))}/100`}</strong></div></div>
               <div className="gallery-actions"><Link className="run-link" href={`/videos/${run.id}`}>Abrir revisión →</Link><span className="fine">ID: {run.id}</span></div>
             </article>;
           })}</div> : <section className="card empty"><h3>Aún no hay vídeos finales en la galería</h3><p>Las producciones solo aparecerán cuando el proveedor entregue clips de vídeo, la narración y el control de calidad los hayan validado.</p><Link href="/create" className="primary">Crear producción real</Link></section>}
