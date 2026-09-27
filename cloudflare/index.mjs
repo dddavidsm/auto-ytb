@@ -83,6 +83,7 @@ export default {
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v7').stop();
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v8').stop();
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v9').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v10').stop();
       return new Response('stopped');
     }
     if (url.pathname.startsWith('/__internal/media')) {
@@ -91,7 +92,7 @@ export default {
     // Bump this id whenever the container image or its injected secrets change.
     // Cloudflare keeps a live named instance warm; a revisioned name ensures a
     // new deployment does not keep serving an older image/environment snapshot.
-    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v9');
+    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v10');
     const currentEnv = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, workerEnv[name] ?? productionEnv[name]]));
     await instance.start({ envVars: currentEnv });
     const headers = new Headers(request.headers);
@@ -106,7 +107,7 @@ export default {
     return instance.fetch(new Request(request, { headers }));
   },
   async scheduled(_controller, workerEnv) {
-    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v9');
+    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v10');
     const currentEnv = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, workerEnv[name] ?? productionEnv[name]]));
     await instance.startAndWaitForPorts({ startOptions: { envVars: currentEnv } });
     instance.renewActivityTimeout();

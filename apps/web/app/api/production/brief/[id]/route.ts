@@ -22,7 +22,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const rows = await query<any>('select id,state,payload from jobs where id=$1 limit 1', [id]);
   const job = rows[0];
   if (!job) return NextResponse.json({ error: 'Production job not found.' }, { status: 404 });
-  if (!['dead', 'retry'].includes(String(job.state))) return NextResponse.json({ error: `Job is ${job.state}; only dead/retry jobs can be requeued.` }, { status: 409 });
+  const forcedRunningRecovery = String(body.force ?? '').toLowerCase() === 'true' && String(job.state) === 'running';
+  if (!['dead', 'retry'].includes(String(job.state)) && !forcedRunningRecovery) return NextResponse.json({ error: `Job is ${job.state}; only dead/retry jobs can be requeued.` }, { status: 409 });
   const payload = { ...(job.payload ?? {}) } as Record<string, any>;
   if (topic) {
     payload.topic = topic;
@@ -30,6 +31,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     payload.ui = { ...(payload.ui ?? {}), prompt: topic };
   }
   await query(`update jobs set state='queued',attempts=0,max_attempts=greatest(max_attempts,4),not_before=now(),locked_at=null,locked_by=null,lease_owner=null,lease_expires_at=null,heartbeat_at=now(),completed_at=null,last_error=null,payload=$2::jsonb,updated_at=now() where id=$1`, [id, JSON.stringify(payload)]);
-  await query(`insert into job_events (job_id,event_type,detail) values ($1,'manual_requeue',$2::jsonb)`, [id, JSON.stringify({ topic: topic || payload.topic || null, reason: 'controlled production repair' })]);
+  await query(`insert into job_events (job_id,event_type,detail) values ($1,'manual_requeue',$2::jsonb)`, [id, JSON.stringify({ topic: topic || payload.topic || null, reason: forcedRunningRecovery ? 'controlled stale-lease recovery' : 'controlled production repair' })]);
   return NextResponse.json({ ok: true, jobId: id, state: 'queued', topic: topic || payload.topic || null });
 }
