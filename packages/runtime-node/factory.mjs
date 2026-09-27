@@ -6,6 +6,7 @@ import { bindMediaProviderToBrand, parseBrandContinuityContext } from './brand-c
 import { bindTextModelToSeries, parseSeriesContinuityContext } from './series-continuity.mjs';
 import { bindDialogueVoiceProviderToSeries } from './series-dialogue-voice.mjs';
 import { withElevenLabsVoiceControls } from './elevenlabs-voice-controls.mjs';
+import { withVoiceFailover } from './voice-failover.mjs';
 import { withGeminiWordAlignment, withGeminiAlignmentMeter } from './gemini-word-alignment.mjs';
 import { bindImageProviderToContentArchetype, bindTextModelToContentArchetype, bindVideoProviderToContentArchetype, normalizeContentArchetypeProfile } from './content-archetype.mjs';
 import { withCaptureAesthetic } from './capture-aesthetic.mjs';
@@ -61,7 +62,7 @@ export function createLiveRuntime(env=process.env){
     const requestedVoiceProvider=String(env.VOICE_PROVIDER||'gemini').toLowerCase();
     const configuredElevenLabsKey=String(env.VOICE_API_KEY||env.ELEVENLABS_API_KEY||'').trim();
     const provider=requestedVoiceProvider==='auto'
-      ? (/^sk_[A-Za-z0-9_-]{20,}$/.test(configuredElevenLabsKey)?'elevenlabs':geminiKey?'gemini':'none')
+      ? (configuredElevenLabsKey?'elevenlabs':geminiKey?'gemini':'none')
       : requestedVoiceProvider;
     if(provider==='gemini'){
       const voiceModel=env.VOICE_MODEL||'gemini-3.1-flash-tts-preview';
@@ -69,7 +70,14 @@ export function createLiveRuntime(env=process.env){
       const aligned=withGeminiWordAlignment(rawVoice,{apiKey:geminiKey||reqFrom(env,'GEMINI_API_KEY'),model:env.GEMINI_TRANSCRIBE_MODEL||'gemini-3.5-transcribe',strict:env.VOICE_ALIGNMENT_STRICT!=='false',minCoverage:numFrom(env,'VOICE_ALIGNMENT_MIN_COVERAGE',0.88)});
       const metered=withGeminiAlignmentMeter(meterVoiceProvider(aligned,meter,{model:voiceModel}),meter);voice=bindDialogueVoiceProviderToSeries(metered,seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
     }else if(provider==='elevenlabs'){
-      const voiceModel=env.ELEVENLABS_VOICE_MODEL||'eleven_multilingual_v2';const voiceApiKey=String(env.VOICE_API_KEY||env.ELEVENLABS_API_KEY||'').trim();if(!voiceApiKey)throw new Error('Missing required environment variable VOICE_API_KEY (or ELEVENLABS_API_KEY)');const rawVoice=new ElevenLabsVoiceProvider({apiKey:voiceApiKey,store,modelId:voiceModel,useTimestamps:env.VOICE_TIMESTAMPS!=='false'});const controlled=withElevenLabsVoiceControls(rawVoice,{apiKey:voiceApiKey,store,modelId:voiceModel});voice=bindDialogueVoiceProviderToSeries(meterVoiceProvider(controlled,meter,{model:voiceModel}),seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
+      const voiceModel=env.ELEVENLABS_VOICE_MODEL||'eleven_multilingual_v2';const voiceApiKey=String(env.VOICE_API_KEY||env.ELEVENLABS_API_KEY||'').trim();if(!voiceApiKey)throw new Error('Missing required environment variable VOICE_API_KEY (or ELEVENLABS_API_KEY)');const rawVoice=new ElevenLabsVoiceProvider({apiKey:voiceApiKey,store,modelId:voiceModel,useTimestamps:env.VOICE_TIMESTAMPS!=='false'});const controlled=withElevenLabsVoiceControls(rawVoice,{apiKey:voiceApiKey,store,modelId:voiceModel});
+      if(requestedVoiceProvider==='auto'&&geminiKey){
+        const fallbackModel=env.VOICE_MODEL||'gemini-3.1-flash-tts-preview';
+        const fallbackRaw=new GeminiVoiceProvider({apiKey:geminiKey,store,model:fallbackModel,defaultVoice:env.GEMINI_VOICE_ID||env.VOICE_ID||'Kore',endpoint:geminiEndpoint});
+        const fallbackAligned=withGeminiWordAlignment(fallbackRaw,{apiKey:geminiKey,model:env.GEMINI_TRANSCRIBE_MODEL||'gemini-3.5-transcribe',strict:env.VOICE_ALIGNMENT_STRICT!=='false',minCoverage:numFrom(env,'VOICE_ALIGNMENT_MIN_COVERAGE',0.88)});
+        const routed=withVoiceFailover(controlled,fallbackAligned,{onFailure:({provider,status})=>console.warn(`[voice-routing] ${provider} ${status}; using Gemini fallback`)});
+        voice=bindDialogueVoiceProviderToSeries(meterVoiceProvider(routed,meter,{model:voiceModel}),seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
+      }else voice=bindDialogueVoiceProviderToSeries(meterVoiceProvider(controlled,meter,{model:voiceModel}),seriesContext,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});
     }else if(provider==='none')throw new Error('No voice provider is configured: set ELEVENLABS_API_KEY (preferred) or GEMINI_API_KEY');
     else throw new Error(`Unsupported VOICE_PROVIDER: ${provider}`);
   }
