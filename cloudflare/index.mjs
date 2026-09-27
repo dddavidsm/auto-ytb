@@ -59,6 +59,14 @@ export class AutoYtbProductionWebContainer extends Container {
   enableInternet = true;
   envVars = productionEnv;
 
+  constructor(ctx, containerEnv) {
+    super(ctx, containerEnv);
+    // Bindings can change independently of the Worker module snapshot. Keep
+    // the container's startup environment aligned with the current deployment
+    // while letting Container#fetch() own the idempotent start lifecycle.
+    this.envVars = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, containerEnv[name] ?? productionEnv[name]]));
+  }
+
   onStart() {
     console.log('AUTO-YTB web container started');
   }
@@ -93,8 +101,6 @@ export default {
     // Cloudflare keeps a live named instance warm; a revisioned name ensures a
     // new deployment does not keep serving an older image/environment snapshot.
     const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v10');
-    const currentEnv = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, workerEnv[name] ?? productionEnv[name]]));
-    await instance.startAndWaitForPorts({ startOptions: { envVars: currentEnv } });
     const headers = new Headers(request.headers);
     headers.delete('x-auto-ytb-control-authorized');
     if (url.pathname === '/api/session' && request.method === 'POST') {
@@ -109,7 +115,7 @@ export default {
   async scheduled(_controller, workerEnv) {
     const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v10');
     const currentEnv = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, workerEnv[name] ?? productionEnv[name]]));
-    await instance.startAndWaitForPorts({ startOptions: { envVars: currentEnv } });
+    await instance.start({ envVars: currentEnv });
     instance.renewActivityTimeout();
     console.log('AUTO-YTB autonomous container activity renewed');
   },
