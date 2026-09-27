@@ -74,7 +74,7 @@ function sourceTopicProfile(value){
         'electrical substation power lines utility connection video',
       ],
       include:/wind turbine|wind farm|renewable|power grid|electric|electricity|energy|substation|transmission|transformer|utility|power line|infrastructure|tower/i,
-      exclude:/person|people|hiker|hiking|forest trail|railway|railroad|train|prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration|data cent(?:er|re)|server room/i,
+      exclude:/person|people|passersby|hiker|hiking|forest trail|railway|railroad|train|plane|aircraft|airliner|jet|airport|prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration|data cent(?:er|re)|server room/i,
     };
   }
   if(/data cent(er|re)|power grid|electric grid|electricity|energy bottleneck|grid operator|iea|eia/.test(text)){
