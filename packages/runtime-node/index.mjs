@@ -405,6 +405,11 @@ export class FfmpegRenderer {
     await mkdir(work, { recursive: true });
     const clips = [];
     let timelineCursor = 0;
+    // The editorial planner may reserve a short pre-roll before the first
+    // sourced beat (currently 300 ms). The concat renderer starts on the
+    // first real clip, so normalize that common origin instead of fabricating
+    // a black/still filler segment or rejecting an otherwise contiguous plan.
+    const planOrigin = scenes.length ? Math.max(0, Number(scenes[0].startSec ?? 0)) : 0;
     for (let index = 0; index < manifest.scenes.length; index += 1) {
       const scene = manifest.scenes[index];
       const clip = join(work, `scene-${String(index).padStart(4, '0')}.mp4`);
@@ -453,7 +458,7 @@ export class FfmpegRenderer {
       } else {
         throw new Error(`Scene ${scene.id} has no renderable visual asset`);
       }
-      const sceneStart = Math.max(0, Number(scene.startSec ?? timelineCursor));
+      const sceneStart = Math.max(0, Number(scene.startSec ?? timelineCursor) - planOrigin);
        const gap = sceneStart - timelineCursor;
        if (gap > 0.015) throw new Error(`RENDER_PLAN_INVALID: unassigned timeline gap ${gap.toFixed(3)}s before ${scene.id}`);
       clips.push(clip);
