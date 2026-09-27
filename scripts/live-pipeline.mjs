@@ -66,6 +66,17 @@ function sourceTopicProfile(value){
       exclude:/person|people|hiker|hiking|forest trail|railway|railroad|train|prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration/i,
     };
   }
+  if(/wind farm|wind turbine|wind turbines|turbine|wind energy/.test(text)){
+    return{
+      queries:[
+        'wind turbines wind farm renewable energy video',
+        'power grid transmission lines electricity infrastructure video',
+        'electrical substation power lines utility connection video',
+      ],
+      include:/wind turbine|wind farm|renewable|power grid|electric|electricity|energy|substation|transmission|transformer|utility|power line|infrastructure|tower/i,
+      exclude:/person|people|hiker|hiking|forest trail|railway|railroad|train|prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration|data cent(?:er|re)|server room/i,
+    };
+  }
   if(/data cent(er|re)|power grid|electric grid|electricity|energy bottleneck|grid operator|iea|eia/.test(text)){
     return{
       queries:[
