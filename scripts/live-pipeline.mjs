@@ -106,6 +106,7 @@ async function cacheMovingVideo(candidate){
     const contentLength=Number(response.headers.get('content-length')||0);
     if(contentLength>180*1024*1024)throw new Error(`Source candidate ${candidate.id} exceeds 180 MB safety limit`);
     const bytes=new Uint8Array(await response.arrayBuffer());
+    if(bytes.byteLength>120*1024*1024)throw new Error(`Source candidate ${candidate.id} exceeds 120 MB render safety limit`);
     if(bytes.byteLength<1024)throw new Error(`Source candidate ${candidate.id} returned an empty media file`);
     await mkdir(dir,{recursive:true});
     await writeFile(localPath,bytes);
