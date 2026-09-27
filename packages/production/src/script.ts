@@ -8,7 +8,7 @@ export function validateScript(script: VideoScript, dossier: ResearchDossier): s
   if (script.beats[0]?.purpose !== 'hook') errors.push('First beat must be a hook');
   if (!script.beats.some((beat) => beat.purpose === 'payoff' || beat.purpose === 'reveal')) errors.push('Script needs a payoff/reveal');
   const sourceKey = (value: string) => { try { return decodeURIComponent(value); } catch { return value; } };
-  const validSources = new Set(dossier.sources.map((source) => sourceKey(source.id)));
+  const validSources = new Set(dossier.sources.flatMap((source) => [sourceKey(source.id), sourceKey(source.url)]));
   for (const beat of script.beats) {
     if (beat.sourceIds.some((sourceId) => !validSources.has(sourceKey(sourceId)))) errors.push(`Beat ${beat.id} references an unknown source`);
   }
@@ -61,7 +61,10 @@ export async function generateScript(input: {
   // escapes decoded ("%3D" -> "="). Re-bind those aliases to the dossier's
   // canonical IDs before QA so provenance remains exact and auditable.
   const sourceKey = (value: string) => { try { return decodeURIComponent(value); } catch { return value; } };
-  const canonicalByKey = new Map(input.dossier.sources.map((source) => [sourceKey(source.id), source.id]));
+  const canonicalByKey = new Map(input.dossier.sources.flatMap((source) => [
+    [sourceKey(source.id), source.id],
+    [sourceKey(source.url), source.id],
+  ]));
   const normalizedBeats = response.value.beats.map((beat) => ({
     ...beat,
     sourceIds: beat.sourceIds.map((sourceId) => canonicalByKey.get(sourceKey(sourceId)) ?? sourceId),
