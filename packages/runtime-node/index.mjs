@@ -424,7 +424,7 @@ export class FfmpegRenderer {
         const plannedSceneStart = Math.max(0, Number(scene.startSec ?? timelineCursor) - planOrigin);
         const sceneStart = plannedSceneStart > timelineCursor && plannedSceneStart - timelineCursor <= 0.75 ? timelineCursor : plannedSceneStart;
         const gap = sceneStart - timelineCursor;
-        if (gap > 0.015) throw new Error(`RENDER_PLAN_INVALID: unassigned timeline gap ${gap.toFixed(3)}s before ${scene.id}`);
+        if (gap < -0.015) throw new Error(`RENDER_PLAN_INVALID: overlapping timeline ${Math.abs(gap).toFixed(3)}s before ${scene.id}`);
         clips.push(clip);
         timelineCursor = Math.max(timelineCursor, sceneStart + duration);
         continue;
@@ -462,7 +462,7 @@ export class FfmpegRenderer {
       const plannedSceneStart = Math.max(0, Number(scene.startSec ?? timelineCursor) - planOrigin);
       const sceneStart = plannedSceneStart > timelineCursor && plannedSceneStart - timelineCursor <= 0.75 ? timelineCursor : plannedSceneStart;
        const gap = sceneStart - timelineCursor;
-       if (gap > 0.015) throw new Error(`RENDER_PLAN_INVALID: unassigned timeline gap ${gap.toFixed(3)}s before ${scene.id}`);
+       if (gap < -0.015) throw new Error(`RENDER_PLAN_INVALID: overlapping timeline ${Math.abs(gap).toFixed(3)}s before ${scene.id}`);
       clips.push(clip);
       timelineCursor = Math.max(timelineCursor, sceneStart + duration);
     }
