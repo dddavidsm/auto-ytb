@@ -132,7 +132,7 @@ if(sourceFootage.length){
 }
 if(sourceFirst&&!sourceFootage.length)await discoverMovingSourceFootage();
 if(sourceFirst){
-  sourceFootageGuidance=[sourceFootageGuidance,'SOURCE-FIRST EDITORIAL CONTRACT: use only authorized moving video clips matched to the beats; no stills, slides, charts, source cards, generated images, fake motion or synthetic filler; block the run when a beat lacks moving-footage coverage.'].filter(Boolean).join('\n');
+  sourceFootageGuidance=[sourceFootageGuidance,'HARD VISUAL SOURCE LOCK: use only authorized moving video clips matched to the beats; no stills, slides, charts, source cards, generated images, fake motion or synthetic filler; block the run when a beat lacks moving-footage coverage.'].filter(Boolean).join('\n');
 }
 
 function driveArchiveConfigured(env=process.env){
