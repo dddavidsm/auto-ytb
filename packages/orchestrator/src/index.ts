@@ -73,6 +73,38 @@ function constrainSourceLockedScript(script:VideoScript):VideoScript{
   })};
 }
 
+function sourceLockedFallbackPackaging(topic:string):PackagingVariant[]{
+  const title=String(topic||'Source-led documentary').trim().replace(/\s+/g,' ').slice(0,96);
+  return[1,2,3].map((index)=>({id:`source-locked-${index}`,title,promise:title,thumbnailConcept:'Authorized moving source footage only',thumbnailText:null,curiosity:86-index,clarity:94,credibility:96,differentiation:82+index}));
+}
+function sourceLockedFallbackScript(topic:string,language:string,targetDurationSec:number,footage:SourceFootage[]):VideoScript{
+  const clips=footage.slice(0,Math.max(5,Math.min(8,footage.length)));
+  const count=Math.max(5,clips.length);
+  const duration=Math.max(30,targetDurationSec);
+  const slot=duration/count;
+  const purposes:['hook','setup','evidence','escalation','reveal','payoff','cta'][]=['hook','setup','evidence','evidence','escalation','reveal','payoff','cta'];
+  const english=String(language||'').toLowerCase().startsWith('en');
+  const beats=Array.from({length:count},(_,index)=>{
+    const clip=clips[index%Math.max(1,clips.length)];
+    const visible=String(clip?.title||'the supplied moving footage').replace(/\s+/g,' ').trim();
+    const narration=english
+      ? index===0?`Look closely: ${visible}. This moving evidence gives us the starting point.`
+        : index===count-1?`Taken together, these moving images show the complete visible story: ${topic}.`
+        :`The next visible step is ${visible}. Watch the motion and compare it with the previous shot.`
+      : index===0?`Mira con atención: ${visible}. Estas imágenes en movimiento son nuestro punto de partida.`
+        : index===count-1?`En conjunto, estas imágenes muestran la historia visible completa: ${topic}.`
+        :`El siguiente paso visible es ${visible}. Observa el movimiento y compáralo con el plano anterior.`;
+    return{id:`fallback-beat-${index+1}`,startSec:Number((index*slot).toFixed(2)),targetDurationSec:Number(slot.toFixed(2)),purpose:purposes[Math.min(index,purposes.length-1)],narration,visualIntent:`Show only the authorized moving source clip titled "${visible}"; preserve the observable action and do not add unsupported subjects or claims.`,sourceIds:[],retentionDevice:index===0?'question':index===count-1?'reveal':'pattern_interrupt'};
+  });
+  return{title:String(topic).slice(0,120),language,targetDurationSec:duration,thesis:String(topic),beats,outro:english?'The footage shows the answer; the visible connection is the story.':'El propio material muestra la respuesta: la conexión visible es la historia.'};
+}
+
+async function withEditorialTimeout<T>(promise:Promise<T>,timeoutMs:number,label:string):Promise<T>{
+  let timer:ReturnType<typeof setTimeout>|undefined;
+  try{return await Promise.race([promise,new Promise<T>((_,reject)=>{timer=setTimeout(()=>reject(new Error(`${label} timed out after ${timeoutMs}ms`)),timeoutMs);})]);}
+  finally{if(timer)clearTimeout(timer);}
+}
+
 function promiseWords(value:string){return String(value??'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(Boolean);}
 export function ensureOpeningPromise(input:{script:VideoScript;packaging:PackagingVariant[];selectedPackagingId:string;contentFormat:ProductionContentFormat;visualAction?:boolean}):VideoScript{
   const selected=input.packaging.find((variant)=>variant.id===input.selectedPackagingId)??input.packaging[0];
@@ -224,7 +256,13 @@ export async function runContentPipeline(input: {
     event('SCRIPT', `Writing ${repairLabel} in native ${input.language} for ${angle.title} as ${executionPlan.scriptMode}`);
     if(attempt===0||!packaging?.length||!packagingChoice){
       event('PACKAGING', input.packagingGuidance ? 'Generating packaging hypotheses with bounded owned-channel learning guidance' : 'Generating packaging hypotheses');
-      packaging=await generatePackaging({ angle, model: input.model, count: 3, guidance:[input.packagingGuidance,'The title/thumbnail promise must be paid into immediately by the opening and fully resolved by the payoff.'].filter(Boolean).join('\n') });
+      try{
+        packaging=await withEditorialTimeout(generatePackaging({ angle, model: input.model, count: 3, guidance:[input.packagingGuidance,'The title/thumbnail promise must be paid into immediately by the opening and fully resolved by the payoff.'].filter(Boolean).join('\n') }),90_000,'Source-locked packaging');
+      }catch(error){
+        if(!sourceLocked)throw error;
+        event('PACKAGING',`Gemini packaging unavailable; using deterministic source-bound packaging fallback (${String(error instanceof Error?error.message:error).slice(0,160)})`);
+        packaging=sourceLockedFallbackPackaging(input.topic);
+      }
       if(sourceLocked)packaging=constrainSourceLockedPackaging(packaging);
       packagingChoice=selectPackagingWithExploration({ variants: packaging, profile: input.packagingLearning, experimentSeed: `${input.projectId}:${contentFormat}:locked` });
       event('PACKAGING', `Locked packaging ${packagingChoice.selected.id} for autonomous attention repairs so the script does not chase a moving promise.`);
@@ -236,7 +274,13 @@ export async function runContentPipeline(input: {
       ?`LOCKED PACKAGING CONTRACT — do not change the viewer promise. Title: "${packagingChoice.selected.title}". Promise: "${packagingChoice.selected.promise}". The first beat must immediately pay into this promise and the final payoff must resolve it.`
       :'';
     const guidance=[baseScriptGuidance,lockedPromise,...revisionGuidance].filter(Boolean).join('\n');
-    draftScript=await generateScript({ dossier, angle, model: input.model, language: input.language, targetDurationSec: input.targetDurationSec, guidance, factClaimMode:executionPlan.factClaimMode,scriptMode:executionPlan.scriptMode });
+    try{
+      draftScript=await withEditorialTimeout(generateScript({ dossier, angle, model: input.model, language: input.language, targetDurationSec: input.targetDurationSec, guidance, factClaimMode:executionPlan.factClaimMode,scriptMode:executionPlan.scriptMode }),120_000,'Source-locked script');
+    }catch(error){
+      if(!sourceLocked)throw error;
+      event('SCRIPT',`Gemini script unavailable; using deterministic source-bound script fallback (${String(error instanceof Error?error.message:error).slice(0,160)})`);
+      draftScript=sourceLockedFallbackScript(input.topic,input.language,input.targetDurationSec,input.sourceFootage??[]);
+    }
     if(sourceLocked)draftScript=constrainSourceLockedScript(draftScript);
     draftScript=ensureOpeningPromise({script:draftScript,packaging,selectedPackagingId:packagingChoice.selected.id,contentFormat,visualAction:executionPlan.scriptMode==='VISUAL_ACTION'});
 
