@@ -75,6 +75,13 @@ export class AutoYtbProductionWebContainer extends Container {
 export default {
   async fetch(request, workerEnv) {
     const url = new URL(request.url);
+    if (url.pathname === '/__internal/stop-production-web-v6') {
+      const expected = String(workerEnv.CONTROL_PLANE_TOKEN || '');
+      const supplied = String(request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+      if (!expected || supplied !== expected) return new Response('Unauthorized', { status: 401 });
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v6').stop();
+      return new Response('stopped');
+    }
     if (url.pathname.startsWith('/__internal/media')) {
       return handleMedia(request, workerEnv, url);
     }
