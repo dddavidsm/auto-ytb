@@ -172,6 +172,8 @@ function sourceMatchScore(beat:ScriptBeat, clip:SourceFootage):number {
 
 function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage:Map<string,number>, recentIds:string[], recentUris:string[], requiredDuration:number, allowRelevantFallback=false):SourceFootage|undefined{
   const durationReady=candidates.filter((item)=>item.endSec==null||item.startSec==null||Number(item.endSec)-Number(item.startSec)>=requiredDuration-0.05);
+  const maxUses=allowRelevantFallback?6:3;
+  const lastId=recentIds.at(-1);
   const ranked=[...(durationReady.length?durationReady:candidates)].sort((a,b)=>{
     const aMatch=sourceMatchScore(beat,a);
     const bMatch=sourceMatchScore(beat,b);
@@ -195,7 +197,7 @@ function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage
   // merely because several beats share the same physical infrastructure.
   const matched=ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)===0&&!recentIds.includes(item.id))
     ?? ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)<2&&!recentIds.includes(item.id))
-    ?? ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)<3&&!recentIds.includes(item.id));
+    ?? ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)<maxUses&&item.id!==lastId);
   if(matched)return matched;
   // SOURCE_FIRST receives a catalogue that has already passed the provider
   // relevance/licensing gate. Some legitimate editorial beats (for example
@@ -207,7 +209,7 @@ function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage
   if(allowRelevantFallback){
     return ranked.find((item)=>(usage.get(item.id)??0)===0&&!recentIds.includes(item.id))
       ?? ranked.find((item)=>(usage.get(item.id)??0)<2&&!recentIds.includes(item.id))
-      ?? ranked.find((item)=>(usage.get(item.id)??0)<3&&!recentIds.includes(item.id));
+      ?? ranked.find((item)=>(usage.get(item.id)??0)<maxUses&&item.id!==lastId);
   }
   return undefined;
 }
