@@ -1,5 +1,7 @@
 FROM node:22-bookworm-slim
 
+LABEL org.opencontainers.image.revision="3d69df4"
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
   && rm -rf /var/lib/apt/lists/*
