@@ -7,7 +7,7 @@ function base64FromBytes(data:any):string{return BufferAny.from(data).toString('
 
 function sleep(ms:number){return new Promise((resolve)=>setTimeout(resolve,ms));}
 function baseUrl(value?:string){return String(value||'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/,'');}
-const OFFICIAL_HOSTS=['cursor.com','openai.com','cloudflare.com','anthropic.com','google.com','github.com','microsoft.com','meta.com','apple.com','nvidia.com','samsung.com','intel.com','amd.com','mozilla.org','w3.org','ietf.org'];
+const OFFICIAL_HOSTS=['cursor.com','openai.com','cloudflare.com','anthropic.com','google.com','github.com','microsoft.com','meta.com','apple.com','nvidia.com','samsung.com','intel.com','amd.com','mozilla.org','w3.org','ietf.org','iea.org','eia.gov','energy.gov','nrel.gov','lbl.gov','ferc.gov','pnnl.gov','nasa.gov','noaa.gov','usgs.gov','worldbank.org','oecd.org','un.org','europa.eu','ec.europa.eu'];
 function titleHost(value:string){const match=String(value).match(/(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?:[/:\s]|$)/i);return match?.[1]?.toLowerCase()??'';}
 function officialHost(host:string){return /\.gov$|\.gov\.|\.edu$|\.edu\./.test(host)||OFFICIAL_HOSTS.some((domain)=>host===domain||host.endsWith(`.${domain}`));}
 function inferSourceType(url:string,title=''):SearchResult['sourceType']{

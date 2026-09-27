@@ -237,6 +237,10 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   const channelVoiceId=configuredVoiceProvider===activeVoiceProvider?channel.voiceProfile?.voiceId:'';
   const voiceId=resolveVoiceId({provider:activeVoiceProvider,language:channel.language,env:process.env,channelVoiceId});
   const result=await runContentPipeline({projectId:productionRunId,topic,language:channel.language,contentFormat,targetDurationSec:productionProfile.targetDurationSec,targetSceneDurationSec:productionProfile.targetSceneDurationSec,voice:voiceId,maxCostUsd:productionProfile.maxCostUsd,search:runtime.search,model:runtime.model,voiceProvider:runtime.voice,imageProvider:runtime.image,videoProvider:runtime.video,thumbnailComposer:runtime.thumbnailComposer,store:runtime.store,renderer:runtime.renderer,publisher:runtime.publisher,contentArchetype:runtime.archetypeDecision,autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE==='true',videoOnly:String(process.env.AUTO_YTB_VIDEO_ONLY||'false').toLowerCase()==='true',sourcedOnly,visualMixPolicy:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',packagingGuidance:[packagingGuidance,creativeLearning.guidance].filter(Boolean).join('\n')||undefined,scriptGuidance:[productionProfile.scriptGuidance,sourceFootageGuidance].filter(Boolean).join('\n')||undefined,packagingLearning,sourceFootage,additionalCostUsd:()=>runtime.meter?.nonAssetCostUsd??0,minAttentionScore:Number(process.env.MIN_ATTENTION_SCORE||86),maxAttentionRevisionPasses:Number(process.env.MAX_ATTENTION_REVISION_PASSES||2)});
+  if(result.state!=='READY_FOR_REVIEW'){
+    const blockers=result.events.filter((event)=>event.state==='BLOCKED').map((event)=>event.message).slice(-3).join(' | ')||`Pipeline ended in ${result.state}`;
+    throw new Error(`PRODUCTION_PIPELINE_${result.state}:${blockers}`);
+  }
 
   const durableCost=Math.max(Number(result.manifest?.actualCostUsd??0),Number(runtime.meter?.totalCostUsd??0));
   const remoteRender = await mirrorFile(result.renderUri, `projects/${productionRunId}/final.mp4`, 'video/mp4');
