@@ -35,13 +35,14 @@ const isShort=contentFormat!=='LONG_HORIZONTAL';
 const requestedProductionMode=String(process.env.AUTO_YTB_PRODUCTION_MODE||'AUTO').trim().toUpperCase();
 const channelNiche=[channel.id,channel.positioning,...(channel.themes??[]),...(channel.channelType==='UMBRELLA_OPPORTUNITY_DRIVEN'?['documentary','explainer','factual','research','evidence-led']:[])].filter(Boolean).join(' ');
 const routedArchetype=inferContentArchetype({topic,contentFormat,channelNiche});
+const explicitSourceMode=requestedProductionMode==='SOURCE_FIRST'||requestedProductionMode==='SOURCED';
 const sourceFirst=Boolean(sourceFootage?.length)
-  || requestedProductionMode==='SOURCE_FIRST'
+  || explicitSourceMode
   || (requestedProductionMode==='AUTO'
     && routedArchetype?.profile?.researchRequired!==false
     && routedArchetype?.profile?.requiresCanonicalCast!==true
     && routedArchetype?.profile?.realityMode!=='REALISTIC_SYNTHETIC');
-const sourcedOnly=sourceFirst && (requestedProductionMode==='AUTO'||requestedProductionMode==='SOURCE_FIRST'||Boolean(sourceFootagePath));
+const sourcedOnly=sourceFirst && (requestedProductionMode==='AUTO'||explicitSourceMode||Boolean(sourceFootagePath));
 console.log(`[live-pipeline] start format=${contentFormat} topic=${topic.slice(0,120)}`);
 
 const sourceDiscovery={mode:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',requestedMode:requestedProductionMode,queries:[],providers:[],selected:[],failed:[]};
