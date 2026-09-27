@@ -483,7 +483,12 @@ export class FfmpegRenderer {
          // substitutes a still, zoom, shake or procedural placeholder.
          const inputArgs = repeatMovingSource ? ['-y','-stream_loop','-1','-i',source] : ['-y','-i',source];
         if (clipStart > 0) inputArgs.push('-ss',String(clipStart));
-        inputArgs.push('-t',String(duration),'-vf',`${videoFilter},setpts=PTS-STARTPTS`,'-fps_mode','cfr','-r',String(this.fps),'-an','-c:v','libx264','-preset','veryfast','-avoid_negative_ts','make_zero',clip);
+        inputArgs.push('-t',String(duration),'-vf',`${videoFilter},setpts=PTS-STARTPTS`,'-fps_mode','cfr','-r',String(this.fps),'-an','-c:v','libx264','-preset',sourceBacked?'superfast':'veryfast','-avoid_negative_ts','make_zero',clip);
+        // Source-first production runs on the smallest paid container tier by
+        // default. Keep the source footage and the editorial crop unchanged,
+        // but use a faster encoder preset for real-footage scene preparation;
+        // this prevents a valid vertical render from spending minutes per
+        // scene on CPU-bound compression.
         await run(this.ffmpeg, inputArgs);
       } else {
         throw new Error(`Scene ${scene.id} has no renderable visual asset`);
