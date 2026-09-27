@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "test:editorial-intelligence": "npm run build && node scripts/test-editorial-intelligence.mjs",
+    "test:voice-routing": "node scripts/test-voice-routing.mjs",
     "test:editorial-cutover": "node scripts/test-editorial-cutover-regressions.mjs",
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty false",

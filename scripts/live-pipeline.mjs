@@ -8,6 +8,7 @@ import { searchPexelsVideo, searchPixabayVideo, searchWikimediaVideo, selectStru
 import { inferContentArchetype } from '@auto-ytb/os';
 import { ResearchRepository, ScriptRepository, ProductionRepository, PublicationRepository } from '@auto-ytb/persistence';
 import { createLiveRuntime } from '../packages/runtime-node/factory.mjs';
+import { resolveVoiceId } from '../packages/runtime-node/voice-routing.mjs';
 import { buildCreativeLearningGuidance } from './lib/creative-guidance.mjs';
 import { mirrorFile } from './lib/media-proxy.mjs';
 
@@ -233,8 +234,8 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
 
   const activeVoiceProvider=String(runtime.voice?.name||process.env.VOICE_PROVIDER||'gemini').toLowerCase().includes('eleven')?'elevenlabs':'gemini';
   const configuredVoiceProvider=String(channel.voiceProfile?.provider||'').toLowerCase();
-  const providerVoiceId=activeVoiceProvider==='elevenlabs'?process.env.ELEVENLABS_VOICE_ID:activeVoiceProvider==='gemini'?process.env.GEMINI_VOICE_ID:null;
-  const voiceId=providerVoiceId||process.env.VOICE_ID||(configuredVoiceProvider===activeVoiceProvider?channel.voiceProfile?.voiceId:null)||(activeVoiceProvider==='gemini'?'Kore':channel.voiceProfile?.voiceId||channel.voice);
+  const channelVoiceId=configuredVoiceProvider===activeVoiceProvider?channel.voiceProfile?.voiceId:'';
+  const voiceId=resolveVoiceId({provider:activeVoiceProvider,language:channel.language,env:process.env,channelVoiceId});
   const result=await runContentPipeline({projectId:productionRunId,topic,language:channel.language,contentFormat,targetDurationSec:productionProfile.targetDurationSec,targetSceneDurationSec:productionProfile.targetSceneDurationSec,voice:voiceId,maxCostUsd:productionProfile.maxCostUsd,search:runtime.search,model:runtime.model,voiceProvider:runtime.voice,imageProvider:runtime.image,videoProvider:runtime.video,thumbnailComposer:runtime.thumbnailComposer,store:runtime.store,renderer:runtime.renderer,publisher:runtime.publisher,contentArchetype:runtime.archetypeDecision,autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE==='true',videoOnly:String(process.env.AUTO_YTB_VIDEO_ONLY||'false').toLowerCase()==='true',sourcedOnly,visualMixPolicy:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',packagingGuidance:[packagingGuidance,creativeLearning.guidance].filter(Boolean).join('\n')||undefined,scriptGuidance:[productionProfile.scriptGuidance,sourceFootageGuidance].filter(Boolean).join('\n')||undefined,packagingLearning,sourceFootage,additionalCostUsd:()=>runtime.meter?.nonAssetCostUsd??0,minAttentionScore:Number(process.env.MIN_ATTENTION_SCORE||86),maxAttentionRevisionPasses:Number(process.env.MAX_ATTENTION_REVISION_PASSES||2)});
 
   const durableCost=Math.max(Number(result.manifest?.actualCostUsd??0),Number(runtime.meter?.totalCostUsd??0));
