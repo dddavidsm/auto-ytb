@@ -25,18 +25,18 @@ function numberValueAt(items,index){
 }
 const parseOffset=(value)=>{const n=Number(String(value??'').replace(/s$/i,''));return Number.isFinite(n)?Math.max(0,n):null;};
 
-async function request(fetchFn,url,apiKey,init={},attempts=4){
+async function request(fetchFn,url,apiKey,init={},attempts=1){
   let last;
   for(let attempt=0;attempt<attempts;attempt+=1){
     const controller=new AbortController();
-    const timer=setTimeout(()=>controller.abort(),120_000);
+    const timer=setTimeout(()=>controller.abort(),45_000);
     try{
       const response=await fetchFn(url,{...init,signal:init.signal??controller.signal,headers:{...(apiKey?{'x-goog-api-key':apiKey}:{}),...(init.headers??{})}});
       if(response.ok)return response;
       const body=(await response.text()).slice(0,800);
       last=new Error(`Gemini alignment request failed ${response.status}: ${body}`);
       if(![408,429,500,502,503,504].includes(response.status))break;
-    }catch(error){last=controller.signal.aborted?new Error(`Gemini alignment request timed out after 120000ms: ${url}`):error instanceof Error?error:new Error(String(error));}
+    }catch(error){last=controller.signal.aborted?new Error(`Gemini alignment request timed out after 45000ms: ${url}`):error instanceof Error?error:new Error(String(error));}
     finally{clearTimeout(timer);}
     if(attempt<attempts-1)await sleep(Math.min(8000,500*2**attempt));
   }
