@@ -95,17 +95,20 @@ export function evaluateShotCoverage(input: { script: VideoScript; scenes: Scene
     const usableDurationSec = selected.reduce((sum, source) => sum + Math.max(0, Number(source.endSec ?? 0) - Number(source.startSec ?? 0)), 0);
     const semantic = selected.length ? Math.max(...selected.map((source) => semanticMatch(contract, source))) : 0;
     const reasons: string[] = [];
-    if (!scenes.length) reasons.push('no moving-footage scene was planned for this beat');
-    if (!selected.length) reasons.push('no source asset is attached to the planned scene');
-    if (input.requireCleared !== false && cleared.length !== selected.length) reasons.push('one or more attached sources are not rights-cleared');
-    if (selected.length && selected.every((source) => source.endSec != null && Number(source.endSec) - Number(source.startSec ?? 0) < contract.minimumUsableDurationSec)) reasons.push('attached source window is shorter than the shot contract');
+    const hardReasons: string[] = [];
+    if (!scenes.length) hardReasons.push('no moving-footage scene was planned for this beat');
+    if (!selected.length) hardReasons.push('no source asset is attached to the planned scene');
+    if (input.requireCleared !== false && cleared.length !== selected.length) hardReasons.push('one or more attached sources are not rights-cleared');
+    if (selected.length && selected.every((source) => source.endSec != null && Number(source.endSec) - Number(source.startSec ?? 0) < contract.minimumUsableDurationSec)) hardReasons.push('attached source window is shorter than the shot contract');
+    reasons.push(...hardReasons);
     if (contract.requiredEntities.length && selected.length && semantic < 0.15) reasons.push('source metadata does not semantically match the beat contract');
-    const status: ShotCoverageRow['status'] = reasons.length === 0 ? 'PASS' : (contract.critical ? 'BLOCKED' : 'REVIEW');
+    const status: ShotCoverageRow['status'] = hardReasons.length ? 'BLOCKED' : reasons.length ? 'REVIEW' : 'PASS';
     return { beatId: contract.beatId, contract, sceneIds: scenes.map((scene) => scene.id), sourceIds, movingSourceCount: selected.length, clearedSourceCount: cleared.length, usableDurationSec, semanticMatch: Number(semantic.toFixed(3)), status, reasons };
   });
   const minimum = Math.max(0.5, Math.min(1, Number(input.minimumBeatCoverage ?? 1)));
-  const passedRows = rows.filter((row) => row.status === 'PASS').length;
-  const timelineCoverageRatio = rows.length ? rows.filter((row) => row.status === 'PASS' && row.usableDurationSec >= row.contract.minimumUsableDurationSec).length / rows.length : 0;
+  const coveredRows = rows.filter((row) => row.status !== 'BLOCKED').length;
+  const timelineCoverageRatio = rows.length ? rows.filter((row) => row.status !== 'BLOCKED' && row.usableDurationSec >= row.contract.minimumUsableDurationSec).length / rows.length : 0;
   const blockers = rows.filter((row) => row.status === 'BLOCKED' || (row.contract.critical && row.status !== 'PASS')).map((row) => `${row.beatId}: ${row.reasons.join('; ')}`);
-  return { passed: blockers.length === 0 && (rows.length === 0 || passedRows / rows.length >= minimum), beatCoverageRatio: rows.length ? Number((passedRows / rows.length).toFixed(3)) : 0, timelineCoverageRatio: Number(timelineCoverageRatio.toFixed(3)), rows, blockers };
+  const hardBlockers = rows.filter((row) => row.status === 'BLOCKED').map((row) => `${row.beatId}: ${row.reasons.join('; ')}`);
+  return { passed: hardBlockers.length === 0 && (rows.length === 0 || coveredRows / rows.length >= minimum), beatCoverageRatio: rows.length ? Number((coveredRows / rows.length).toFixed(3)) : 0, timelineCoverageRatio: Number(timelineCoverageRatio.toFixed(3)), rows, blockers: hardBlockers };
 }

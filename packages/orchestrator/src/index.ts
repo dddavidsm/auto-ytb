@@ -261,7 +261,8 @@ export async function runContentPipeline(input: {
       event('BLOCKED', `SOURCE_COVERAGE_GATE: ${shotCoverage.blockers.slice(0, 8).join(' | ')}`);
       return false;
     }
-    event('QA', `Source shot-contract coverage PASS · beats ${(shotCoverage.beatCoverageRatio * 100).toFixed(0)}% · timeline ${(shotCoverage.timelineCoverageRatio * 100).toFixed(0)}%`);
+    const reviewCount = shotCoverage.rows.filter((row) => row.status === 'REVIEW').length;
+    event('QA', `Source shot-contract coverage PASS · beats ${(shotCoverage.beatCoverageRatio * 100).toFixed(0)}% · timeline ${(shotCoverage.timelineCoverageRatio * 100).toFixed(0)}% · semantic review=${reviewCount}`);
     return true;
   };
 
