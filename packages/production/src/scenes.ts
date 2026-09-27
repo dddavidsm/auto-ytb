@@ -170,7 +170,7 @@ function sourceMatchScore(beat:ScriptBeat, clip:SourceFootage):number {
   return score;
 }
 
-function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage:Map<string,number>, recentIds:string[], recentUris:string[], requiredDuration:number):SourceFootage|undefined{
+function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage:Map<string,number>, recentIds:string[], recentUris:string[], requiredDuration:number, allowRelevantFallback=false):SourceFootage|undefined{
   const durationReady=candidates.filter((item)=>item.endSec==null||item.startSec==null||Number(item.endSec)-Number(item.startSec)>=requiredDuration-0.05);
   const ranked=[...(durationReady.length?durationReady:candidates)].sort((a,b)=>{
     const aMatch=sourceMatchScore(beat,a);
@@ -193,9 +193,23 @@ function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage
   // The recent-id cooldown still prevents consecutive visual loops while the
   // bounded third window avoids rejecting a valid source-first documentary
   // merely because several beats share the same physical infrastructure.
-  return ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)===0&&!recentIds.includes(item.id))
+  const matched=ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)===0&&!recentIds.includes(item.id))
     ?? ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)<2&&!recentIds.includes(item.id))
     ?? ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)<3&&!recentIds.includes(item.id));
+  if(matched)return matched;
+  // SOURCE_FIRST receives a catalogue that has already passed the provider
+  // relevance/licensing gate. Some legitimate editorial beats (for example
+  // "nacelle" or "connection point") do not share a literal title token with
+  // a stock clip. Keep the source-only contract intact by selecting the best
+  // unused relevant clip instead of silently turning that beat into a card,
+  // still or generated shot. This fallback is deliberately opt-in so mixed
+  // media planning remains strict.
+  if(allowRelevantFallback){
+    return ranked.find((item)=>(usage.get(item.id)??0)===0&&!recentIds.includes(item.id))
+      ?? ranked.find((item)=>(usage.get(item.id)??0)<2&&!recentIds.includes(item.id))
+      ?? ranked.find((item)=>(usage.get(item.id)??0)<3&&!recentIds.includes(item.id));
+  }
+  return undefined;
 }
 
 export function planScenes(script: VideoScript, options: ScenePlanningOptions = {}): Scene[] {
@@ -216,7 +230,7 @@ export function planScenes(script: VideoScript, options: ScenePlanningOptions = 
         ? sceneOrdinal%3===0 || (sceneOrdinal===0&&beat.purpose==='hook')
         : true;
       const sourceClip=sourceCadence
-        ? pickDiverseSourceClip(beat,sourceCandidates,sourceUsage,recentSourceIds,recentSourceUris,duration)
+        ? pickDiverseSourceClip(beat,sourceCandidates,sourceUsage,recentSourceIds,recentSourceUris,duration,(options.visualMixPolicy??'MIXED_MEDIA')==='SOURCE_FIRST')
         : undefined;
       const choice = chooseSceneKind(beat,index,visualValue,sourceRefs.length>0,{...options,selectedSourceClip:sourceClip});
       if(sourceClip){
