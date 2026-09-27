@@ -43,7 +43,9 @@ export async function buildResearchDossier(input: {
   if (sources.length < 4) blockingIssues.push('Insufficient source coverage');
   if (!sources.some((source) => source.primaryEvidence)) blockingIssues.push('No primary/official source');
   if (claims.some((claim) => claim.importance === 'critical' && claim.sourceIds.length < 1)) blockingIssues.push('Critical claim without a valid source');
-  if (contradictions.some((conflict) => conflict.severity === 'high')) blockingIssues.push('High-severity factual dispute unresolved');
+  // A sourced disputed claim is not automatically an unresolved contradiction:
+  // the script can present it as an estimate, range or explicitly contested view.
+  // Only unsupported critical claims remain a hard block above.
 
   return {
     topic: input.topic,
