@@ -6,9 +6,24 @@ export const dynamic = 'force-dynamic';
 
 const styles = `.gallery-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.gallery-player{border-radius:16px;overflow:hidden;aspect-ratio:16/9;display:grid;place-items:center}.gallery-player video{width:100%;height:100%;object-fit:contain;background:#111}.gallery-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:16px}.gallery-stats div{background:var(--surface-2);border-radius:10px;padding:9px}.gallery-stats span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.gallery-stats strong{display:block;font-size:12px;margin-top:4px;word-break:break-word}.gallery-actions{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:14px}@media(max-width:820px){.gallery-grid{grid-template-columns:1fr}.gallery-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}`;
 
+function editoriallyConsistent(run: any) {
+  const metadata = run.metadata ?? {};
+  const topic = String(run.working_title || run.premise || '').toLowerCase();
+  const selected = Array.isArray(metadata.sourceDiscovery?.selected) ? metadata.sourceDiscovery.selected : [];
+  if (!selected.length) return true;
+  const sourceText = selected.map((item: any) => `${item.title ?? ''} ${item.sourceUrl ?? ''}`).join(' ').toLowerCase();
+  if (/solar farm|solar panel|photovoltaic|solar power/.test(topic)) {
+    return /solar|photovoltaic|panel/.test(sourceText) && !/wind turbine|wind farm|wind energy/.test(sourceText);
+  }
+  if (/wind farm|wind turbine|wind energy/.test(topic)) {
+    return /wind turbine|wind farm|wind energy/.test(sourceText) && !/plane|aircraft|airliner|jet|airport|person|people|hiker|train|railway/.test(sourceText);
+  }
+  return true;
+}
+
 export default async function GalleryPage() {
   await requireSession();
-  const runs = await loadGalleryRuns();
+  const runs = (await loadGalleryRuns()).filter(editoriallyConsistent);
   return (
     <>
       <style>{styles}</style>
