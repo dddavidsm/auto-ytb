@@ -105,7 +105,8 @@ export default {
   },
   async scheduled(_controller, workerEnv) {
     const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v7');
-    await instance.startAndWaitForPorts();
+    const currentEnv = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, workerEnv[name] ?? productionEnv[name]]));
+    await instance.startAndWaitForPorts({ startOptions: { envVars: currentEnv } });
     instance.renewActivityTimeout();
     console.log('AUTO-YTB autonomous container activity renewed');
   },
