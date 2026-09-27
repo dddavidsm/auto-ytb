@@ -213,6 +213,7 @@ export async function runContentPipeline(input: {
 
   let dossier:ResearchDossier;
   const sourceLocked=Boolean(input.sourceFootage?.length)&&String(input.scriptGuidance??'').includes('HARD VISUAL SOURCE LOCK');
+  const sourceLockedFastPath=sourceLocked&&String(process.env.AUTO_YTB_SOURCE_LOCKED_FAST_PATH??'false').toLowerCase()==='true';
   if(executionPlan.researchRequired&&!sourceLocked){
     if(!input.search){event('BLOCKED','Research is required by the Content Archetype but no search provider is configured');return{state:'BLOCKED',events};}
     event('RESEARCH', `Researching ${input.topic} for ${contentFormat}`);
@@ -253,6 +254,21 @@ export async function runContentPipeline(input: {
   let videoFallbackDisabled=false;
 
   for(let attempt=0;attempt<=maxRepairs;attempt+=1){
+    if(sourceLockedFastPath){
+      event('PACKAGING','Source-locked fast path: using deterministic source-bound packaging while preserving moving-footage-only policy.');
+      packaging=sourceLockedFallbackPackaging(input.topic);
+      packagingChoice=selectPackagingWithExploration({ variants: packaging, profile: input.packagingLearning, experimentSeed: `${input.projectId}:${contentFormat}:locked-fast` });
+      draftScript=sourceLockedFallbackScript(input.topic,input.language,input.targetDurationSec,input.sourceFootage??[]);
+      draftScript=ensureOpeningPromise({script:draftScript,packaging,selectedPackagingId:packagingChoice.selected.id,contentFormat,visualAction:false});
+      draftScenes=planScenes(draftScript,{targetSceneDurationSec:adaptiveSceneDuration,sources:dossier.sources,sourceFootage:input.sourceFootage,visualMode:executionPlan.visualMode,generativeSpendBias:executionPlan.generativeSpendBias,realityMode:executionPlan.realityMode,cameraProfile:executionPlan.cameraProfile,visualMixPolicy:input.visualMixPolicy??'SOURCE_FIRST'});
+      if(input.sourcedOnly){
+        const uncovered=draftScenes.filter((scene)=>scene.kind!=='broll').map((scene)=>scene.id);
+        if(uncovered.length){event('BLOCKED',`SOURCED_ONLY_INSUFFICIENT_FOOTAGE: ${uncovered.length} scene(s) have no authorized moving source coverage (${uncovered.slice(0,8).join(', ')})`);return{state:'BLOCKED',events,dossier,attention};}
+      }
+      attention=reviewAttentionBlueprint({script:draftScript,packaging,scenes:draftScenes,contentFormat,executionPlan,selectedPackagingId:packagingChoice.selected.id,minScore:minAttentionScore});
+      event('QA',`Source-locked fast-path attention preflight ${attention.score}/100 · ${attention.ready?'READY':'REVIEW'} · no remote editorial call required`);
+      break;
+    }
     const repairLabel=attempt===0?'initial attention draft':`attention repair ${attempt}/${maxRepairs}`;
     event('SCRIPT', `Writing ${repairLabel} in native ${input.language} for ${angle.title} as ${executionPlan.scriptMode}`);
     if(attempt===0||!packaging?.length||!packagingChoice){
