@@ -55,7 +55,11 @@ const productionEnv = {
 
 export class AutoYtbProductionWebContainer extends Container {
   defaultPort = 3000;
-  sleepAfter = '10m';
+  // Production jobs can spend several minutes in external research, media
+  // downloads, voice fallback and FFmpeg. Keep the instance alive for the
+  // same upper bound as JOB_TIMEOUT_MINUTES so an idle HTTP period cannot
+  // SIGTERM a valid background production.
+  sleepAfter = '2h';
   enableInternet = true;
   envVars = productionEnv;
 
