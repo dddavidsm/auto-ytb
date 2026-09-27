@@ -150,13 +150,31 @@ async function handleMedia(request, workerEnv, url) {
     return Response.json({ ok: true, key });
   }
   if (request.method === 'GET' || request.method === 'HEAD') {
-    const object = await bucket.get(key, { range: request.headers });
+    const requestedRange = request.headers.get('range');
+    const head = requestedRange ? await bucket.head(key) : null;
+    const object = await bucket.get(key, { range: requestedRange ? request.headers : undefined });
     if (!object) return new Response('Not found', { status: 404 });
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     headers.set('etag', object.httpEtag);
+    headers.set('accept-ranges', 'bytes');
+    if (requestedRange) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(requestedRange.trim());
+      const totalSize = Number(head?.size ?? object.size ?? 0);
+      const suffixLength = match?.[1] ? null : Number(match?.[2] ?? 0);
+      const offset = match?.[1] ? Number(match[1]) : Math.max(0, totalSize - (suffixLength ?? 0));
+      const requestedEnd = match?.[2] ? Number(match[2]) : totalSize - 1;
+      const end = Math.min(totalSize - 1, requestedEnd);
+      const length = Number(object.range?.length ?? (end >= offset ? end - offset + 1 : 0));
+      if (!match || !totalSize || offset < 0 || offset >= totalSize || end < offset || !length) {
+        return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${totalSize || '*'}` } });
+      }
+      headers.set('content-length', String(length));
+      headers.set('content-range', `bytes ${offset}-${offset + length - 1}/${totalSize}`);
+      return new Response(request.method === 'HEAD' ? null : object.body, { status: 206, headers });
+    }
     if (object.size != null) headers.set('content-length', String(object.size));
-    return new Response(request.method === 'HEAD' ? null : object.body, { headers });
+    return new Response(request.method === 'HEAD' ? null : object.body, { status: 200, headers });
   }
   return new Response('Method not allowed', { status: 405, headers: { allow: 'GET, HEAD, PUT, DELETE' } });
 }
