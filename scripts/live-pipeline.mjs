@@ -90,7 +90,7 @@ async function cacheMovingVideo(candidate){
   let info;
   try{info=await stat(localPath);}catch{info=null;}
   if(!info?.isFile()||info.size<1024){
-    const response=await fetch(downloadUrl,{headers:{'user-agent':'AUTO-YTB/1.0 rights-aware footage cache'}});
+    const response=await fetch(downloadUrl,{headers:{'user-agent':'AUTO-YTB/1.0 rights-aware footage cache'},signal:AbortSignal.timeout(45000)});
     if(!response.ok)throw new Error(`Source download failed ${response.status} for ${candidate.id}`);
     const contentLength=Number(response.headers.get('content-length')||0);
     if(contentLength>180*1024*1024)throw new Error(`Source candidate ${candidate.id} exceeds 180 MB safety limit`);
@@ -141,7 +141,7 @@ async function discoverMovingSourceFootage(){
     return rightsScore(b)-rightsScore(a)
       || Number(b.width||0)*Number(b.height||0)-Number(a.width||0)*Number(a.height||0)
       || Number(b.usableDurationSeconds||b.durationSeconds||0)-Number(a.usableDurationSeconds||a.durationSeconds||0);
-  }).slice(0,Number(process.env.SOURCE_FOOTAGE_MAX_CLIPS||24));
+  }).slice(0,Number(process.env.SOURCE_FOOTAGE_MAX_CLIPS||12));
   for(const candidate of eligible){
     try{
       const cached=await cacheMovingVideo(candidate);
@@ -193,7 +193,7 @@ async function discoverMovingSourceFootage(){
           if(sourceFootage.some((clip)=>clip.id===id))continue;
           sourceFootage.push({id,uri:pathToFileURL(localPath).toString(),title,sourceUrl:String(item.sourceUrl||''),sourceId:String(item.sourceKey||id),license:String(item.license||`${item.provider||'source'} PUBLISHABLE_WITH_ATTRIBUTION; attribution required`),rightsStatus:'CLEARED',startSec:0,cropMode:'CENTER'});
           sourceDiscovery.selected.push({id,provider:item.provider||'cached',sourceKey:item.sourceKey||id,title,sourceUrl:String(item.sourceUrl||''),license:String(item.license||''),localBytes:info.size,remoteKey});
-          if(sourceFootage.length>=Number(process.env.SOURCE_FOOTAGE_MAX_CLIPS||24))break;
+          if(sourceFootage.length>=Number(process.env.SOURCE_FOOTAGE_MAX_CLIPS||12))break;
         }
         if(sourceFootage.length)break;
       }

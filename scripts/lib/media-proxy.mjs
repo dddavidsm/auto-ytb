@@ -24,6 +24,7 @@ export async function mirrorFile(uri, key, contentType, env = process.env) {
     method: 'PUT',
     headers: { authorization: `Bearer ${settings.token}`, 'content-type': contentType, 'content-length': String(info.size) },
     body: await readFile(path),
+    signal: AbortSignal.timeout(45000),
   });
   if (!response.ok) throw new Error(`Media persistence failed ${response.status}: ${(await response.text()).slice(0, 500)}`);
   return { key: String(key).replace(/^\/+/, ''), url: urlFor(settings.base, key).toString(), size: info.size };
