@@ -59,8 +59,9 @@ export function createLiveRuntime(env=process.env){
   let voice;const voiceMode=String(archetypeProfile?.voiceMode??'SINGLE_NARRATOR');
   if(voiceMode!=='NONE'){
     const requestedVoiceProvider=String(env.VOICE_PROVIDER||'gemini').toLowerCase();
+    const configuredElevenLabsKey=String(env.VOICE_API_KEY||env.ELEVENLABS_API_KEY||'').trim();
     const provider=requestedVoiceProvider==='auto'
-      ? (String(env.VOICE_API_KEY||env.ELEVENLABS_API_KEY||'').trim()?'elevenlabs':geminiKey?'gemini':'none')
+      ? (/^sk_[A-Za-z0-9_-]{20,}$/.test(configuredElevenLabsKey)?'elevenlabs':geminiKey?'gemini':'none')
       : requestedVoiceProvider;
     if(provider==='gemini'){
       const voiceModel=env.VOICE_MODEL||'gemini-3.1-flash-tts-preview';
