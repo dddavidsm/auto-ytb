@@ -65,7 +65,7 @@
     "TEXT_MODEL_CREATIVE": "gemini-3.8-flash",
     "TEXT_MODEL_VISION": "gemini-3.8-flash",
     "GEMINI_TEXT_MODEL": "gemini-3.8-flash",
-    "VOICE_PROVIDER": "elevenlabs",
+    "VOICE_PROVIDER": "auto",
     "VOICE_ID": "",
     "GEMINI_VOICE_ID": "Kore",
     "ELEVENLABS_VOICE_MODEL": "eleven_multilingual_v2",
