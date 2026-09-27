@@ -179,10 +179,11 @@ function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage
     const bDifferentUri=recentUris.includes(b.uri)?0:1;
     return bDifferentUri-aDifferentUri;
   });
-  // Use each supplied source clip once. If no fresh, duration-ready clip is
-  // available, callers deliberately choose another visual treatment instead
-  // of looping the same source through the rest of the narration.
-  return ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)===0&&!recentIds.includes(item.id));
+  // Prefer a fresh clip, but allow a semantically compatible clip to return at
+  // most twice when a beat has more shots than the available catalogue. This
+  // prevents a false block without permitting consecutive visual loops.
+  return ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)===0&&!recentIds.includes(item.id))
+    ?? ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)<2&&!recentIds.includes(item.id));
 }
 
 export function planScenes(script: VideoScript, options: ScenePlanningOptions = {}): Scene[] {
