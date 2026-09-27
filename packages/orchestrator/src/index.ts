@@ -55,37 +55,21 @@ function buildSourceLockedDossier(topic:string, footage:SourceFootage[]):Researc
   };
 }
 
-const unsupportedSourceLockedClaim=/\b(motor|motors|battery|batteries|electronic|electronics|cheap|price|dollar|medical|patient|amputee|clinical|therapy|suffocat|robotic)\b/i;
 function constrainSourceLockedPackaging(variants:PackagingVariant[]):PackagingVariant[]{
-  const safe=[
-    ['Printed Hand Moves','Printed hand moves fingers.','HAND MOVES'],
-    ['Printed Hand Moves','Printed hand moves fingers.','HAND MOVES'],
-    ['Printed Hand Moves','Printed hand moves fingers.','HAND MOVES'],
-  ];
-  return variants.map((variant,index)=>{
-    const [title,promise,thumbnailText]=safe[index%safe.length];
-    return{...variant,title,promise,thumbnailText};
-  });
+  // Source-first must preserve the brief's promise. Never substitute a fixture
+  // title/claim here: doing that can make a valid render look like an unrelated
+  // demo when the source catalogue changes.
+  return variants.map((variant)=>({...variant,
+    title:String(variant.title||'Source-led explainer').trim(),
+    promise:String(variant.promise||variant.title||'Source-led explainer').trim(),
+    ...(variant.thumbnailText?{thumbnailText:variant.thumbnailText}:{}),
+  }));
 }
 function constrainSourceLockedScript(script:VideoScript):VideoScript{
-  const safeNarration:{[key:string]:string}={
-    hook:'This printed hand moves because its separate pieces transfer movement to the fingers. Watch how.',
-    setup:'The process starts with a 3D printer shaping the hand parts layer by layer.',
-    evidence:'Next, the separate pieces are assembled by hand, including the links that connect the fingers.',
-    escalation:'Then the design is tested with an everyday object, so the movement has a clear job.',
-    reveal:'The key detail is the chain of parts: move one section, and the linked fingers follow.',
-    payoff:'The result is a printed hand built around one visible action: helping the user grip and hold something.',
-    cta:'Follow for more inventions that solve real problems with simple ideas.',
-  };
-  const sourceId='source-footage-1';
   return{...script,beats:script.beats.map((beat,index)=>{
-    const text=[beat.narration,beat.visualIntent,beat.onScreenText??''].join(' ');
-    const narration=index===0?safeNarration.hook:(unsupportedSourceLockedClaim.test(text)?safeNarration[beat.purpose]??safeNarration.evidence:beat.narration);
-    const visualIntent=unsupportedSourceLockedClaim.test(`${beat.visualIntent} ${beat.onScreenText??''}`)
-      ?`Show the visible ${beat.purpose} action from the supplied source clip, with no added claims.`
-      :beat.visualIntent;
-    const onScreenText=unsupportedSourceLockedClaim.test(beat.onScreenText??'')?null:beat.onScreenText;
-    return{...beat,narration,visualIntent,onScreenText: onScreenText??undefined,sourceIds:[sourceId]};
+    const narration=String(beat.narration||'').trim()||`Observe the ${beat.purpose} shown in the source footage.`;
+    const visualIntent=`${String(beat.visualIntent||'').trim()||`Show the ${beat.purpose} action clearly.`} Use only an authorized moving source clip that matches this beat; do not introduce unrelated subjects or unsupported claims.`;
+    return{...beat,narration,visualIntent,sourceIds:[]};
   })};
 }
 

@@ -53,6 +53,23 @@ const extensionFor=(candidate)=>{
   if(mime.includes('quicktime'))return 'mov';
   return 'mp4';
 };
+function sourceTopicProfile(value){
+  const text=String(value||'').toLowerCase();
+  if(/data cent(er|re)|power grid|electric grid|electricity|energy bottleneck|grid operator|iea|eia/.test(text)){
+    return{
+      queries:[
+        'data center server room electricity power infrastructure video',
+        'power grid transmission lines substation energy infrastructure video',
+        'wind turbines power plant industrial cooling data center video',
+      ],
+      include:/data cent(?:er|re)|server|server room|power grid|electric|electricity|energy|power plant|substation|transmission|transformer|utility|wind turbine|solar farm|industrial|cooling|charger|infrastructure|cityscape/i,
+      exclude:/prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration/i,
+    };
+  }
+  const stop=new Set('about after again against also because being between could from have into more other over than that their there these they this through using what when where which with would your'.split(' '));
+  const terms=[...new Set(text.replace(/[^a-z0-9áéíóúüñ\s-]/gi,' ').split(/\s+/).filter((word)=>word.length>=5&&!stop.has(word)))].slice(0,8);
+  return{queries:[`${terms.join(' ')} real video footage`,`${terms.join(' ')} process demonstration`].filter(Boolean),include:terms.length?new RegExp(terms.map((term)=>term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|'),'i'):null,exclude:null};
+}
 async function cacheMovingVideo(candidate){
   const downloadUrl=String(candidate?.metadata?.downloadUrl||'').trim();
   if(!downloadUrl)throw new Error(`Source candidate ${candidate?.id||'unknown'} has no download URL`);
@@ -75,7 +92,8 @@ async function cacheMovingVideo(candidate){
   return {localPath,uri:pathToFileURL(localPath).toString(),size:info.size,digest};
 }
 async function discoverMovingSourceFootage(){
-  const queries=[topic,`${topic} real video footage`,`${topic} process demonstration`].map((value)=>String(value).replace(/\s+/g,' ').trim()).filter(Boolean).filter((value,index,array)=>array.indexOf(value)===index).slice(0,3);
+  const profile=sourceTopicProfile(topic);
+  const queries=profile.queries.map((value)=>String(value).replace(/\s+/g,' ').trim()).filter(Boolean).filter((value,index,array)=>array.indexOf(value)===index).slice(0,3);
   sourceDiscovery.queries=queries;
   const providers=[
     ['Pexels',searchPexelsVideo],
@@ -101,6 +119,10 @@ async function discoverMovingSourceFootage(){
     const key=String(candidate.sourceKey||candidate.visualFingerprint||candidate.id);
     const duration=Number(candidate.usableDurationSeconds??candidate.durationSeconds??0);
     const rights=['PUBLISHABLE_CONFIRMED','PUBLISHABLE_WITH_ATTRIBUTION'].includes(String(candidate.rightsTier));
+    const title=String(candidate?.metadata?.title||candidate.id||'');
+    const relevant=!profile.include||profile.include.test(title);
+    const unrelated=profile.exclude?.test(title)??false;
+    if(!relevant||unrelated){sourceDiscovery.failed.push({provider:candidate.provider,id:candidate.id,error:'Candidate rejected: title is not semantically relevant to the brief'});return false;}
     if(seen.has(key)||!rights||duration<3||!candidate?.metadata?.downloadUrl)return false;
     seen.add(key);return true;
   }).sort((a,b)=>{
