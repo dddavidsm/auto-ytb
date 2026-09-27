@@ -17,7 +17,7 @@ import { TavilySearchProvider, OpenAIResponsesTextModel, GeminiGenerateContentTe
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
 
 const reqFrom=(env,name)=>{const value=env[name]?.trim();if(!value)throw new Error(`Missing required environment variable ${name}`);return value;};
-const numFrom=(env,name,fallback)=>{const value=Number(env[name]??fallback);return Number.isFinite(value)?value:fallback;};
+const numFrom=(env,name,fallback)=>{const raw=env[name];if(raw==null||String(raw).trim()==='')return fallback;const value=Number(raw);return Number.isFinite(value)?value:fallback;};
 const first=(...values)=>values.find((value)=>String(value??'').trim()!=='');
 const cliArg=(name)=>process.argv.find((value)=>value.startsWith(`--${name}=`))?.slice(name.length+3)??'';
 const parseJson=(value)=>{if(!String(value??'').trim())return null;try{const parsed=JSON.parse(String(value));return parsed&&typeof parsed==='object'?parsed:null;}catch{return null;}};
