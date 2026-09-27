@@ -87,6 +87,10 @@ export default {
       const expected = String(workerEnv.CONTROL_PLANE_TOKEN || '');
       const supplied = String(request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       if (!expected || supplied !== expected) return new Response('Unauthorized', { status: 401 });
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v2').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v3').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v4').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v5').stop();
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v6').stop();
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v7').stop();
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v8').stop();
