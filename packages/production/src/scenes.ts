@@ -141,9 +141,32 @@ function eligibleSourceClips(beat:ScriptBeat, sourceFootage:SourceFootage[] = []
   );
 }
 
-function pickDiverseSourceClip(candidates:SourceFootage[], usage:Map<string,number>, recentIds:string[], recentUris:string[], requiredDuration:number):SourceFootage|undefined{
+function sourceMatchScore(beat:ScriptBeat, clip:SourceFootage):number {
+  const beatText=`${beat.narration} ${beat.visualIntent} ${beat.onScreenText??''}`.toLowerCase();
+  const title=String(clip.title??'').toLowerCase();
+  if(!title)return 0;
+  const groups:[RegExp,RegExp,number][]=[
+    [/battery|batteries|storage|lithium|cell|containerized/,/battery|batteries|storage|lithium|cell|containerized/,8],
+    [/server|data center|compute|computing|cooling|cloud/,/server|data center|compute|computing|cooling|cloud/,7],
+    [/grid|transmission|substation|transformer|utility|power line|power lines|electric|electricity/,/grid|transmission|substation|transformer|utility|power line|power lines|electric|electricity/,6],
+    [/wind|solar|renewable|turbine|power plant/,/wind|solar|renewable|turbine|power plant/,5],
+  ];
+  let score=0;
+  for(const [beatPattern,clipPattern,weight] of groups){
+    if(beatPattern.test(beatText)&&clipPattern.test(title))score+=weight;
+  }
+  const beatWords=new Set(beatText.replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter((word)=>word.length>=6));
+  const titleWords=new Set(title.replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter((word)=>word.length>=6));
+  for(const word of beatWords)if(titleWords.has(word))score+=1;
+  return score;
+}
+
+function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage:Map<string,number>, recentIds:string[], recentUris:string[], requiredDuration:number):SourceFootage|undefined{
   const durationReady=candidates.filter((item)=>item.endSec==null||item.startSec==null||Number(item.endSec)-Number(item.startSec)>=requiredDuration-0.05);
   const ranked=[...(durationReady.length?durationReady:candidates)].sort((a,b)=>{
+    const aMatch=sourceMatchScore(beat,a);
+    const bMatch=sourceMatchScore(beat,b);
+    if(aMatch!==bMatch)return bMatch-aMatch;
     const aUses=usage.get(a.id)??0;
     const bUses=usage.get(b.id)??0;
     const aFresh=aUses===0?1:0;
@@ -159,7 +182,7 @@ function pickDiverseSourceClip(candidates:SourceFootage[], usage:Map<string,numb
   // Use each supplied source clip once. If no fresh, duration-ready clip is
   // available, callers deliberately choose another visual treatment instead
   // of looping the same source through the rest of the narration.
-  return ranked.find((item)=>(usage.get(item.id)??0)===0 && !recentIds.includes(item.id));
+  return ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)===0&&!recentIds.includes(item.id));
 }
 
 export function planScenes(script: VideoScript, options: ScenePlanningOptions = {}): Scene[] {
@@ -180,7 +203,7 @@ export function planScenes(script: VideoScript, options: ScenePlanningOptions = 
         ? sceneOrdinal%3===0 || (sceneOrdinal===0&&beat.purpose==='hook')
         : true;
       const sourceClip=sourceCadence
-        ? pickDiverseSourceClip(sourceCandidates,sourceUsage,recentSourceIds,recentSourceUris,duration)
+        ? pickDiverseSourceClip(beat,sourceCandidates,sourceUsage,recentSourceIds,recentSourceUris,duration)
         : undefined;
       const choice = chooseSceneKind(beat,index,visualValue,sourceRefs.length>0,{...options,selectedSourceClip:sourceClip});
       if(sourceClip){

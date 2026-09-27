@@ -55,6 +55,17 @@ const extensionFor=(candidate)=>{
 };
 function sourceTopicProfile(value){
   const text=String(value||'').toLowerCase();
+  if(/battery|batteries|grid-scale storage|energy storage|renewable electricity|wind and solar/.test(text)){
+    return{
+      queries:[
+        'grid scale battery energy storage facility video',
+        'battery storage renewable electricity power grid video',
+        'wind solar transmission substation energy infrastructure video',
+      ],
+      include:/battery|batteries|energy storage|storage facility|lithium|cell|solar|wind turbine|renewable|power grid|electric|electricity|substation|transmission|transformer|utility|infrastructure/i,
+      exclude:/person|people|hiker|hiking|forest trail|railway|railroad|train|prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration/i,
+    };
+  }
   if(/data cent(er|re)|power grid|electric grid|electricity|energy bottleneck|grid operator|iea|eia/.test(text)){
     return{
       queries:[
@@ -63,7 +74,7 @@ function sourceTopicProfile(value){
         'wind turbines power plant industrial cooling data center video',
       ],
       include:/data cent(?:er|re)|server|server room|power grid|electric|electricity|energy|power plant|substation|transmission|transformer|utility|wind turbine|solar farm|industrial|cooling|charger|infrastructure|cityscape/i,
-      exclude:/prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration/i,
+      exclude:/person|people|hiker|hiking|forest trail|railway|railroad|train|prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration/i,
     };
   }
   const stop=new Set('about after again against also because being between could from have into more other over than that their there these they this through using what when where which with would your'.split(' '));
