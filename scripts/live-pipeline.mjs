@@ -312,7 +312,10 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   const productionRepo=new ProductionRepository(db);
   productionRunId=await productionRepo.createRun({contentIdeaId,state:runtime.archetypeProfile?.researchRequired===false?'SCRIPT':'RESEARCH',metadata:{topic,channelConfig:channel.id,channelKey,opportunityId,contentFormat,contentArchetype:runtime.archetypeDecision??null,packagingGuidance:packagingGuidance??null,productionProfile,packagingLearning,structuralLearning,creativeLearning,structuralExperiment,productionRouting:{requestedMode:requestedProductionMode,sourceFirst,sourcedOnly,archetype:routedArchetype?.archetype??null},sourceDiscovery}});
 
-  const activeVoiceProvider=String(runtime.voice?.name||process.env.VOICE_PROVIDER||'gemini').toLowerCase().includes('eleven')?'elevenlabs':'gemini';
+  const requestedVoiceProvider=String(process.env.VOICE_PROVIDER||'').trim().toLowerCase();
+  const activeVoiceProvider=requestedVoiceProvider==='auto'
+    ? (String(process.env.VOICE_API_KEY||process.env.ELEVENLABS_API_KEY||'').trim()?'elevenlabs':'gemini')
+    : (String(runtime.voice?.name||requestedVoiceProvider||'gemini').toLowerCase().includes('eleven')?'elevenlabs':'gemini');
   const configuredVoiceProvider=String(channel.voiceProfile?.provider||'').toLowerCase();
   const channelVoiceId=configuredVoiceProvider===activeVoiceProvider?channel.voiceProfile?.voiceId:'';
   const voiceId=resolveVoiceId({provider:activeVoiceProvider,language:channel.language,env:process.env,channelVoiceId});
