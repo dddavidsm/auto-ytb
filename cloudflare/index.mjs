@@ -80,6 +80,7 @@ export default {
       const supplied = String(request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
       if (!expected || supplied !== expected) return new Response('Unauthorized', { status: 401 });
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v6').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v7').stop();
       return new Response('stopped');
     }
     if (url.pathname.startsWith('/__internal/media')) {
@@ -89,6 +90,8 @@ export default {
     // Cloudflare keeps a live named instance warm; a revisioned name ensures a
     // new deployment does not keep serving an older image/environment snapshot.
     const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v7');
+    const currentEnv = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, workerEnv[name] ?? productionEnv[name]]));
+    await instance.start({ envVars: currentEnv });
     const headers = new Headers(request.headers);
     headers.set('x-auto-ytb-public-origin', url.origin);
     return instance.fetch(new Request(request, { headers }));
