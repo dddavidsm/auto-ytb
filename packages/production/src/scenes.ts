@@ -209,7 +209,13 @@ function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage
   if(allowRelevantFallback){
     return ranked.find((item)=>(usage.get(item.id)??0)===0&&!recentIds.includes(item.id))
       ?? ranked.find((item)=>(usage.get(item.id)??0)<2&&!recentIds.includes(item.id))
-      ?? ranked.find((item)=>(usage.get(item.id)??0)<maxUses&&item.id!==lastId);
+      ?? ranked.find((item)=>(usage.get(item.id)??0)<maxUses&&item.id!==lastId)
+      // Once every authorized clip has reached the soft reuse budget, keep
+      // the SOURCE_FIRST invariant by reusing the least-recent authorized
+      // moving clip. A source-only scene is preferable to silently creating
+      // a card, still or generated shot.
+      ?? ranked.find((item)=>item.id!==lastId)
+      ?? ranked[0];
   }
   return undefined;
 }
@@ -227,12 +233,19 @@ export function planScenes(script: VideoScript, options: ScenePlanningOptions = 
     for (let index = 0; index < sceneCount; index += 1) {
       const visualValue = scoreVisualValue(beat,index);
       const sourceCandidates=eligibleSourceClips(beat,options.sourceFootage);
+      // The provider catalogue is already relevance/licensing filtered. If a
+      // beat carries a narrow beatIds mapping that exhausts its local subset,
+      // SOURCE_FIRST may borrow from the authorized catalogue rather than
+      // producing an uncovered scene.
+      const sourcePool=sourceCandidates.length || (options.visualMixPolicy??'MIXED_MEDIA')!=='SOURCE_FIRST'
+        ? sourceCandidates
+        : (options.sourceFootage??[]).filter((item)=>item.rightsStatus!=='BLOCKED');
       const sceneOrdinal=scenes.length;
       const sourceCadence=(options.visualMixPolicy??'MIXED_MEDIA')==='MIXED_MEDIA'
         ? sceneOrdinal%3===0 || (sceneOrdinal===0&&beat.purpose==='hook')
         : true;
       const sourceClip=sourceCadence
-        ? pickDiverseSourceClip(beat,sourceCandidates,sourceUsage,recentSourceIds,recentSourceUris,duration,(options.visualMixPolicy??'MIXED_MEDIA')==='SOURCE_FIRST')
+        ? pickDiverseSourceClip(beat,sourcePool,sourceUsage,recentSourceIds,recentSourceUris,duration,(options.visualMixPolicy??'MIXED_MEDIA')==='SOURCE_FIRST')
         : undefined;
       const choice = chooseSceneKind(beat,index,visualValue,sourceRefs.length>0,{...options,selectedSourceClip:sourceClip});
       if(sourceClip){
