@@ -19,7 +19,10 @@ export class GeminiGenerateContentTextModel implements TextModel{
     const fetchFn=this.options.fetchFn??fetch;
     const base=(this.options.endpoint??'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/,'');
     const controller=new AbortController();
-    const timeoutMs=Math.max(15_000,Number(this.options.timeoutMs??180_000));
+    // Keep editorial fallbacks bounded: the orchestrator can continue with a
+    // source-locked deterministic script, but an abandoned HTTP request must
+    // not keep the worker process alive for several minutes.
+    const timeoutMs=Math.max(15_000,Number(this.options.timeoutMs??60_000));
     const timer=setTimeout(()=>controller.abort(),timeoutMs);
     let response:Response;
     try{
