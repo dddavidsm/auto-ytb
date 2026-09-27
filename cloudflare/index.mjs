@@ -94,7 +94,7 @@ export default {
     // new deployment does not keep serving an older image/environment snapshot.
     const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v10');
     const currentEnv = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, workerEnv[name] ?? productionEnv[name]]));
-    await instance.start({ envVars: currentEnv });
+    await instance.startAndWaitForPorts({ startOptions: { envVars: currentEnv } });
     const headers = new Headers(request.headers);
     headers.delete('x-auto-ytb-control-authorized');
     if (url.pathname === '/api/session' && request.method === 'POST') {
