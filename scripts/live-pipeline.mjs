@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -145,7 +145,17 @@ async function discoverMovingSourceFootage(){
   for(const candidate of eligible){
     try{
       const cached=await cacheMovingVideo(candidate);
-      const remote=await mirrorFile(cached.uri,`source-cache/${cached.digest}.${extensionFor(candidate)}`,String(candidate?.metadata?.mime||'video/mp4'));
+      let remote=null;
+      try{
+        remote=await mirrorFile(cached.uri,`source-cache/${cached.digest}.${extensionFor(candidate)}`,String(candidate?.metadata?.mime||'video/mp4'));
+      }catch(error){
+        // R2 mirroring is durable provenance, but it is not required to render a
+        // freshly downloaded, rights-cleared local source clip. Provider-side
+        // proxy auth/rate-limit jitter must not turn valid footage into an empty
+        // source catalogue; the final MP4 still goes through the required R2
+        // persistence gate later in the pipeline.
+        sourceDiscovery.failed.push({provider:candidate.provider,id:candidate.id,error:`Media mirror deferred: ${String(error?.message||error).slice(0,240)}`});
+      }
       const duration=Number(candidate.usableDurationSeconds??candidate.durationSeconds??0);
       const license=String(candidate?.metadata?.license||`${candidate.provider} ${candidate.rightsTier}; attribution required`).replace(/\s+/g,' ').trim();
       const footage={id:`discovered-${safeFilePart(candidate.id)}`,uri:cached.uri,title:String(candidate?.metadata?.title||candidate.id),sourceUrl:String(candidate.sourceUrl||candidate?.metadata?.sourceUrl||''),sourceId:String(candidate.sourceKey||candidate.id),license,rightsStatus:'CLEARED',startSec:0,...(duration>0?{endSec:duration}:{}),cropMode:'CENTER'};
@@ -153,6 +163,42 @@ async function discoverMovingSourceFootage(){
       sourceDiscovery.selected.push({id:footage.id,provider:candidate.provider,sourceKey:candidate.sourceKey||candidate.id,title:footage.title,sourceUrl:footage.sourceUrl,license,localBytes:cached.size,remoteKey:remote?.key??null});
     }catch(error){
       sourceDiscovery.failed.push({provider:candidate.provider,id:candidate.id,error:String(error?.message||error).slice(0,240)});
+    }
+  }
+  if(!sourceFootage.length){
+    // A retry may hit a transient provider/proxy failure even though an earlier
+    // attempt already downloaded authorized clips. Rehydrate only matching
+    // moving-video entries from the local source cache; never invent metadata
+    // and never fall back to stills or synthetic media.
+    try{
+      const entries=await readdir(sourceFootageCacheRoot,{withFileTypes:true});
+      const discoveryFiles=entries.filter((entry)=>entry.isFile()&&entry.name.startsWith('discovery-')&&entry.name.endsWith('.json'));
+      for(const entry of discoveryFiles.sort((a,b)=>b.name.localeCompare(a.name))){
+        const snapshot=JSON.parse(await readFile(resolve(sourceFootageCacheRoot,entry.name),'utf8'));
+        for(const item of Array.isArray(snapshot?.selected)?snapshot.selected:[]){
+          const title=String(item.title||item.id||'');
+          if(profile.include&&!profile.include.test(title))continue;
+          if(profile.exclude?.test(title))continue;
+          const remoteKey=String(item.remoteKey||'');
+          const digestMatch=remoteKey.match(/^source-cache\/([a-f0-9]{24})\.(mp4|webm|mov)$/i);
+          if(!digestMatch)continue;
+          const cacheDir=resolve(sourceFootageCacheRoot,digestMatch[1]);
+          const cachedFiles=await readdir(cacheDir,{withFileTypes:true}).catch(()=>[]);
+          const cachedFile=cachedFiles.find((candidate)=>candidate.isFile()&&/\.(mp4|webm|mov)$/i.test(candidate.name));
+          if(!cachedFile)continue;
+          const localPath=resolve(cacheDir,cachedFile.name);
+          const info=await stat(localPath).catch(()=>null);
+          if(!info?.isFile()||info.size<1024)continue;
+          const id=String(item.id||`cached-${digestMatch[1]}`);
+          if(sourceFootage.some((clip)=>clip.id===id))continue;
+          sourceFootage.push({id,uri:pathToFileURL(localPath).toString(),title,sourceUrl:String(item.sourceUrl||''),sourceId:String(item.sourceKey||id),license:String(item.license||`${item.provider||'source'} PUBLISHABLE_WITH_ATTRIBUTION; attribution required`),rightsStatus:'CLEARED',startSec:0,cropMode:'CENTER'});
+          sourceDiscovery.selected.push({id,provider:item.provider||'cached',sourceKey:item.sourceKey||id,title,sourceUrl:String(item.sourceUrl||''),license:String(item.license||''),localBytes:info.size,remoteKey});
+          if(sourceFootage.length>=Number(process.env.SOURCE_FOOTAGE_MAX_CLIPS||24))break;
+        }
+        if(sourceFootage.length)break;
+      }
+    }catch(error){
+      sourceDiscovery.failed.push({provider:'local-cache',error:String(error?.message||error).slice(0,240)});
     }
   }
   await mkdir(resolve(sourceFootageCacheRoot),{recursive:true});

@@ -115,9 +115,12 @@ export default {
   async scheduled(_controller, workerEnv) {
     const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v10');
     const currentEnv = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, workerEnv[name] ?? productionEnv[name]]));
-    await instance.start({ envVars: currentEnv });
+    const state = await instance.getState();
+    if (state.status === 'stopped' || state.status === 'stopped_with_code') {
+      await instance.start({ envVars: currentEnv });
+    }
     instance.renewActivityTimeout();
-    console.log('AUTO-YTB autonomous container activity renewed');
+    console.log(`AUTO-YTB autonomous container activity renewed (${state.status})`);
   },
 };
 

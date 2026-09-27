@@ -189,10 +189,13 @@ function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage
     return bDifferentUri-aDifferentUri;
   });
   // Prefer a fresh clip, but allow a semantically compatible clip to return at
-  // most twice when a beat has more shots than the available catalogue. This
-  // prevents a false block without permitting consecutive visual loops.
+  // most three times when a beat has more shots than the available catalogue.
+  // The recent-id cooldown still prevents consecutive visual loops while the
+  // bounded third window avoids rejecting a valid source-first documentary
+  // merely because several beats share the same physical infrastructure.
   return ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)===0&&!recentIds.includes(item.id))
-    ?? ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)<2&&!recentIds.includes(item.id));
+    ?? ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)<2&&!recentIds.includes(item.id))
+    ?? ranked.find((item)=>sourceMatchScore(beat,item)>0&&(usage.get(item.id)??0)<3&&!recentIds.includes(item.id));
 }
 
 export function planScenes(script: VideoScript, options: ScenePlanningOptions = {}): Scene[] {
