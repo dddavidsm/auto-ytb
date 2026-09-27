@@ -55,54 +55,26 @@ const extensionFor=(candidate)=>{
   return 'mp4';
 };
 function sourceTopicProfile(value){
+  // Source discovery is intentionally domain-agnostic. The topic/radar brief
+  // supplies the semantic vocabulary; providers are asked for moving footage
+  // and the candidate title is checked against that same vocabulary. This
+  // prevents a growing list of solar/wind/data-centre exceptions from silently
+  // becoming the product's editorial brain.
   const text=String(value||'').toLowerCase();
-  if(/solar farm|solar farms|solar panel|solar panels|photovoltaic|solar power/.test(text)){
-    return{
-      queries:[
-        'solar panels solar farm photovoltaic electricity video',
-        'solar power plant panels renewable energy video',
-        'solar farm power grid transmission infrastructure video',
-      ],
-      include:/solar panel|solar farm|photovoltaic|solar array|solar power|renewable|power grid|electric|electricity|substation|transmission|transformer|utility|infrastructure/i,
-      exclude:/wind turbine|wind farm|wind energy|person|people|passersby|hiker|hiking|forest trail|railway|railroad|train|plane|aircraft|airliner|jet|airport|prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration/i,
-    };
-  }
-  if(/battery|batteries|grid-scale storage|energy storage|renewable electricity|wind and solar/.test(text)){
-    return{
-      queries:[
-        'grid scale battery energy storage facility video',
-        'battery storage renewable electricity power grid video',
-        'wind solar transmission substation energy infrastructure video',
-      ],
-      include:/battery|batteries|energy storage|storage facility|lithium|cell|solar|wind turbine|renewable|power grid|electric|electricity|substation|transmission|transformer|utility|infrastructure/i,
-      exclude:/person|people|hiker|hiking|forest trail|railway|railroad|train|prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration/i,
-    };
-  }
-  if(/wind farm|wind turbine|wind turbines|turbine|wind energy/.test(text)){
-    return{
-      queries:[
-        'wind turbines wind farm renewable energy video',
-        'power grid transmission lines electricity infrastructure video',
-        'electrical substation power lines utility connection video',
-      ],
-      include:/wind turbine|wind farm|renewable|power grid|electric|electricity|energy|substation|transmission|transformer|utility|power line|infrastructure|tower/i,
-      exclude:/person|people|passersby|hiker|hiking|forest trail|railway|railroad|train|plane|aircraft|airliner|jet|airport|prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration|data cent(?:er|re)|server room/i,
-    };
-  }
-  if(/data cent(er|re)|power grid|electric grid|electricity|energy bottleneck|grid operator|iea|eia/.test(text)){
-    return{
-      queries:[
-        'data center server room electricity power infrastructure video',
-        'power grid transmission lines substation energy infrastructure video',
-        'wind turbines power plant industrial cooling data center video',
-      ],
-      include:/data cent(?:er|re)|server|server room|power grid|electric|electricity|energy|power plant|substation|transmission|transformer|utility|wind turbine|solar farm|industrial|cooling|charger|infrastructure|cityscape/i,
-      exclude:/person|people|hiker|hiking|forest trail|railway|railroad|train|prosthetic|cyborg|robot hand|printed hand|headset|hacker|stock exchange|trading|crypto|gaming|cartoon|illustration/i,
-    };
-  }
-  const stop=new Set('about after again against also because being between could from have into more other over than that their there these they this through using what when where which with would your'.split(' '));
-  const terms=[...new Set(text.replace(/[^a-z0-9áéíóúüñ\s-]/gi,' ').split(/\s+/).filter((word)=>word.length>=5&&!stop.has(word)))].slice(0,8);
-  return{queries:[`${terms.join(' ')} real video footage`,`${terms.join(' ')} process demonstration`].filter(Boolean),include:terms.length?new RegExp(terms.map((term)=>term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|'),'i'):null,exclude:null};
+  const stop=new Set('about after again against also because being between could from have into more other over than that their there these they this through using what when where which with would your how why'.split(' '));
+  const terms=[...new Set(text.replace(/[^a-z0-9áéíóúüñ\s-]/gi,' ').split(/\s+/).filter((word)=>word.length>=5&&!stop.has(word)))].slice(0,10);
+  const core=terms.slice(0,7);
+  const escaped=core.map((term)=>term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
+  const irrelevant=/slideshow|slide show|screenshot|screen capture|still image|illustration|cartoon|logo reveal|meme|watermark|template|infographic/i;
+  return{
+    queries:[
+      `${core.join(' ')} real moving video footage`,
+      `${core.slice(0,6).join(' ')} documentary b-roll`,
+      `${core.slice(0,5).join(' ')} process infrastructure video`,
+    ].filter((query)=>query.trim().length>18),
+    include:escaped.length?new RegExp(escaped.join('|'),'i'):null,
+    exclude:irrelevant,
+  };
 }
 async function cacheMovingVideo(candidate){
   const downloadUrl=String(candidate?.metadata?.downloadUrl||'').trim();

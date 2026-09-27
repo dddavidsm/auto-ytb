@@ -33,6 +33,7 @@
     "test:autonomous-cutover": "node scripts/test-autonomous-studio-cutover.mjs",
     "test:visual-continuity-cutover": "npm run build && node scripts/test-visual-continuity-cutover.mjs",
     "test:footage-first": "npm run build && node scripts/test-footage-first.mjs",
+    "test:shot-contracts": "npm run build && node scripts/test-shot-contracts.mjs",
     "test:generative-cutover": "npm run build && node scripts/test-generative-cutover.mjs",
     "footage:discover": "npm run build && node scripts/footage-agent.mjs",
     "test:human-calibration": "node scripts/test-human-calibration.mjs",

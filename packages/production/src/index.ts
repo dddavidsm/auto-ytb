@@ -30,3 +30,4 @@ export * from './visual-continuity.js';
 export * from './sourced-autoproduction.js';
 export * from './generative-production.js';
 export * from './video-only.js';
+export * from './shot-contracts.js';

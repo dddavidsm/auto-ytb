@@ -145,29 +145,15 @@ function sourceMatchScore(beat:ScriptBeat, clip:SourceFootage):number {
   const beatText=`${beat.narration} ${beat.visualIntent} ${beat.onScreenText??''}`.toLowerCase();
   const title=String(clip.title??'').toLowerCase();
   if(!title)return 0;
-  const groups:[RegExp,RegExp,number][]=[
-    [/battery|batteries|storage|lithium|cell|containerized/,/battery|batteries|storage|lithium|cell|containerized/,8],
-    [/server|data center|compute|computing|cooling|cloud/,/server|data center|compute|computing|cooling|cloud/,7],
-    [/grid|transmission|substation|transformer|utility|power line|power lines|electric|electricity/,/grid|transmission|substation|transformer|utility|power line|power lines|electric|electricity/,6],
-    [/wind|solar|renewable|turbine|power plant/,/wind|solar|renewable|turbine|power plant/,5],
-  ];
-  let score=0;
-  let beatHasSpecificVisual=false;
-  for(const [beatPattern,clipPattern,weight] of groups){
-    if(beatPattern.test(beatText)){
-      beatHasSpecificVisual=true;
-      if(clipPattern.test(title))score+=weight;
-    }
-  }
-  const beatWords=new Set(beatText.replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter((word)=>word.length>=6));
-  const titleWords=new Set(title.replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter((word)=>word.length>=6));
-  for(const word of beatWords)if(titleWords.has(word))score+=1;
-  // Abstract documentary beats still need moving proof. If they name no
-  // concrete visual subject, use the strongest same-domain clip as context;
-  // explicit subjects (battery, server, etc.) remain strict and cannot fall
-  // back to an unrelated object.
-  if(score===0&&!beatHasSpecificVisual&&/wind|solar|turbine|grid|transmission|substation|transformer|utility|power|electric|energy|data center|server/i.test(title))score=1;
-  return score;
+  const stop=new Set('about after again against also because being between could from have into more other over than that their there these they this through using what when where which with would your'.split(' '));
+  const beatWords=[...new Set(beatText.replace(/[^a-z0-9áéíóúüñ]+/gi,' ').split(/\s+/).filter((word)=>word.length>=5&&!stop.has(word)))];
+  const titleWords=new Set(title.replace(/[^a-z0-9áéíóúüñ]+/gi,' ').split(/\s+/).filter((word)=>word.length>=5&&!stop.has(word)));
+  const exact=beatWords.filter((word)=>titleWords.has(word));
+  const visualTerms=[...new Set(String(beat.visualIntent||'').toLowerCase().replace(/[^a-z0-9áéíóúüñ]+/gi,' ').split(/\s+/).filter((word)=>word.length>=5&&!stop.has(word)))];
+  const visualHits=visualTerms.filter((word)=>titleWords.has(word)).length;
+  // Weight exact visual nouns above generic narration overlap. The caller may
+  // still opt into a bounded relevant fallback after this score is exhausted.
+  return visualHits*5+exact.length;
 }
 
 function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage:Map<string,number>, recentIds:string[], recentUris:string[], requiredDuration:number, allowRelevantFallback=false):SourceFootage|undefined{
