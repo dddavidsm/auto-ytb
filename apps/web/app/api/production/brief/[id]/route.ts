@@ -11,7 +11,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const job = rows[0];
   if (!job) return NextResponse.json({ error: 'Production job not found.' }, { status: 404 });
   const events = await query<any>(`select event_type,detail,created_at from job_events where job_id=$1 order by created_at desc limit 20`, [id]);
-  return NextResponse.json({ ok: true, job: { id: job.id, state: job.state, attempts: job.attempts, maxAttempts: job.max_attempts, error: job.last_error, createdAt: job.created_at, updatedAt: job.updated_at, completedAt: job.completed_at, productionRunId: job.production_run_id, productionState: job.production_state, metadata: job.production_metadata, brief: job.payload?.ui ?? null }, events });
+  return NextResponse.json({ ok: true, job: { id: job.id, state: job.state, attempts: job.attempts, maxAttempts: job.max_attempts, error: job.state === 'running' ? null : job.last_error, createdAt: job.created_at, updatedAt: job.updated_at, completedAt: job.completed_at, productionRunId: job.production_run_id, productionState: job.production_state, metadata: job.production_metadata, brief: job.payload?.ui ?? null }, events });
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
