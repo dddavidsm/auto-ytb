@@ -61,9 +61,11 @@ export function createLiveRuntime(env=process.env){
   if(voiceMode!=='NONE'){
     const requestedVoiceProvider=String(env.VOICE_PROVIDER||'gemini').toLowerCase();
     const configuredElevenLabsKey=String(env.VOICE_API_KEY||env.ELEVENLABS_API_KEY||'').trim();
+    const elevenLabsKeyLooksValid=/^sk_[A-Za-z0-9_-]{20,}$/.test(configuredElevenLabsKey);
     const provider=requestedVoiceProvider==='auto'
-      ? (configuredElevenLabsKey?'elevenlabs':geminiKey?'gemini':'none')
+      ? (elevenLabsKeyLooksValid?'elevenlabs':geminiKey?'gemini':'none')
       : requestedVoiceProvider;
+    if(requestedVoiceProvider==='auto'&&configuredElevenLabsKey&&!elevenLabsKeyLooksValid)console.warn('[voice-routing] ElevenLabs key format is invalid; using Gemini until ELEVENLABS_API_KEY is replaced');
     if(provider==='gemini'){
       const voiceModel=env.VOICE_MODEL||'gemini-2.5-flash-preview-tts';
       const rawVoice=new GeminiVoiceProvider({apiKey:geminiKey||reqFrom(env,'GEMINI_API_KEY'),store,model:voiceModel,defaultVoice:env.GEMINI_VOICE_ID||env.VOICE_ID||'Kore',endpoint:geminiEndpoint,protocol:env.GEMINI_TTS_PROTOCOL||'generateContent'});
