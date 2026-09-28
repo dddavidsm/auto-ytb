@@ -36,13 +36,13 @@ const requestedProductionMode=String(process.env.AUTO_YTB_PRODUCTION_MODE||'AUTO
 const channelNiche=[channel.id,channel.positioning,...(channel.themes??[]),...(channel.channelType==='UMBRELLA_OPPORTUNITY_DRIVEN'?['documentary','explainer','factual','research','evidence-led']:[])].filter(Boolean).join(' ');
 const routedArchetype=inferContentArchetype({topic,contentFormat,channelNiche});
 const explicitSourceMode=requestedProductionMode==='SOURCE_FIRST'||requestedProductionMode==='SOURCED';
-const sourceFirst=Boolean(sourceFootage?.length)
+let sourceFirst=Boolean(sourceFootage?.length)
   || explicitSourceMode
   || (requestedProductionMode==='AUTO'
     && routedArchetype?.profile?.researchRequired!==false
     && routedArchetype?.profile?.requiresCanonicalCast!==true
     && routedArchetype?.profile?.realityMode!=='REALISTIC_SYNTHETIC');
-const sourcedOnly=sourceFirst && (requestedProductionMode==='AUTO'||explicitSourceMode||Boolean(sourceFootagePath));
+let sourcedOnly=sourceFirst && (requestedProductionMode==='AUTO'||explicitSourceMode||Boolean(sourceFootagePath));
 console.log(`[live-pipeline] start format=${contentFormat} topic=${topic.slice(0,120)}`);
 
 const sourceDiscovery={mode:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',requestedMode:requestedProductionMode,queries:[],providers:[],selected:[],failed:[]};
@@ -207,7 +207,24 @@ if(!Array.isArray(sourceFootage))sourceFootage=[];
 if(sourceFootage.length){
   sourceDiscovery.selected=sourceFootage.map((clip)=>({id:clip.id,provider:'supplied',sourceKey:clip.sourceId??clip.id,title:clip.title??clip.id,sourceUrl:clip.sourceUrl??null,license:clip.license,rightsStatus:clip.rightsStatus}));
 }
-if(sourceFirst&&!sourceFootage.length)await discoverMovingSourceFootage();
+if(sourceFirst&&!sourceFootage.length){
+  try{
+    await discoverMovingSourceFootage();
+  }catch(error){
+    if(requestedProductionMode!=='AUTO'||explicitSourceMode||Boolean(sourceFootagePath))throw error;
+    // AUTO is allowed to use authorized moving footage first, but a temporary
+    // stock-provider outage or a narrow topic must not strand the whole studio.
+    // Fall back to the configured generative VIDEO provider explicitly; the
+    // orchestrator still enforces VIDEO_ONLY, so no stills, slides, cards or
+    // fake camera moves can enter the finished video.
+    sourceFirst=false;
+    sourcedOnly=false;
+    sourceDiscovery.mode='MIXED_MEDIA';
+    sourceDiscovery.fallback='MIXED_MEDIA_GENERATIVE_VIDEO';
+    sourceDiscovery.fallbackReason=String(error?.message||error).slice(0,240);
+    console.warn(`[live-pipeline] source discovery unavailable in AUTO; continuing with VIDEO_ONLY generative motion: ${sourceDiscovery.fallbackReason}`);
+  }
+}
 if(sourceFirst){
   sourceFootageGuidance=[sourceFootageGuidance,'HARD VISUAL SOURCE LOCK: use only authorized moving video clips matched to the beats; no stills, slides, charts, source cards, generated images, fake motion or synthetic filler; block the run when a beat lacks moving-footage coverage.'].filter(Boolean).join('\n');
 }
