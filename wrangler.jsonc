@@ -47,7 +47,7 @@
     }
   ],
   "vars": {
-    "REAL_GENERATION_ENABLED": "false",
+    "REAL_GENERATION_ENABLED": "true",
     "AUTO_YTB_VIDEO_ONLY": "true",
     "AUTO_YTB_PRODUCTION_MODE": "AUTO",
     "SOURCE_FOOTAGE_MAX_CLIPS": "5",
@@ -89,7 +89,7 @@
     "LOCAL_THUMBNAIL_ROOT": ".data/thumbnails",
     "LOCAL_BRAND_ROOT": ".data/brand",
     "CONTENT_LIBRARY_ENABLED": "true",
-    "CONTENT_LIBRARY_PROVIDER": "google-drive",
+    "CONTENT_LIBRARY_PROVIDER": "cloudflare-r2",
     "DRIVE_ROOT_FOLDER": "AUTO-YTB",
     "DRIVE_REDIRECT_URI": "http://localhost:53683/oauth2/callback",
     "YOUTUBE_REGION": "US",

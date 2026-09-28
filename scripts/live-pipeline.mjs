@@ -212,7 +212,9 @@ if(sourceFirst){
   sourceFootageGuidance=[sourceFootageGuidance,'HARD VISUAL SOURCE LOCK: use only authorized moving video clips matched to the beats; no stills, slides, charts, source cards, generated images, fake motion or synthetic filler; block the run when a beat lacks moving-footage coverage.'].filter(Boolean).join('\n');
 }
 
-function driveArchiveConfigured(env=process.env){
+function archiveConfigured(env=process.env){
+  const provider=String(env.CONTENT_LIBRARY_PROVIDER||'cloudflare-r2').toLowerCase();
+  if(['cloudflare-r2','r2'].includes(provider))return Boolean(String(env.AUTO_YTB_MEDIA_PROXY_URL??'').trim()&&String(env.CONTROL_PLANE_TOKEN??'').trim());
   return ['DRIVE_CLIENT_ID','DRIVE_CLIENT_SECRET','DRIVE_REFRESH_TOKEN','DRIVE_ROOT_FOLDER_ID'].every((name)=>String(env[name]??'').trim().length>0);
 }
 function archiveProductionRun(runId, channelConfigPath){
@@ -344,11 +346,11 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   if(result.externalId)await new PublicationRepository(db).create({productionRunId,channelId,youtubeVideoId:result.externalId,state:'private',contentFormat,containsSyntheticMedia:result.qa?.containsSyntheticMedia??false,metadata:{...renderPersistence,contentFormat,contentArchetype:result.manifest?.contentArchetype??null,executionPlan:result.manifest?.executionPlan??null,selectedPackagingId:result.manifest?.selectedPackagingId,packagingGuidance:packagingGuidance??null,productionProfile,packagingSelection:result.manifest?.packagingSelection??null,structuralLearning,creativeLearning,structuralExperiment,attention:result.attention??null,finalInspection:result.finalInspection??null}});
   if(opportunityId&&result.state==='READY_FOR_REVIEW')await db.query(`update opportunities set status='produced',recommended_format=coalesce(recommended_format,$2) where id=$1`,[opportunityId,contentFormat]);
   if(result.state==='READY_FOR_REVIEW'&&String(process.env.AUTO_ARCHIVE_DRIVE??'true').toLowerCase()!=='false'){
-    if(driveArchiveConfigured()){
-      console.log('[live-pipeline] render ready; archiving run and artifacts to Google Drive');
+    if(archiveConfigured()){
+      console.log(`[live-pipeline] render ready; archiving run and artifacts to ${process.env.CONTENT_LIBRARY_PROVIDER||'cloudflare-r2'}`);
       await archiveProductionRun(productionRunId,configPath);
     }else{
-      console.log('[live-pipeline] render ready; Google Drive archive skipped because Drive OAuth is not configured');
+      console.log(`[live-pipeline] render ready; ${process.env.CONTENT_LIBRARY_PROVIDER||'cloudflare-r2'} archive skipped because its credentials are not configured`);
     }
   }
   console.log(JSON.stringify({productionRunId,contentFormat,contentArchetype:result.manifest?.contentArchetype?.id??runtime.archetypeDecision?.archetype??null,contentArchetypeDecision:runtime.archetypeDecision??null,executionPlan:result.manifest?.executionPlan??null,state:result.state,qa:result.qa?.score,qaBlockers:result.qa?.blockers??[],attention:result.attention?.score,attentionIssues:result.attention?.issues??[],attentionDimensions:result.attention?.dimensions??[],renderQa:result.finalInspection?.score,costUsd:durableCost,thumbnails:result.manifest?.thumbnails.length??0,renderUri:result.renderUri,youtubeVideoId:result.externalId??null,learnedPackaging:Boolean(packagingGuidance),creativeLearningScope:creativeLearning.scope,creativeGuidanceWinners:creativeLearning.winners,productionProfile,packagingSelection:result.manifest?.packagingSelection??null,structuralLearning,structuralExperiment,events:result.events.slice(-16)},null,2));
