@@ -1,0 +1,1 @@
+export default function GalleryLoading(){return <main className="main"><div className="card loading-card"><div className="eyebrow">Video library</div><h1>Cargando galería…</h1><p className="muted">Estamos leyendo los entregables persistidos y sus métricas.</p><div className="loading-grid"><span/><span/></div></div></main>}

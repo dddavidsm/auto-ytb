@@ -1,0 +1,1 @@
+export default function VideoLoading(){return <main className="main"><div className="card loading-card"><div className="eyebrow">Video review</div><h1>Abriendo revisión…</h1><p className="muted">Cargando el vídeo, QA, economía y timeline.</p><div className="loading-video"/></div></main>}

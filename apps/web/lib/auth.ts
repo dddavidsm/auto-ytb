@@ -1,14 +1,67 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { query } from './db';
 
 const COOKIE='auto_ytb_session';
 export const googleOauthStateCookieName='auto_ytb_google_oauth_state';
 const MAX_AGE_SECONDS=60*60*24*7;
 const GOOGLE_COMPLETION_MAX_AGE_SECONDS=60*5;
 
-type SessionPayload={exp:number;scope:'control-plane';email?:string;auth?:'google'|'token'};
+type SessionPayload={exp:number;scope:'control-plane';email?:string;auth?:'google'|'token'|'password'};
 type GoogleCompletionPayload={exp:number;scope:'control-plane-google-complete';email:string};
+
+export type AppUser={id:string;email:string;name:string};
+
+let authSchemaReady:Promise<void>|null=null;
+
+export async function ensureAuthSchema(){
+  if(!authSchemaReady){
+    authSchemaReady=(async()=>{
+      await query(`create table if not exists app_users (
+        id uuid primary key default gen_random_uuid(),
+        email text not null,
+        name text not null default '',
+        password_hash text not null,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )`);
+      await query(`create unique index if not exists app_users_email_lower_idx on app_users (lower(email))`);
+    })().catch((error)=>{authSchemaReady=null;throw error;});
+  }
+  return authSchemaReady;
+}
+
+export function normalizeEmail(value:string){return String(value||'').trim().toLowerCase();}
+
+function passwordHash(password:string){
+  const salt=randomBytes(16).toString('base64url');
+  const digest=scryptSync(password,salt,64,{N:16384,r:8,p:1}).toString('base64url');
+  return `scrypt$16384$8$1$${salt}$${digest}`;
+}
+
+function verifyPassword(password:string,encoded:string){
+  const [algorithm,n,r,p,salt,digest]=String(encoded||'').split('$');
+  if(algorithm!=='scrypt'||!n||!r||!p||!salt||!digest)return false;
+  try{
+    const actual=scryptSync(password,salt,Buffer.from(digest,'base64url').length,{N:Number(n),r:Number(r),p:Number(p)});
+    const expected=Buffer.from(digest,'base64url');
+    return actual.length===expected.length&&timingSafeEqual(actual,expected);
+  }catch{return false;}
+}
+
+export async function createPasswordUser(email:string,name:string,password:string):Promise<AppUser>{
+  await ensureAuthSchema();
+  const rows=await query<AppUser>(`insert into app_users(email,name,password_hash) values($1,$2,$3) returning id,email,name`,[normalizeEmail(email),String(name||'').trim().slice(0,100),passwordHash(password)]);
+  return rows[0];
+}
+
+export async function authenticatePasswordUser(email:string,password:string):Promise<AppUser|null>{
+  await ensureAuthSchema();
+  const rows=await query<AppUser&{password_hash:string}>(`select id,email,name,password_hash from app_users where lower(email)=lower($1) limit 1`,[normalizeEmail(email)]);
+  const user=rows[0];
+  return user&&verifyPassword(password,user.password_hash)?{id:user.id,email:user.email,name:user.name}:null;
+}
 
 function secret(){
   const value=(process.env.SESSION_SECRET||process.env.CONTROL_PLANE_TOKEN||'').trim();
@@ -41,7 +94,7 @@ export function publicAppOrigin(request?:Request){
   const forwardedProto=request?.headers.get('x-forwarded-proto')||'https';
   return `${forwardedProto}://${forwardedHost}`;
 }
-export function createSessionToken(options:{email?:string;auth?:'google'|'token';now?:number}={}){
+export function createSessionToken(options:{email?:string;auth?:'google'|'token'|'password';now?:number}={}){
   const now=options.now??Date.now();
   const payload:SessionPayload={exp:Math.floor(now/1000)+MAX_AGE_SECONDS,scope:'control-plane',...(options.email?{email:options.email.toLowerCase()}:{}),...(options.auth?{auth:options.auth}:{})};
   return signPayload(payload);
@@ -63,6 +116,6 @@ export function verifySessionToken(token:string|undefined|null){return Boolean(r
 export async function currentSession(){const store=await cookies();return readSessionToken(store.get(COOKIE)?.value);}
 export async function hasSession(){return Boolean(await currentSession());}
 export async function requireSession(){if(!(await hasSession()))redirect('/login');}
-export async function setSessionCookie(options:{email?:string;auth?:'google'|'token'}={}){const store=await cookies();store.set(COOKIE,createSessionToken(options),sessionCookieOptions());}
+export async function setSessionCookie(options:{email?:string;auth?:'google'|'token'|'password'}={}){const store=await cookies();store.set(COOKIE,createSessionToken(options),sessionCookieOptions());}
 export async function clearSessionCookie(){const store=await cookies();store.set(COOKIE,'',{...sessionCookieOptions(),maxAge:0});}
 export const sessionCookieName=COOKIE;
