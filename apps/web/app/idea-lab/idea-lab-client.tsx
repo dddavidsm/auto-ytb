@@ -69,11 +69,10 @@ export default function IdeaLabClient() {
     setChatBusy(null);
   }
 
-  async function startProduction(idea: Idea) {
-    setProduction((current) => ({ ...current, [idea.id]: 'Encolando producción…' }));
-    const response = await fetch('/api/production/brief', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ opportunityId: idea.id, prompt: `${idea.title}. ${idea.angle}`, format: idea.format, durationSec: idea.format === 'SHORT_VERTICAL' ? 60 : 180, qualityMode: 'MAX_QUALITY' }) });
-    const payload = await response.json().catch(() => ({}));
-    setProduction((current) => ({ ...current, [idea.id]: response.ok ? `Producción en cola · job ${payload.jobId}` : (payload.error || 'No se pudo iniciar') }));
+  function startProduction(idea: Idea) {
+    setProduction((current) => ({ ...current, [idea.id]: 'Abriendo el creador y empezando la producción…' }));
+    const params = new URLSearchParams({ opportunityId: idea.id, prompt: `${idea.title}. ${idea.angle}`, format: idea.format || 'AUTO', durationSec: idea.format === 'SHORT_VERTICAL' ? '60' : '180', qualityMode: 'MAX_QUALITY', productionMode: 'AUTO', autoStart: '1' });
+    window.location.assign(`/create?${params.toString()}`);
   }
 
   return <><style>{`.idea-mode-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:18px}.idea-mode{border:1px solid var(--line);background:var(--surface-2);border-radius:14px;padding:13px;text-align:left;cursor:pointer;color:var(--text)}.idea-mode strong,.idea-mode span{display:block}.idea-mode strong{font-size:13px}.idea-mode span{font-size:11px;color:var(--muted);margin-top:5px;line-height:1.35}.idea-mode.selected{border-color:var(--blue);background:var(--blue-2)}.idea-list{display:grid;gap:12px}.idea-card h3{font-size:18px;margin:10px 0 5px}.idea-card p{font-size:13px;line-height:1.5}.idea-actions{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin-top:16px}.idea-actions .primary{padding:9px 12px}.idea-chat{display:grid;gap:10px;border-top:1px solid var(--line);margin-top:16px;padding-top:14px}.chat-log{display:grid;gap:8px;max-height:280px;overflow:auto}.chat-line{display:grid;gap:3px;padding:10px 12px;border-radius:12px;background:var(--surface-2);font-size:13px}.chat-line.user{background:var(--blue-2)}.chat-line strong{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}.series-box{display:grid;gap:5px;padding:12px;background:var(--green-bg);border-radius:12px;font-size:12px}.series-box span{color:var(--green)}@media(max-width:820px){.idea-mode-grid{grid-template-columns:1fr 1fr}}`}</style><div className="content"><header className="topbar"><div><p className="eyebrow">Creative intelligence</p><h1>Idea Lab</h1></div><Link href="/" className="pill info">← Portfolio</Link></header><main className="main">

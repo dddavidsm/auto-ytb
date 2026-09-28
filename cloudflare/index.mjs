@@ -102,6 +102,7 @@ export default {
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v10').stop();
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v11').stop();
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v12').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v13').stop();
       return new Response('stopped');
     }
     if (url.pathname.startsWith('/__internal/media')) {
@@ -110,7 +111,7 @@ export default {
     // Bump this id whenever the container image or its injected secrets change.
     // Cloudflare keeps a live named instance warm; a revisioned name ensures a
     // new deployment does not keep serving an older image/environment snapshot.
-    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v12');
+    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v13');
     const headers = new Headers(request.headers);
     headers.delete('x-auto-ytb-control-authorized');
     if (url.pathname === '/api/session' && request.method === 'POST') {
@@ -123,7 +124,7 @@ export default {
     return instance.fetch(new Request(request, { headers }));
   },
   async scheduled(_controller, workerEnv) {
-    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v12');
+    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v13');
     const currentEnv = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, workerEnv[name] ?? productionEnv[name]]));
     const state = await instance.getState();
     if (state.status === 'stopped' || state.status === 'stopped_with_code') {
