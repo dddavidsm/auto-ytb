@@ -69,6 +69,8 @@
     "VOICE_PROVIDER": "auto",
     "VOICE_ID": "",
     "GEMINI_VOICE_ID": "Kore",
+    "GEMINI_TTS_PROTOCOL": "generateContent",
+    "GEMINI_FALLBACK_TTS_MODEL": "gemini-2.5-flash-preview-tts",
     "ELEVENLABS_VOICE_MODEL": "eleven_multilingual_v2",
     "VOICE_TIMESTAMPS": "true",
     "GEMINI_TRANSCRIBE_MODEL": "gemini-3.5-transcribe",

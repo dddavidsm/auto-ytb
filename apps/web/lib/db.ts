@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 
 declare global { var __autoYtbWebPool: Pool | undefined; }
 
-function connectionString(){const value=process.env.DATABASE_URL?.trim();if(!value)throw new Error('DATABASE_URL is required');return value;}
+function connectionString(){const value=process.env.DATABASE_URL?.trim();if(!value)throw new Error('DATABASE_URL is required');if(process.env.DATABASE_SSL==='true'){try{const url=new URL(value);const mode=url.searchParams.get('sslmode')?.toLowerCase();if(['prefer','require','verify-ca'].includes(mode??'')){url.searchParams.delete('sslmode');return url.toString();}}catch{/* pg will report malformed URLs when connecting */}}return value;}
 export function pool(){
   if(!globalThis.__autoYtbWebPool)globalThis.__autoYtbWebPool=new Pool({connectionString:connectionString(),max:6,ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined});
   return globalThis.__autoYtbWebPool;

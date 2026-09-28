@@ -6,6 +6,25 @@ import { spawn } from 'node:child_process';
 import { escapeFfmpegFilterPath, ffmpegFontOption, pathFromUri } from './file-path.mjs';
 
 function fileUri(path) { return `file://${resolve(path)}`; }
+
+function normalizeConnectionString(connectionString, ssl) {
+  if (!ssl || !String(connectionString).trim()) return connectionString;
+  try {
+    const url = new URL(connectionString);
+    const mode = url.searchParams.get('sslmode');
+    // pg's ssl option is the source of truth in this application. Removing
+    // the legacy URL alias keeps the current TLS behavior and avoids the
+    // pg-connection-string v3 compatibility warning.
+    if (['prefer', 'require', 'verify-ca'].includes(String(mode).toLowerCase())) {
+      url.searchParams.delete('sslmode');
+      return url.toString();
+    }
+  } catch {
+    // Leave non-standard connection strings untouched; pg will report the
+    // actual parsing problem when it opens the pool.
+  }
+  return connectionString;
+}
 async function run(command, args) {
   await new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -533,8 +552,8 @@ export class FfmpegRenderer {
 
 export class NodePostgresSqlClient {
   constructor(connectionString, options = {}) {
-    this.connectionString = connectionString;
     this.options = options;
+    this.connectionString = normalizeConnectionString(connectionString, options.ssl);
     this.poolPromise = null;
   }
   async pool() {
