@@ -18,7 +18,7 @@ const runtimeVariables = [
   'SERIES_PILOT_EPISODES', 'SERIES_EPISODE_PLANNER_MAX_NEW', 'SERIES_EPISODE_MIN_CONFIDENCE', 'SERIES_MEMORY_SYNC_LIMIT', 'SERIES_KIDS_QUALITY_SYNC_LIMIT', 'SERIES_PERFORMANCE_MIN_HOURS', 'SERIES_RELEASE_RECHECK_LIMIT', 'SERIES_VISUAL_CONTINUITY_ENABLED', 'SERIES_VISUAL_CONTINUITY_MAX_ASSETS', 'SERIES_VISUAL_MIN_OVERALL', 'SERIES_VISUAL_MIN_CHARACTER', 'SERIES_VISUAL_MIN_STYLE',
   'MARKET_CYCLE_INTERVAL_HOURS', 'MARKET_JOB_PRIORITY', 'MARKET_MAX_QUERIES', 'MARKET_LOOKBACK_DAYS', 'MARKET_CYCLE_MAX_QUERIES', 'MARKET_CYCLE_RECENT_DAYS', 'MARKET_CYCLE_RESULTS_PER_QUERY', 'MARKET_PATTERN_LOOKBACK_DAYS',
   'AUTO_PRODUCTION_MIN_SCORE', 'AUTO_PRODUCTION_MAX_PER_DAY', 'AUTO_PRODUCTION_DAILY_BUDGET_USD', 'AUTO_PRODUCTION_RESERVED_COST_USD', 'AUTO_SHORT_RESERVED_COST_USD', 'LEARNING_WINDOW_DAYS', 'ALLOW_COST_EXPERIMENTS', 'ANALYTICS_SYNC_DAYS', 'ANALYTICS_JOB_PRIORITY', 'SHORT_TO_LONG_MIN_VIEWS', 'SHORT_TO_LONG_MIN_AVP', 'LONG_TO_SHORT_MIN_VIEWS', 'LONG_TO_SHORT_MIN_AVP',
-  'JOB_MAX_ATTEMPTS', 'JOB_POLL_MS', 'JOB_STALE_MINUTES', 'JOB_TIMEOUT_MINUTES', 'JOB_RETRY_BASE_MS', 'JOB_RETRY_MAX_MS', 'DISTRIBUTION_PUBLIC_MEDIA_BASE_URL', 'AUTO_YTB_VIDEO_ONLY', 'AUTO_YTB_PRODUCTION_MODE', 'SOURCE_FOOTAGE_MAX_CLIPS', 'AUTO_YTB_SOURCE_CACHE_MIRROR',
+  'JOB_MAX_ATTEMPTS', 'JOB_POLL_MS', 'JOB_STALE_MINUTES', 'JOB_TIMEOUT_MINUTES', 'JOB_RETRY_BASE_MS', 'JOB_RETRY_MAX_MS', 'DISTRIBUTION_PUBLIC_MEDIA_BASE_URL', 'AUTO_YTB_VIDEO_ONLY', 'AUTO_YTB_PRODUCTION_MODE', 'SOURCE_FOOTAGE_MAX_CLIPS', 'AUTO_YTB_SOURCE_CACHE_MIRROR', 'AUTO_YTB_SOURCE_LOCKED_FAST_PATH',
 ];
 
 const productionEnv = {
@@ -104,6 +104,18 @@ export default {
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v12').stop();
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v13').stop();
       await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v14').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v15').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v16').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v17').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v18').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v19').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v20').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v21').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v22').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v23').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v24').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v25').stop();
+      await getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v26').stop();
       return new Response('stopped');
     }
     if (url.pathname.startsWith('/__internal/media')) {
@@ -112,7 +124,7 @@ export default {
     // Bump this id whenever the container image or its injected secrets change.
     // Cloudflare keeps a live named instance warm; a revisioned name ensures a
     // new deployment does not keep serving an older image/environment snapshot.
-    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v14');
+    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v26');
     const headers = new Headers(request.headers);
     headers.delete('x-auto-ytb-control-authorized');
     if (url.pathname === '/api/session' && request.method === 'POST') {
@@ -125,11 +137,14 @@ export default {
     return instance.fetch(new Request(request, { headers }));
   },
   async scheduled(_controller, workerEnv) {
-    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v14');
-    const currentEnv = Object.fromEntries(Object.keys(productionEnv).map((name) => [name, workerEnv[name] ?? productionEnv[name]]));
+    const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v26');
     const state = await instance.getState();
     if (state.status === 'stopped' || state.status === 'stopped_with_code') {
-      await instance.start({ envVars: currentEnv });
+      // ContainerProxy#fetch owns the idempotent start lifecycle. Calling
+      // start() here races with a user request arriving at the same time and
+      // can exceed max_instances=1. A harmless internal request both starts
+      // the container and lets the application initialise its worker safely.
+      await instance.fetch(new Request('http://auto-ytb-internal/robots.txt', { headers: { 'x-auto-ytb-scheduler': '1' } }));
     }
     instance.renewActivityTimeout();
     console.log(`AUTO-YTB autonomous container activity renewed (${state.status})`);

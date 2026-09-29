@@ -130,6 +130,32 @@ export function alignmentToSubtitleCues(alignment, options = {}) {
   return cues.filter((cue) => cue.end > cue.start && cue.text.trim());
 }
 
+// Keep the original character alignment intact and expose word windows for the
+// final ASS pass. This is deliberately derived from the provider timestamps;
+// it never estimates karaoke timing from character count or scene duration.
+export function alignmentToWordTimings(alignment) {
+  const chars = alignment?.characters ?? [];
+  const starts = alignment?.characterStartTimesSeconds ?? [];
+  const ends = alignment?.characterEndTimesSeconds ?? [];
+  if (!chars.length || chars.length !== starts.length || chars.length !== ends.length) return [];
+  const words = [];
+  let text = '', start = null, end = null;
+  const flush = () => {
+    const clean = text.trim();
+    if (clean && start != null && end != null && Number(end) > Number(start)) words.push({ text: clean, start: Number(start), end: Number(end) });
+    text = ''; start = null; end = null;
+  };
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = String(chars[index] ?? '');
+    if (/\s/.test(char)) { flush(); continue; }
+    if (start == null) start = Number(starts[index] ?? 0);
+    end = Number(ends[index] ?? starts[index] ?? 0);
+    text += char;
+  }
+  flush();
+  return words;
+}
+
 export function subtitlesToSrt(cues) {
   return cues.map((cue,index)=>`${index+1}\n${srtTime(cue.start)} --> ${srtTime(cue.end)}\n${cue.text.trim()}\n`).join('\n');
 }
@@ -438,6 +464,82 @@ export class FfmpegRenderer {
     });
   }
 
+  async renderFastSourceTimeline(manifest, work, joined, width, height) {
+    const fastFps = Math.min(24, Number(this.fps) || 24);
+    const scenes = manifest.scenes ?? [];
+    const sourcePaths = new Map();
+    const inputs = [];
+    const filters = [];
+    // Download every unique source concurrently before starting FFmpeg. The
+    // old loop awaited each remote asset in scene order, so a six-shot Short
+    // paid the full network latency six times before the encoder even started.
+    // Keep the actual FFmpeg graph deterministic, but overlap I/O here.
+    const sourceRequests = new Map();
+    for (const scene of scenes) {
+      const asset = manifest.assets.find((candidate) => candidate.sceneId === scene.id);
+      if (!asset || !/^video\//i.test(String(asset.mimeType ?? '')) || !asset.uri) {
+        throw new Error(`FAST_SOURCE_RENDER_REJECTED_NON_VIDEO:${scene.id}`);
+      }
+      const sourceKey = String(asset.uri);
+      if (!sourceRequests.has(sourceKey)) {
+        sourceRequests.set(sourceKey, this.materialize(asset.uri, join(work, `fast-asset-${sourceRequests.size}`)));
+      }
+    }
+    const materializedSources = new Map(await Promise.all(
+      [...sourceRequests.entries()].map(async ([sourceKey, request]) => [sourceKey, await request]),
+    ));
+    for (let index = 0; index < scenes.length; index += 1) {
+      const scene = scenes[index];
+      const asset = manifest.assets.find((candidate) => candidate.sceneId === scene.id);
+      if (!asset || !/^video\//i.test(String(asset.mimeType ?? '')) || !asset.uri) {
+        throw new Error(`FAST_SOURCE_RENDER_REJECTED_NON_VIDEO:${scene.id}`);
+      }
+      const duration = Math.max(0.2, Number(scene.durationSec ?? 0.2));
+      const clipStart = Math.max(0, Number(asset.metadata?.clipStartSec ?? 0));
+      const strategy = String(asset.metadata?.windowStrategy ?? '');
+      const repeat = strategy.startsWith('source-first-full-window-reuse');
+      const sourceKey = String(asset.uri);
+      const source = materializedSources.get(sourceKey);
+      sourcePaths.set(sourceKey, source);
+      // Keep the whole source-first timeline in one FFmpeg graph. The previous
+      // implementation launched one encoder per beat and then launched another
+      // concat process. That multiplied process startup, decoder initialisation
+      // and memory pressure. Each input is still trimmed and cropped independently
+      // so real moving footage and editorial windows remain unchanged.
+      const inputArgs = [];
+      // Keep inputs finite. The previous fast path used -stream_loop on every
+      // repeated source and relied on an input-level -t to terminate it; with
+      // several inputs that could leave concat waiting indefinitely. Padding
+      // and trimming in the filter graph gives the same real-motion reuse
+      // while making the graph's end deterministic.
+      if (clipStart > 0) inputArgs.push('-ss', String(clipStart));
+      inputArgs.push('-i', source);
+      inputs.push(...inputArgs);
+      const inputIndex = inputs.filter((value) => value === '-i').length - 1;
+      const label = `fastv${index}`;
+      const repeatFilter = repeat ? `,tpad=stop_mode=clone:stop_duration=${duration}` : '';
+      const videoFilter = `[${inputIndex}:v]scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=${width}:${height}:(in_w-out_w)/2:(in_h-out_h)/2,fps=${fastFps},format=yuv420p${repeatFilter},trim=duration=${duration},setpts=PTS-STARTPTS[${label}]`;
+      filters.push(videoFilter);
+    }
+    if (!filters.length) throw new Error('FAST_SOURCE_RENDER_EMPTY_TIMELINE');
+    const concatInputs = scenes.map((_, index) => `[fastv${index}]`).join('');
+    filters.push(`${concatInputs}concat=n=${scenes.length}:v=1:a=0[fastout]`);
+    await run(this.ffmpeg, [
+      '-y',
+      ...inputs,
+      '-filter_complex', filters.join(';'),
+      '-map', '[fastout]',
+      '-an',
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-crf', '25',
+      '-threads', '0',
+      '-fps_mode', 'cfr',
+      '-movflags', '+faststart',
+      joined,
+    ]);
+  }
+
   async render(input) {
     const manifestPath = pathFromUri(input.manifestUri);
     if (!manifestPath) throw new Error('FfmpegRenderer requires a local/file:// manifest URI');
@@ -446,6 +548,14 @@ export class FfmpegRenderer {
     const height = Math.max(320, Number(manifest.frame?.height ?? this.height));
     const work = join(tmpdir(), `auto-ytb-${manifest.projectId}-${Date.now()}`);
     await mkdir(work, { recursive: true });
+    const fastSourceTimeline = manifest.finalMediaPolicy === 'VIDEO_ONLY'
+      && manifest.scenes.length > 0
+      && manifest.scenes.every((scene) => scene.kind === 'broll');
+    let joined;
+    if (fastSourceTimeline) {
+      joined = join(work, 'joined.mp4');
+      await this.renderFastSourceTimeline(manifest, work, joined, width, height);
+    } else {
     const clips = [];
     let timelineCursor = 0;
     // The editorial planner may reserve a short pre-roll before the first
@@ -495,7 +605,9 @@ export class FfmpegRenderer {
          const sourceDuration = await this.probeDuration(source);
          const availableDuration = Math.max(0, (clipEnd ?? sourceDuration) - clipStart);
          const sourceBacked = asset?.provider === 'user-source-footage';
-         const repeatMovingSource = sourceBacked && availableDuration + 0.05 < duration;
+         const repeatMovingSource = sourceBacked
+           && availableDuration + 0.05 < duration
+           && String(asset?.metadata?.windowStrategy ?? '').startsWith('source-first-full-window-reuse');
          if (availableDuration + 0.05 < duration && !repeatMovingSource) throw new Error(`RENDER_PLAN_INVALID: scene ${scene.id} requests ${duration.toFixed(3)}s but source provides ${availableDuration.toFixed(3)}s`);
          // A short, rights-cleared moving source may be reused to cover a
          // longer narration beat. This repeats real motion only; it never
@@ -522,8 +634,9 @@ export class FfmpegRenderer {
     if (!clips.length) throw new Error('Manifest has no scenes');
     const concatList = join(work, 'concat.txt');
     await writeFile(concatList, clips.map((path) => `file '${path.replaceAll("'", "'\\''")}'`).join('\n'));
-    const joined = join(work, 'joined.mp4');
+    joined = join(work, 'joined.mp4');
     await run(this.ffmpeg, ['-y','-f','concat','-safe','0','-i',concatList,'-c','copy',joined]);
+    }
 
     const out = resolve(this.outputRoot, input.outputKey);
     await mkdir(dirname(out), { recursive: true });

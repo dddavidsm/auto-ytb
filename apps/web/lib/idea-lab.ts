@@ -14,6 +14,11 @@ export type IdeaSeed = {
   seriesProfile?: Record<string, unknown>;
   risks: string[];
   rationale: string[];
+  visualStyle: string;
+  narrativeArc: string;
+  evidencePlan: string[];
+  resourceQueries: string[];
+  estimatedShots: number;
 };
 
 const nicheSeeds = [
@@ -31,6 +36,17 @@ const educationSeeds = [
   ['La vuelta al mundo en una merienda', 'Cultura, geografía y hábitos saludables a través de recetas y relatos familiares.', 'Un ingrediente, una familia y un viaje para descubrir su historia.', '6-11 años', 'Cultura y geografía'],
 ];
 
+const ideaAngles = [
+  ['La historia oculta de', 'microdocumental causal', 'Origen, conflicto y consecuencia: seguir el mecanismo que convirtió el tema en algo relevante.', '¿Qué tuvo que pasar para que esto terminara cambiando la vida cotidiana?', 'gancho de contradicción y cadena causa-efecto'],
+  ['7 pruebas para entender', 'ranking verificable', 'Ordenar casos reales con un criterio visible y subir la apuesta en cada entrada.', 'No es una lista arbitraria: hay una prueba concreta detrás de cada puesto.', 'ranking con evidencia y escalada'],
+  ['Antes de que existiera', 'línea temporal visual', 'Contar la transformación desde el primer intento hasta el punto de inflexión que explica el presente.', 'La versión actual parece inevitable, pero empezó con un problema muy distinto.', 'timeline con revelación intermedia'],
+  ['El mito contra los datos de', 'mito vs evidencia', 'Separar lo que se repite de lo que está documentado, mostrando dónde cambia la conclusión.', 'La explicación popular suena bien; los datos cuentan una historia más interesante.', 'contraste de afirmación y fuente'],
+  ['La prueba real de', 'experimento documental', 'Plantear una pregunta comprobable y resolverla con observaciones, comparaciones y un resultado final.', 'Si cambiamos una sola variable, ¿qué ocurre de verdad?', 'pregunta, prueba, resultado y límite'],
+  ['El mapa que explica', 'geografía de sistemas', 'Convertir un tema abstracto en un recorrido por lugares, flujos y decisiones visibles.', 'Cuando lo dibujas sobre el mapa, el patrón aparece en segundos.', 'mapa narrativo con zooms de contexto'],
+  ['Quién gana y quién paga en', 'impacto humano', 'Conectar la tendencia con decisiones, costes y efectos concretos para personas y negocios.', 'La cifra grande importa menos que lo que cambia para alguien real.', 'caso humano más contexto'],
+  ['Lo que viene después de', 'escenario documentado', 'Partir de señales actuales, distinguir hechos de hipótesis y cerrar con escenarios plausibles.', 'No hace falta adivinar el futuro: basta con seguir las señales que ya están aquí.', 'señales actuales y tres escenarios'],
+];
+
 const cleanBrief = (value: string) => value.trim().replace(/\s+/g, ' ').slice(0, 260);
 
 export function generateIdeaSeeds(input: SeedInput): IdeaSeed[] {
@@ -39,18 +55,32 @@ export function generateIdeaSeeds(input: SeedInput): IdeaSeed[] {
   if (input.mode === 'niches') {
     return nicheSeeds.slice(0, limit).map((seed, index) => ({
       title: seed[0], angle: `${seed[1]} Contexto del usuario: ${brief}.`, hook: seed[2], audience: 'Audiencia amplia interesada en aprender', niche: seed[0], format: (index % 2 ? 'SHORT_VERTICAL' : 'LONG_HORIZONTAL') as 'SHORT_VERTICAL' | 'LONG_HORIZONTAL', score: 86 - index * 2, grade: index < 2 ? 'A' : 'B+', risks: ['Validar fuentes antes de publicar', 'No usar material de terceros sin derechos'], rationale: ['Interés evergreen y fácil de serializar', 'Permite probar formatos largos y cortos', 'Tiene una promesa clara para título y miniatura'],
+      visualStyle: 'Documental editorial de cortes rápidos con vídeo real autorizado', narrativeArc: 'Señal → contexto → prueba → conclusión accionable', evidencePlan: ['Fuentes primarias', 'Recursos de vídeo con licencia', 'Verificación de afirmaciones'], resourceQueries: [seed[0], `${seed[0]} documentary footage`, `${seed[0]} real process b-roll`], estimatedShots: index % 2 ? 12 : 20,
     }));
   }
   if (input.mode === 'kids_series' || input.mode === 'education') {
     return educationSeeds.slice(0, limit).map((seed, index) => ({
       title: seed[0], angle: `${seed[1]} ${brief !== 'un canal original con potencial evergreen' ? `Adaptada a: ${brief}.` : ''}`.trim(), hook: seed[2], audience: seed[3], niche: seed[4], format: 'LONG_HORIZONTAL', score: 91 - index * 2, grade: index < 3 ? 'A' : 'B+', risks: ['Usar personajes, música y recursos originales o licenciados', 'Revisión adulta de seguridad y adecuación por edad', 'Evitar afirmaciones educativas no verificadas'], rationale: ['Motor de episodios repetible', 'Personajes y reglas fáciles de mantener', 'Permite crear temporadas y derivados verticales'], seriesProfile: { seriesName: seed[0], ageRange: seed[3], learningArea: seed[4], episodeEngine: seed[1], seasonPremise: `Una primera temporada de 12 episodios sobre ${brief}.`, characterBible: ['Protagonista curioso y resolutivo', 'Compañero que hace preguntas', 'Guía que verifica la explicación'], safetyRules: ['Sin retos peligrosos', 'Sin datos personales de menores', 'Cierre con recordatorio de pedir ayuda a un adulto'] },
+      visualStyle: 'Aventura educativa con personajes originales, acciones legibles y continuidad visual', narrativeArc: 'Pregunta → exploración → descubrimiento → explicación → reto seguro', evidencePlan: ['Fuente educativa verificable', 'Recursos originales o licenciados', 'Revisión de edad y seguridad'], resourceQueries: [seed[0], `${seed[4]} educational activity`, `${seed[4]} real world footage`], estimatedShots: 18,
     }));
   }
-  return [
-    { title: `La guía definitiva sobre ${brief}`, angle: `Una pieza principal que responde la pregunta central con ejemplos, fuentes y una conclusión útil.`, hook: `La respuesta clara a ${brief}, sin relleno y con pruebas.`, audience: 'Personas que buscan una explicación práctica', niche: brief, format: 'LONG_HORIZONTAL' as const, score: 89, grade: 'A', risks: ['Separar hechos de opinión', 'Revisar actualidad y derechos de recursos'], rationale: ['Intención clara de búsqueda', 'Buen punto de partida para una serie de derivados'], },
-    { title: `${brief}: 7 ideas que sí cambian la decisión`, angle: 'Lista argumentada con criterio explícito, ejemplos y un cierre accionable.', hook: 'Siete ideas, una forma de decidir y cero humo.', audience: 'Audiencia interesada en decisiones rápidas', niche: brief, format: 'SHORT_VERTICAL' as const, score: 84, grade: 'B+', risks: ['Evitar titulares engañosos', 'Verificar cada dato'], rationale: ['Formato modular', 'Fácil de convertir en clips y carruseles'], },
-    { title: `Lo que nadie explica de ${brief}`, angle: 'Investigación narrativa que compara la versión popular con la evidencia disponible.', hook: 'La parte incómoda de la historia está en los detalles.', audience: 'Audiencia curiosa y crítica', niche: brief, format: 'LONG_HORIZONTAL' as const, score: 87, grade: 'A-', risks: ['Equilibrar perspectivas', 'Citar fuentes primarias'], rationale: ['Diferenciación editorial', 'Fomenta comentarios y conversación'], },
-  ].slice(0, limit);
+  return ideaAngles.slice(0, limit).map((variant, index) => ({
+    title: `${variant[0]} ${brief}`,
+    angle: `${variant[2]} Tema: ${brief}.`,
+    hook: variant[3],
+    audience: index % 2 ? 'Audiencia curiosa que quiere datos comparables' : 'Personas que buscan entender el tema sin relleno',
+    niche: brief,
+    format: index % 3 === 1 ? 'SHORT_VERTICAL' as const : 'LONG_HORIZONTAL' as const,
+    score: 92 - index * 2,
+    grade: index < 2 ? 'A' : index < 5 ? 'A-' : 'B+',
+    risks: ['Separar hechos, inferencias y opinión', 'Usar vídeo real con derechos y atribución cuando corresponda', 'Revisar datos actuales antes de publicar'],
+    rationale: [`Ángulo distinto: ${variant[1]}`, variant[4], 'Se puede convertir en una serie de episodios sin repetir la misma promesa'],
+    visualStyle: 'Documental explicativo de ritmo alto, vídeo real autorizado y cortes motivados',
+    narrativeArc: variant[4],
+    evidencePlan: ['Fuentes primarias o institucionales', 'Comparación de al menos tres casos', 'Control editorial de afirmaciones'],
+    resourceQueries: [brief, `${brief} documentary footage`, `${brief} real world process`, `${brief} close up action`],
+    estimatedShots: index % 3 === 1 ? 12 : 22,
+  }));
 }
 
 export function modeLabel(mode: IdeaLabMode) {

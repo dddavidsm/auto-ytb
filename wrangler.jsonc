@@ -9,7 +9,7 @@
     {
         "class_name": "AutoYtbProductionWebContainer",
       "image": "./Dockerfile",
-      "instance_type": "basic",
+    "instance_type": "standard-4",
       "max_instances": 1,
       "rollout_step_percentage": 100
     }
@@ -50,11 +50,12 @@
     "REAL_GENERATION_ENABLED": "true",
     "AUTO_YTB_VIDEO_ONLY": "true",
     "AUTO_YTB_PRODUCTION_MODE": "AUTO",
-    "SOURCE_FOOTAGE_MAX_CLIPS": "5",
+    "SOURCE_FOOTAGE_MAX_CLIPS": "16",
     "AUTO_YTB_SOURCE_CACHE_MIRROR": "true",
+    "AUTO_YTB_MEDIA_PROXY_URL": "https://auto-ytb-production.taipbeats.workers.dev/__internal/media",
     "AUTO_YTB_SOURCE_LOCKED_FAST_PATH": "true",
     "AUTO_UPLOAD_PRIVATE": "false",
-    "AUTO_YTB_RUNTIME_REVISION": "2026-09-28T12:00:00Z",
+    "AUTO_YTB_RUNTIME_REVISION": "2026-09-28T22:45:00Z",
     "RUN_BACKGROUND_WORKERS": "true",
     "SCHEDULER_INTERVAL_MS": "900000",
     "SCHEDULER_RUN_IMMEDIATELY": "false",
@@ -128,8 +129,8 @@
     "LONG_TO_SHORT_MIN_VIEWS": "3000",
     "LONG_TO_SHORT_MIN_AVP": "50",
     "JOB_MAX_ATTEMPTS": "4",
-    "JOB_POLL_MS": "5000",
-    "JOB_STALE_MINUTES": "120",
+    "JOB_STALE_MINUTES": "10",
+    "JOB_POLL_MS": "1000",
     "JOB_TIMEOUT_MINUTES": "120",
     "JOB_RETRY_BASE_MS": "60000",
     "JOB_RETRY_MAX_MS": "21600000"

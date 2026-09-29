@@ -119,7 +119,7 @@ export function runQa(input: { dossier: ResearchDossier; script: VideoScript; ma
   const maxCost = input.maxCostUsd ?? 25;
   checks.push({ id: 'cost', status: costForGate > maxCost ? 'FAIL' : costForGate > maxCost * 0.75 ? 'WARN' : 'PASS', score: Math.max(0, Math.round(100 - (costForGate / maxCost) * 70)), message: `Pre-render cost $${costForGate.toFixed(2)} / cap $${maxCost.toFixed(2)}` });
 
-  const attention=reviewAttentionBlueprint({script:input.script,packaging:input.manifest.packaging,scenes:input.manifest.scenes,contentFormat:input.manifest.contentFormat,executionPlan:input.manifest.executionPlan,selectedPackagingId:input.manifest.selectedPackagingId,minScore:input.minAttentionScore});
+  const attention=reviewAttentionBlueprint({script:input.script,packaging:input.manifest.packaging,scenes:input.manifest.scenes,contentFormat:input.manifest.contentFormat,executionPlan:input.manifest.executionPlan,selectedPackagingId:input.manifest.selectedPackagingId,minScore:input.minAttentionScore,sourceOnly:input.manifest.scenes.length>0&&input.manifest.scenes.every((scene)=>scene.kind==='broll')});
   checks.push({id:'attention-readiness',status:attention.ready?'PASS':'FAIL',score:attention.score,message:attention.ready?`Attention blueprint ${attention.score}/100 ready for production`:`Attention blueprint ${attention.score}/100 blocked · ${attention.issues.map((issue)=>issue.code).join(', ')}`});
 
   const blockers = checks.filter((check) => check.status === 'FAIL').map((check) => check.id);

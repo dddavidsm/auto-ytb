@@ -148,13 +148,14 @@ export type FinalMediaInspection = {
 
 export interface VideoRenderer {
   readonly name: string;
-  render(input: { manifestUri: string; outputKey: string }): Promise<BinaryAsset & { durationSeconds?: number }>;
+  render(input: { manifestUri: string; outputKey: string; videoOnly?: boolean; visualMixPolicy?: 'MIXED_MEDIA' | 'SOURCE_FIRST'; fastSourceDelivery?: boolean }): Promise<BinaryAsset & { durationSeconds?: number }>;
   inspect?(input: {
     fileUri: string;
     expectedWidth: number;
     expectedHeight: number;
     expectedDurationSeconds: number;
     requireAudio: boolean;
+    deepChecks?: boolean;
   }): Promise<FinalMediaInspection>;
 }
 

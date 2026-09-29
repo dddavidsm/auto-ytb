@@ -168,6 +168,10 @@ function pickDiverseSourceClip(beat:ScriptBeat,candidates:SourceFootage[], usage
     const bUses=usage.get(b.id)??0;
     const aFresh=aUses===0?1:0;
     const bFresh=bUses===0?1:0;
+    // SOURCE_FIRST already passed a semantic and rights gate. Preserve the
+    // documentary rhythm by taking a fresh authorized shot before squeezing
+    // one highly-scored stock clip into every beat.
+    if(allowRelevantFallback&&aFresh!==bFresh)return bFresh-aFresh;
     if(aFresh!==bFresh)return bFresh-aFresh;
     const aCooling=recentIds.includes(a.id)?0:1;
     const bCooling=recentIds.includes(b.id)?0:1;

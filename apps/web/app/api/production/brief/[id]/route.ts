@@ -22,13 +22,33 @@ function progressFor(state: string, stage: string) {
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   if (!(await currentSession())) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { id } = await params;
-  const rows = await query<any>(`select j.id,j.job_key,j.kind,j.state,j.attempts,j.max_attempts,j.last_error,j.created_at,j.updated_at,j.completed_at,j.payload,pr.id as production_run_id,pr.state as production_state,pr.current_stage as production_current_stage,pr.metadata as production_metadata from jobs j left join content_ideas ci on ci.opportunity_id=j.opportunity_id left join production_runs pr on pr.content_idea_id=ci.id where j.id=$1 order by pr.created_at desc nulls last limit 1`, [id]);
+  const rows = await query<any>(`select j.id,j.job_key,j.kind,j.state,j.attempts,j.max_attempts,j.last_error,j.created_at,j.updated_at,j.completed_at,j.heartbeat_at,j.payload,pr.id as production_run_id,pr.state as production_state,pr.current_stage as production_current_stage,pr.metadata as production_metadata from jobs j left join content_ideas ci on ci.opportunity_id=j.opportunity_id left join production_runs pr on pr.content_idea_id=ci.id where j.id=$1 order by pr.created_at desc nulls last limit 1`, [id]);
   const job = rows[0];
   if (!job) return NextResponse.json({ error: 'Production job not found.' }, { status: 404 });
   const events = await query<any>(`select event_type,detail,created_at from job_events where job_id=$1 order by created_at desc limit 20`, [id]);
-  const latestEventStage = events.map((event) => stageFrom(event.event_type)).find(Boolean) || '';
-  const currentStage = stageFrom(job.production_current_stage) || latestEventStage || 'BRIEF_ACCEPTED';
-  return NextResponse.json({ ok: true, job: { id: job.id, state: job.state, attempts: job.attempts, maxAttempts: job.max_attempts, error: job.state === 'running' ? null : job.last_error, createdAt: job.created_at, updatedAt: job.updated_at, completedAt: job.completed_at, productionRunId: job.production_run_id, productionState: job.production_state, currentStage, progressPercent: progressFor(String(job.state), currentStage), metadata: job.production_metadata, brief: job.payload?.ui ?? null }, events });
+  // The worker emits the production run id before the jobs row is finalized.
+  // Resolve it from the event stream as a recovery path so the UI can render
+  // the finished video even when the join was observed during that small
+  // transaction window.
+  const eventProductionRunId = events.map((event) => String(event.detail?.productionRunId || '')).find(Boolean) || null;
+  let productionRunId = job.production_run_id || eventProductionRunId;
+  let productionState = job.production_state;
+  let productionCurrentStage = job.production_current_stage;
+  let productionMetadata = job.production_metadata;
+  if (!job.production_run_id && eventProductionRunId) {
+    const recovered = await query<any>('select id,state,current_stage,metadata from production_runs where id=$1 limit 1', [eventProductionRunId]);
+    if (recovered[0]) {
+      productionRunId = recovered[0].id;
+      productionState = recovered[0].state;
+      productionCurrentStage = recovered[0].current_stage;
+      productionMetadata = recovered[0].metadata;
+    }
+  }
+  const latestEventStage = events.map((event) => stageFrom(event.detail?.stage || event.event_type)).find(Boolean) || '';
+  const latestProgress = events.map((event) => Number(event.detail?.progressPercent)).find((value) => Number.isFinite(value) && value >= 0 && value <= 100);
+  const currentStage = stageFrom(productionCurrentStage) || latestEventStage || 'BRIEF_ACCEPTED';
+  const lastSignalAt = job.heartbeat_at || job.updated_at || job.created_at;
+  return NextResponse.json({ ok: true, job: { id: job.id, state: job.state, attempts: job.attempts, maxAttempts: job.max_attempts, error: job.state === 'running' ? null : job.last_error, createdAt: job.created_at, updatedAt: job.updated_at, heartbeatAt: job.heartbeat_at, lastSignalAt, completedAt: job.completed_at, productionRunId, productionState, currentStage, progressPercent: latestProgress ?? progressFor(String(job.state), currentStage), metadata: productionMetadata, brief: job.payload?.ui ?? null }, events });
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {

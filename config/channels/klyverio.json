@@ -16,7 +16,7 @@
   "statisticsStatus": "NO_CREDENTIALS",
   "targetDurationSec": 600,
   "shortTargetDurationSec": 45,
-  "maxProductionCostUsd": 5,
+  "maxProductionCostUsd": 12,
   "identity": { "archetype": "adaptive-editorial", "tone": ["curious", "clear", "credible", "cinematic"], "visualRules": ["one dominant idea per frame", "no fake logos", "no copied thumbnails", "reference-first evidence"], "brandContinuityRequired": true },
   "voiceProfile": { "provider": "CONFIGURE", "primaryLanguage": "en", "accent": "neutral-international-english", "alignmentRequired": true, "wordTimestampsRequired": true },
   "publishing": { "defaultPrivacy": "private", "autonomyMode": "REVIEW_REQUIRED", "allowAutomaticPublicScheduling": false, "blockOnUnresolvedRights": true, "blockOnPolicyWarning": true },

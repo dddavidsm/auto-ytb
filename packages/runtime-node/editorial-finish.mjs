@@ -1,6 +1,6 @@
 import { readFile, writeFile, rename, mkdtemp, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { alignmentToSubtitleCues, subtitlesToSrt } from './index.mjs';
+import { alignmentToSubtitleCues, alignmentToWordTimings, subtitlesToSrt } from './index.mjs';
 import { buildCreativeRecipe } from '@auto-ytb/production';
 import { ffmpegFontOption, pathFromUri } from './file-path.mjs';
 import { join } from 'node:path';
@@ -100,6 +100,46 @@ function captionAss(cues,plan,width,height){
   const style='Style: Default,DejaVu Sans,'+fontsize+',&H00FFFFFF,&H00FFFFFF,&H40101010,&HFF000000,0,0,0,0,100,100,0,0,1,5,2,2,70,70,0,1';
   return '[Script Info]\\nScriptType: v4.00+\\nPlayResX: '+width+'\\nPlayResY: '+height+'\\nScaledBorderAndShadow: yes\\n\\n[V4+ Styles]\\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\\n'+style+'\\n\\n[Events]\\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, Effect, Text\\n'+lines.join('\\n')+'\\n';
 }
+
+function wrapTimedWords(words,maxChars){
+  const lines=[],current=[];
+  for(const word of words){
+    const candidate=[...current,word];
+    if(current.length&&candidate.map((item)=>item.text).join(' ').length>maxChars){lines.push(current.splice(0,current.length));}
+    current.push(word);
+  }
+  if(current.length)lines.push(current);
+  if(lines.length>1&&lines.at(-1).length===1){const last=lines.pop(),previous=lines.pop();previous.push(...last);lines.push(previous);}
+  return lines.slice(0,2);
+}
+
+// Render a true word-by-word karaoke layer. Each event keeps the full phrase
+// in place and only changes the active word to amber, so the highlight follows
+// the real voice alignment without duplicate drawtext layers or guessed timing.
+function captionKaraokeAss(cues,plan,width,height,alignment){
+  const words=alignmentToWordTimings(alignment);
+  if(!words.length)return captionAss(cues,plan,width,height);
+  const fontsize=Math.round((height>=1600?58:38)*Number(plan?.fontScale??1));
+  const maxLineChars=height>=1600?35:52;
+  const y=plan?.position==='MIDDLE'?Math.round(height*0.5):plan?.position==='BOTTOM'?Math.round(height*0.9):Math.round(height*0.77);
+  const events=[];
+  for(const cue of cues){
+    const cueWords=words.filter((word)=>word.end>Number(cue.start??0)-0.02&&word.start<Number(cue.end??0)+0.02);
+    if(!cueWords.length)continue;
+    for(let index=0;index<cueWords.length;index+=1){
+      const active=cueWords[index];
+      const start=Math.max(Number(cue.start??0),active.start);
+      const end=Math.min(Number(cue.end??start+0.2),Math.max(start+0.08,index+1<cueWords.length?cueWords[index+1].start:active.end));
+      if(end<=start)continue;
+      const lines=wrapTimedWords(cueWords,maxLineChars).map((line)=>line.map((word)=>word===active?`{\\c&H0033D6FF&\\b1}${assText(word.text)}{\\c&H00FFFFFF&\\b0}`:assText(word.text)).join(' ')).join('\\N');
+      events.push(`Dialogue: 0,${assTime(start)},${assTime(end)},Default,,0,0,0,{\\an2\\move(${Math.round(width/2)},${y+16},${Math.round(width/2)},${y},0,80)}${lines}`);
+    }
+  }
+  if(!events.length)return captionAss(cues,plan,width,height);
+  const newline=String.fromCharCode(10);
+  const style=`Style: Default,DejaVu Sans,${fontsize},&H00FFFFFF,&H00FFFFFF,&H40101010,&HFF000000,0,0,0,0,100,100,0,0,1,5,2,2,70,70,0,1`;
+  return ['[Script Info]','ScriptType: v4.00+','PlayResX: '+width,'PlayResY: '+height,'ScaledBorderAndShadow: yes','','[V4+ Styles]','Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',style,'','[Events]','Format: Layer, Start, End, Style, Name, MarginL, MarginR, Effect, Text',events.join(newline),''].join(newline);
+}
 function styleFor(plan,height){
   const base=height>=1600?50:34,fontSize=Math.round(base*Number(plan.fontScale??1));
   const alignment=plan.position==='MIDDLE'?5:2;
@@ -174,7 +214,8 @@ export function withArchetypeEditorialFinish(renderer,options={}){
       const punches=punchIntervals(manifest,editPlan),boundaries=transitionBoundaries(manifest,editPlan);
       let subtitlePath=null,assPath=null;
       const captionWork=await mkdtemp(join(tmpdir(),'auto-ytb-caption-'));
-      if(cues.length){subtitlePath=renderPath.replace(/\.[^.]+$/,'.burn.srt');assPath=renderPath.replace(/\.[^.]+$/,'.burn.ass');await writeFile(subtitlePath,subtitlesToSrt(cues),'utf8');await writeFile(assPath,captionAss(cues,captionPlan,width,height),'utf8');}
+      const alignedWords=alignmentToWordTimings(manifest.voice?.alignment);
+      if(cues.length){subtitlePath=renderPath.replace(/\.[^.]+$/,'.burn.srt');assPath=renderPath.replace(/\.[^.]+$/,'.burn.ass');await writeFile(subtitlePath,subtitlesToSrt(cues),'utf8');await writeFile(assPath,captionKaraokeAss(cues,captionPlan,width,height,manifest.voice?.alignment),'utf8');}
       const filters=[];let current='[0:v]';
       if(punches.length){
         const enable=punches.map(([start,end])=>`between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})`).join('+');
@@ -212,8 +253,8 @@ export function withArchetypeEditorialFinish(renderer,options={}){
       }
       if(chain.length){filters.push(`${current}${chain.map((item,index)=>`${index?',':''}${item}`).join('')}[finished]`);current='[finished]';}
       const needsReencode=filters.length>0;
-      if(needsReencode){const tmp=`${renderPath}.finish-${Date.now()}.mp4`;try{await run(ffmpeg,['-y','-i',renderPath,'-filter_complex',filters.join(';'),'-map',current,'-map','0:a?','-c:v','libx264','-preset','medium','-crf','18','-pix_fmt','yuv420p','-c:a','copy','-movflags','+faststart',tmp]);await rename(tmp,renderPath);}finally{await rm(captionWork,{recursive:true,force:true});}}else{await rm(captionWork,{recursive:true,force:true});}
-      const evidence={captionsBurned:Boolean(subtitlePath),captionCueCount:cues.length,captionPreset:captionPlan?.preset??'NONE',editPreset:editPlan?.preset??'NONE',transitionsApplied:boundaries.length,transitionsSkipped:0,transitionFallback:'NONE',punchInsApplied:punches.length,filmLookApplied:Boolean(editPlan?.filmLook)};
+      if(needsReencode){const tmp=`${renderPath}.finish-${Date.now()}.mp4`;const fastSourceFinish=input.videoOnly===true&&input.visualMixPolicy==='SOURCE_FIRST'&&manifest.finalMediaPolicy==='VIDEO_ONLY'&&(manifest.scenes??[]).length>0&&(manifest.scenes??[]).every((scene)=>scene.kind==='broll');const preset=fastSourceFinish?'ultrafast':'medium';const crf=fastSourceFinish?'23':'18';try{await run(ffmpeg,['-y','-i',renderPath,'-filter_complex',filters.join(';'),'-map',current,'-map','0:a?','-c:v','libx264','-preset',preset,'-crf',crf,'-pix_fmt','yuv420p','-c:a','copy','-movflags','+faststart',tmp]);await rename(tmp,renderPath);}finally{await rm(captionWork,{recursive:true,force:true});}}else{await rm(captionWork,{recursive:true,force:true});}
+      const evidence={captionsBurned:Boolean(subtitlePath),captionCueCount:cues.length,karaokeWordCount:alignedWords.length,karaokeEnabled:Boolean(alignedWords.length&&subtitlePath),captionMode:alignedWords.length?'WORD_KARAOKE':'TIMED_CUES',captionPreset:captionPlan?.preset??'NONE',editPreset:editPlan?.preset??'NONE',transitionsApplied:boundaries.length,transitionsSkipped:0,transitionFallback:'NONE',punchInsApplied:punches.length,filmLookApplied:Boolean(editPlan?.filmLook)};
       manifest.renderExecution=evidence;await writeFile(manifestPath,JSON.stringify(manifest,null,2),'utf8');
       return{...rendered,metadata:{...(rendered.metadata??{}),renderExecution:evidence,captionPlan:captionPlan??null,editPlan:editPlan??null}};
     },

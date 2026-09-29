@@ -10,13 +10,13 @@ import { ResearchRepository, ScriptRepository, ProductionRepository, Publication
 import { createLiveRuntime } from '../packages/runtime-node/factory.mjs';
 import { resolveVoiceId } from '../packages/runtime-node/voice-routing.mjs';
 import { buildCreativeLearningGuidance } from './lib/creative-guidance.mjs';
-import { mirrorFile } from './lib/media-proxy.mjs';
+import { mirrorFile, mirrorJson, readJson, restoreFile } from './lib/media-proxy.mjs';
 
 const arg=(name,fallback)=>process.argv.find((v)=>v.startsWith(`--${name}=`))?.slice(name.length+3)??fallback;
 const topic=arg('topic');
 if(!topic)throw new Error('Use --topic="..."');
 const sourceFootagePath=arg('source-footage',null);
-let sourceFootage;
+let sourceFootage=[];
 let sourceFootageGuidance;
 if(sourceFootagePath){
   const parsed=JSON.parse(await readFile(resolve(sourceFootagePath),'utf8'));
@@ -33,6 +33,7 @@ const requestedFormat=String(arg('format',channel.preferredFormat==='SHORT_VERTI
 const contentFormat=['SHORT_VERTICAL','SHORT_HORIZONTAL'].includes(requestedFormat)?requestedFormat:'LONG_HORIZONTAL';
 const isShort=contentFormat!=='LONG_HORIZONTAL';
 const requestedProductionMode=String(process.env.AUTO_YTB_PRODUCTION_MODE||'AUTO').trim().toUpperCase();
+const liveJobId=String(process.env.AUTO_YTB_JOB_ID||'').trim();
 const channelNiche=[channel.id,channel.positioning,...(channel.themes??[]),...(channel.channelType==='UMBRELLA_OPPORTUNITY_DRIVEN'?['documentary','explainer','factual','research','evidence-led']:[])].filter(Boolean).join(' ');
 const routedArchetype=inferContentArchetype({topic,contentFormat,channelNiche});
 const explicitSourceMode=requestedProductionMode==='SOURCE_FIRST'||requestedProductionMode==='SOURCED';
@@ -45,8 +46,37 @@ let sourceFirst=Boolean(sourceFootage?.length)
 let sourcedOnly=sourceFirst && (requestedProductionMode==='AUTO'||explicitSourceMode||Boolean(sourceFootagePath));
 console.log(`[live-pipeline] start format=${contentFormat} topic=${topic.slice(0,120)}`);
 
-const sourceDiscovery={mode:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',requestedMode:requestedProductionMode,queries:[],providers:[],selected:[],failed:[]};
+async function persistProgress({ productionRunId:nullishRunId=null, state, message }) {
+  const progressDb=runtimeDbForProgress;
+  if (!progressDb) return;
+  const stageMap={PLAN:'SHOT_PLAN',RESEARCH:'RESEARCH',SCRIPT:'SCRIPT',PACKAGING:'SCRIPT',ASSETS:'ASSETS',QA:'QA',RENDER:'ASSEMBLY',PRIVATE_UPLOAD:'ARCHIVED',READY_FOR_REVIEW:'READY_FOR_REVIEW',BLOCKED:'QA'};
+  const stage=stageMap[String(state)]||String(state);
+  const assetMatch=String(message??'').match(/Vídeo\s+(\d+)\/(\d+)/i);
+  const progressPercent=assetMatch&&stage==='ASSETS'
+    ? Math.min(68,Math.round(55+(Number(assetMatch[1])/Math.max(1,Number(assetMatch[2])))*13))
+    : undefined;
+  const runId=productionRunId??nullishRunId;
+  try {
+    const liveProgress={stage,state,message,...(progressPercent==null?{}:{progressPercent}),at:new Date().toISOString()};
+    if (runId) await progressDb.query(`update production_runs set state=$2,current_stage=$3,metadata=metadata||$4::jsonb,updated_at=now() where id=$1`,[runId,state,stage,JSON.stringify({liveProgress})]);
+    if (liveJobId) await progressDb.query(`insert into job_events (job_id,event_type,detail) values ($1,'production_stage',$2::jsonb)`,[liveJobId,JSON.stringify({stage,state,message,...(progressPercent==null?{}:{progressPercent}),productionRunId:runId??null})]);
+  } catch (error) { console.warn(`[live-pipeline] progress persistence failed: ${error instanceof Error?error.message:String(error)}`); }
+}
+let runtimeDbForProgress;
+// Progress events are persisted in the background so database latency never
+// stalls media production. Keep pending writes alive until shutdown so the
+// final close cannot race them and emit a false null-query error.
+const pendingProgressWrites=new Set();
+const queueProgress=(payload)=>{
+  const write=Promise.resolve(persistProgress(payload));
+  pendingProgressWrites.add(write);
+  write.finally(()=>pendingProgressWrites.delete(write)).catch(()=>{});
+  return write;
+};
+
+const sourceDiscovery={mode:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',requestedMode:requestedProductionMode,topic,createdAt:new Date().toISOString(),queries:[],providers:[],selected:[],failed:[]};
 const sourceFootageCacheRoot=resolve(process.env.LOCAL_STORAGE_ROOT||'.data/storage','source-cache');
+const sourceManifestKey=`source-cache/manifests/${createHash('sha256').update(String(topic).trim().toLowerCase()).digest('hex').slice(0,24)}.json`;
 const safeFilePart=(value)=>String(value||'source').replace(/[^a-z0-9._-]+/gi,'-').slice(0,80)||'source';
 const extensionFor=(candidate)=>{
   const mime=String(candidate?.metadata?.mime||'').toLowerCase();
@@ -61,19 +91,59 @@ function sourceTopicProfile(value){
   // prevents a growing list of solar/wind/data-centre exceptions from silently
   // becoming the product's editorial brain.
   const text=String(value||'').toLowerCase();
-  const stop=new Set('about after again against also because being between could from have into more other over than that their there these they this through using what when where which with would your how why'.split(' '));
+  const stop=new Set('about after again against also because being between could from have into more other over than that their there these they this through using what when where which with would your how why create second vertical source first documentary short real moving video footage authorized professional english precise subtitles photos stills slides diagrams use only generate generated make video videos idea ideas prompt format quality'.split(' '));
   const terms=[...new Set(text.replace(/[^a-z0-9áéíóúüñ\s-]/gi,' ').split(/\s+/).filter((word)=>word.length>=5&&!stop.has(word)))].slice(0,10);
   const core=terms.slice(0,7);
-  const escaped=core.map((term)=>term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
-  const irrelevant=/slideshow|slide show|screenshot|screen capture|still image|illustration|cartoon|logo reveal|meme|watermark|template|infographic/i;
+  const visualTerms=[];
+  const automotiveTopic=/\b(muscle\s*car|muscle\s*cars|automotive|horsepower|bhp|v8|v6|engine|motor|vehicle|vehicles|coche|coches|mustang|camaro|challenger|charger|corvette|shelby|dodge|ford|chevrolet)\b/i.test(text);
+  if(/\b(data|server|compute|computing|ai|artificial intelligence|cloud)\b/i.test(text))visualTerms.push('data','server','servers','datacenter','data center','compute','computing','rack','cloud');
+  if(/\b(power|electricity|grid|energy|utility|utilities|voltage|transformer|substation)\b/i.test(text))visualTerms.push('power','electricity','grid','energy','utility','utilities','voltage','transformer','substation','transmission','turbine');
+  if(/\b(factory|manufacturing|industrial|robot|warehouse|supply chain)\b/i.test(text))visualTerms.push('factory','industrial','manufacturing','robot','warehouse','assembly','conveyor');
+  if(/\b(water|cooling|footprint|hydro|hydraulic)\b/i.test(text))visualTerms.push('water','cooling','chiller','treatment','industrial','facility','reservoir','pipeline','tower','plant');
+  if(/\b(ocean|climate|storm|flood|forest|wildfire|wild fire|drought)\b/i.test(text))visualTerms.push('ocean','climate','storm','flood','forest','wildfire','drought','weather');
+  // Spanish radar briefs often describe the editorial category rather than a
+  // concrete shot (for example, "curiosidades de ciencia"). Add a small,
+  // bilingual visual vocabulary so stock discovery can still find real,
+  // publishable moving footage without weakening the rights gate or falling
+  // back to stills/synthetic filler.
+  if(/\b(science|ciencia|curiosidad|curiosidades|educativ|microdocument|documental|laboratorio|laboratory|experiment|research|investigaci[oó]n|microscop)\b/i.test(text))visualTerms.push('science','scientist','laboratory','lab','microscope','experiment','research','telescope','space');
+  if(automotiveTopic)visualTerms.push('car','cars','automotive','vehicle','engine','horsepower','v8','classic car','race track','drag racing');
+  const semanticTerms=[...new Set([...core,...visualTerms])];
+  const escaped=semanticTerms.map((term)=>term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
+  const irrelevant=/slideshow|slide show|screenshot|screen capture|still image|illustration|cartoon|logo reveal|meme|watermark|template|infographic|couch|sofa|bedroom|living room|person sitting|sitting on|selfie|portrait|talking head|home interior|woman at home|man at home|bed|lifestyle|vertical video of a person|hand holding water|hand is in a glass|glass jar|person.*hand|gym|workout|bodybuilding|fitness|weightlifting|muscular man|muscle man|abdominal|biceps|bench press|dumbbell|kettlebell/i;
+  const required=[];
+  if(/\b(data|server|compute|computing|ai|artificial intelligence|cloud)\b/i.test(text))required.push(/data\s*center|datacenter|server|rack|compute|cooling|chiller|industrial|facility|water treatment|utility|power plant|electricity/i);
+  if(/\b(water|cooling|footprint|hydro|hydraulic)\b/i.test(text))required.push(/cooling|chiller|water treatment|industrial|facility|reservoir|pipeline|data\s*center|datacenter|server|power|utility|plant|tower/i);
+  if(/\b(power|electricity|grid|energy|utility|utilities|voltage|transformer|substation)\b/i.test(text))required.push(/power|electric|grid|utility|transformer|substation|transmission|turbine|plant|industrial|facility/i);
+  if(/\b(factory|manufacturing|industrial|robot|warehouse|supply chain)\b/i.test(text))required.push(/factory|industrial|manufactur|robot|warehouse|assembly|conveyor|facility/i);
+  if(/\b(ocean|climate|storm|flood|forest|wildfire|wild fire|drought)\b/i.test(text))required.push(/ocean|storm|flood|forest|wildfire|weather|river|coast|rain|ice|glacier/i);
+  if(/\b(science|ciencia|curiosidad|curiosidades|educativ|microdocument|documental|laboratorio|laboratory|experiment|research|investigaci[oó]n|microscop)\b/i.test(text))required.push(/science|scientist|laborator|\blab\b|microscop|experiment|research|telescope|space/i);
+  if(automotiveTopic)required.push(/car|cars|automotive|vehicle|engine|horsepower|bhp|v8|v6|racing|race track|drag|mustang|camaro|challenger|charger|corvette|shelby|dodge|ford|chevrolet/i);
+  const matches=(value)=>{
+    const candidateText=String(value||'');
+    return (!semanticTerms.length||!escaped.length||new RegExp(escaped.join('|'),'i').test(candidateText))
+      && !irrelevant.test(candidateText)
+      && required.every((pattern)=>pattern.test(candidateText));
+  };
+  const visualQueries=[];
+  if(visualTerms.includes('data'))visualQueries.push('data center server room moving video b-roll');
+  if(visualTerms.includes('power'))visualQueries.push('power grid transmission lines substation moving video b-roll');
+  if(visualTerms.includes('factory'))visualQueries.push('industrial factory machinery moving video b-roll');
+  if(visualTerms.includes('ocean'))visualQueries.push('climate weather ocean storm moving video b-roll');
+  if(visualTerms.includes('science'))visualQueries.push('science laboratory microscope experiment moving video b-roll','scientist research lab documentary footage','telescope space science educational video b-roll');
+  if(automotiveTopic)visualQueries.push('muscle cars horsepower drag racing moving video b-roll','classic american cars engine close up moving footage','ford mustang dodge challenger chevrolet camaro driving footage');
   return{
     queries:[
       `${core.join(' ')} real moving video footage`,
       `${core.slice(0,6).join(' ')} documentary b-roll`,
       `${core.slice(0,5).join(' ')} process infrastructure video`,
+      ...visualQueries,
     ].filter((query)=>query.trim().length>18),
     include:escaped.length?new RegExp(escaped.join('|'),'i'):null,
     exclude:irrelevant,
+    required,
+    matches,
+    visualTerms,
   };
 }
 async function cacheMovingVideo(candidate){
@@ -100,18 +170,97 @@ async function cacheMovingVideo(candidate){
 }
 async function discoverMovingSourceFootage(){
   const profile=sourceTopicProfile(topic);
-  const queries=profile.queries.map((value)=>String(value).replace(/\s+/g,' ').trim()).filter(Boolean).filter((value,index,array)=>array.indexOf(value)===index).slice(0,3);
+  const queries=[
+    ...profile.queries.filter((value)=>/moving video b-roll/i.test(value)),
+    ...profile.queries.filter((value)=>!/moving video b-roll/i.test(value)),
+  ].map((value)=>String(value).replace(/\s+/g,' ').trim()).filter(Boolean).filter((value,index,array)=>array.indexOf(value)===index).slice(0,8);
   sourceDiscovery.queries=queries;
+  const configuredSourceClipLimit=Math.max(1,Number(process.env.SOURCE_FOOTAGE_MAX_CLIPS||12));
+  // A short is still a finished edit, not a three-clip slideshow. Keep enough
+  // licensed moving footage in the catalogue for a real editorial cadence:
+  // roughly one fresh source every 1.5–3 seconds before any bounded reuse.
+  const sourceClipLimit=isShort?Math.min(16,configuredSourceClipLimit):configuredSourceClipLimit;
+  // A warm source catalogue is the difference between a sub-minute edit and a
+  // cold provider round-trip. Reuse only a local, rights-cleared moving clip
+  // whose title still matches the current semantic profile; never reuse an
+  // unverified cache entry and never use an image as a video substitute.
+  try{
+    const remoteSnapshot=await readJson(sourceManifestKey).catch((error)=>{sourceDiscovery.failed.push({provider:'r2-source-cache',error:String(error?.message||error).slice(0,240)});return null;});
+    if(remoteSnapshot&&String(remoteSnapshot.topic||'').trim().toLowerCase()===String(topic).trim().toLowerCase()){
+      for(const item of Array.isArray(remoteSnapshot.selected)?remoteSnapshot.selected:[]){
+        if(sourceFootage.length>=sourceClipLimit)break;
+        const title=String(item.title||item.id||'');
+        if(!profile.matches(title))continue;
+        const remoteKey=String(item.remoteKey||'');
+        const digestMatch=remoteKey.match(/^source-cache\/([a-f0-9]{24})\.(mp4|webm|mov)$/i);
+        if(!digestMatch)continue;
+        const cacheDir=resolve(sourceFootageCacheRoot,digestMatch[1]);
+        const cachedFiles=await readdir(cacheDir,{withFileTypes:true}).catch(()=>[]);
+        const extension=digestMatch[2].toLowerCase();
+        const cachedFile=cachedFiles.find((candidate)=>candidate.isFile()&&candidate.name.toLowerCase().endsWith(`.${extension}`));
+        const localPath=cachedFile?resolve(cacheDir,cachedFile.name):resolve(cacheDir,`${safeFilePart(item.id||digestMatch[1])}.${extension}`);
+        let info=await stat(localPath).catch(()=>null);
+        if(!info?.isFile()||info.size<1024){
+          await restoreFile(remoteKey,localPath).catch((error)=>sourceDiscovery.failed.push({provider:'r2-source-cache',id:item.id,error:String(error?.message||error).slice(0,240)}));
+          info=await stat(localPath).catch(()=>null);
+        }
+        if(!info?.isFile()||info.size<1024)continue;
+        const id=String(item.id||`cached-${digestMatch[1]}`);
+        sourceFootage.push({id,uri:pathToFileURL(localPath).toString(),title,sourceUrl:String(item.sourceUrl||''),sourceId:String(item.sourceKey||id),license:String(item.license||`${item.provider||'source'} PUBLISHABLE_WITH_ATTRIBUTION; attribution required`),rightsStatus:'CLEARED',startSec:0,cropMode:'CENTER'});
+        sourceDiscovery.selected.push({id,provider:item.provider||'r2-cache',sourceKey:item.sourceKey||id,title,sourceUrl:String(item.sourceUrl||''),license:String(item.license||''),localBytes:info.size,remoteKey});
+      }
+      if(sourceFootage.length>=sourceClipLimit){sourceDiscovery.cacheHit=true;sourceDiscovery.providers.push({provider:'r2-source-cache',capability:'durable-moving-footage',totalResults:sourceFootage.length});return;}
+    }
+    const entries=await readdir(sourceFootageCacheRoot,{withFileTypes:true});
+    const snapshots=entries.filter((entry)=>entry.isFile()&&entry.name.startsWith('discovery-')&&entry.name.endsWith('.json')).sort((a,b)=>b.name.localeCompare(a.name)).slice(0,24);
+    const cachedKeys=new Set();
+    for(const entry of snapshots){
+      const snapshot=JSON.parse(await readFile(resolve(sourceFootageCacheRoot,entry.name),'utf8'));
+      const snapshotTopic=String(snapshot?.topic||'').toLowerCase();
+      const topicTerms=String(topic).toLowerCase().split(/[^a-z0-9áéíóúüñ]+/i).filter((word)=>word.length>=5);
+      const overlap=topicTerms.filter((word)=>snapshotTopic.includes(word)).length;
+      if(snapshotTopic&&overlap<1)continue;
+      for(const item of Array.isArray(snapshot?.selected)?snapshot.selected:[]){
+        if(sourceFootage.length>=sourceClipLimit)break;
+        const title=String(item.title||item.id||'');
+        if(!profile.matches(title))continue;
+        const remoteKey=String(item.remoteKey||'');
+        const digestMatch=remoteKey.match(/^source-cache\/([a-f0-9]{24})\.(mp4|webm|mov)$/i);
+        if(!digestMatch||cachedKeys.has(digestMatch[1]))continue;
+        const cacheDir=resolve(sourceFootageCacheRoot,digestMatch[1]);
+        const cachedFiles=await readdir(cacheDir,{withFileTypes:true}).catch(()=>[]);
+        const cachedFile=cachedFiles.find((candidate)=>candidate.isFile()&&/\.(mp4|webm|mov)$/i.test(candidate.name));
+        if(!cachedFile)continue;
+        const localPath=resolve(cacheDir,cachedFile.name);
+        const info=await stat(localPath).catch(()=>null);
+        if(!info?.isFile()||info.size<1024)continue;
+        const id=String(item.id||`cached-${digestMatch[1]}`);
+        cachedKeys.add(digestMatch[1]);
+        sourceFootage.push({id,uri:pathToFileURL(localPath).toString(),title,sourceUrl:String(item.sourceUrl||''),sourceId:String(item.sourceKey||id),license:String(item.license||`${item.provider||'source'} PUBLISHABLE_WITH_ATTRIBUTION; attribution required`),rightsStatus:'CLEARED',startSec:0,cropMode:'CENTER'});
+        sourceDiscovery.selected.push({id,provider:item.provider||'cached',sourceKey:item.sourceKey||id,title,sourceUrl:String(item.sourceUrl||''),license:String(item.license||''),localBytes:info.size,remoteKey});
+      }
+      if(sourceFootage.length>=sourceClipLimit)break;
+    }
+    if(sourceFootage.length>=sourceClipLimit){sourceDiscovery.cacheHit=true;sourceDiscovery.providers.push({provider:'local-source-cache',capability:'warm-moving-footage',totalResults:sourceFootage.length});return;}
+  }catch(error){sourceDiscovery.failed.push({provider:'local-source-cache',error:String(error?.message||error).slice(0,240)});}
   const providers=[
     ['Pexels',searchPexelsVideo],
     ['Pixabay',searchPixabayVideo],
     ['Wikimedia Commons',searchWikimediaVideo],
   ];
   const raw=[];
-  for(const query of queries){
+  const queryResults=await Promise.all(queries.map(async(query)=>{
     const results=await Promise.all(providers.map(async([name,search])=>{
       try{
-        const result=await search(query,{orientation:isShort?'portrait':undefined,limit:20,perPage:20});
+        const searchOptions=name==='Wikimedia Commons'
+          ? {orientation:isShort?'portrait':undefined,limit:20,perPage:20,timeoutMs:2500,retries:1}
+          // Do not constrain stock search to portrait for Shorts. Most
+          // publishable footage is landscape and is safely center-cropped by
+          // the locked video-only renderer; the old provider-side portrait
+          // filter caused valid science/documentary clips to disappear before
+          // relevance and rights checks could evaluate them.
+          : {limit:20,perPage:20};
+        const result=await search(query,searchOptions);
         sourceDiscovery.providers.push({provider:result.provider||name,query,capability:result.capability,totalResults:result.totalResults??null});
         return result;
       }catch(error){
@@ -119,16 +268,23 @@ async function discoverMovingSourceFootage(){
         return null;
       }
     }));
-    raw.push(...results.filter(Boolean).flatMap((result)=>result.candidates||[]));
-  }
+     return results.filter(Boolean).flatMap((result)=>((result.candidates||[]).map((candidate)=>({...candidate,searchQuery:query}))));
+  }));
+  raw.push(...queryResults.flat());
   const seen=new Set();
   const eligible=raw.filter((candidate)=>{
     const key=String(candidate.sourceKey||candidate.visualFingerprint||candidate.id);
     const duration=Number(candidate.usableDurationSeconds??candidate.durationSeconds??0);
     const rights=['PUBLISHABLE_CONFIRMED','PUBLISHABLE_WITH_ATTRIBUTION'].includes(String(candidate.rightsTier));
-    const title=String(candidate?.metadata?.title||candidate.id||'');
-    const relevant=!profile.include||profile.include.test(title);
-    const unrelated=profile.exclude?.test(title)??false;
+     const candidateText=[candidate?.metadata?.title,candidate?.metadata?.tags,candidate.id].filter(Boolean).join(' ');
+     const title=String(candidate?.metadata?.title||candidate.id||'');
+     // Stock providers often return a generic but usable title (for example
+     // "server room") even when the query is specific. The profile includes
+     // deterministic visual expansions for those domains; require one of
+     // those terms instead of accepting every result merely because a broad
+     // search query produced it.
+     const relevant=profile.matches(candidateText);
+     const unrelated=false;
     if(!relevant||unrelated){sourceDiscovery.failed.push({provider:candidate.provider,id:candidate.id,error:'Candidate rejected: title is not semantically relevant to the brief'});return false;}
     if(seen.has(key)||!rights||duration<3||!candidate?.metadata?.downloadUrl)return false;
     seen.add(key);return true;
@@ -137,9 +293,16 @@ async function discoverMovingSourceFootage(){
     return rightsScore(b)-rightsScore(a)
       || Number(b.width||0)*Number(b.height||0)-Number(a.width||0)*Number(a.height||0)
       || Number(b.usableDurationSeconds||b.durationSeconds||0)-Number(a.usableDurationSeconds||a.durationSeconds||0);
-  }).slice(0,Number(process.env.SOURCE_FOOTAGE_MAX_CLIPS||12));
-  for(const candidate of eligible){
-    try{
+  });
+  const selectedCandidates=eligible.slice(0,sourceClipLimit);
+  const hydrated=Array(selectedCandidates.length);
+  let nextCandidate=0;
+  const hydrate=async()=>{
+    while(true){
+      const index=nextCandidate++;
+      if(index>=selectedCandidates.length)return;
+      const candidate=selectedCandidates[index];
+      try{
       const cached=await cacheMovingVideo(candidate);
       let remote=null;
       if(String(process.env.AUTO_YTB_SOURCE_CACHE_MIRROR||'false').toLowerCase()==='true'){
@@ -157,12 +320,14 @@ async function discoverMovingSourceFootage(){
       const duration=Number(candidate.usableDurationSeconds??candidate.durationSeconds??0);
       const license=String(candidate?.metadata?.license||`${candidate.provider} ${candidate.rightsTier}; attribution required`).replace(/\s+/g,' ').trim();
       const footage={id:`discovered-${safeFilePart(candidate.id)}`,uri:cached.uri,title:String(candidate?.metadata?.title||candidate.id),sourceUrl:String(candidate.sourceUrl||candidate?.metadata?.sourceUrl||''),sourceId:String(candidate.sourceKey||candidate.id),license,rightsStatus:'CLEARED',startSec:0,...(duration>0?{endSec:duration}:{}),cropMode:'CENTER'};
-      sourceFootage.push(footage);
-      sourceDiscovery.selected.push({id:footage.id,provider:candidate.provider,sourceKey:candidate.sourceKey||candidate.id,title:footage.title,sourceUrl:footage.sourceUrl,license,localBytes:cached.size,remoteKey:remote?.key??null});
+      hydrated[index]={footage,selected:{id:footage.id,provider:candidate.provider,sourceKey:candidate.sourceKey||candidate.id,title:footage.title,sourceUrl:footage.sourceUrl,license,localBytes:cached.size,remoteKey:remote?.key??null}};
     }catch(error){
       sourceDiscovery.failed.push({provider:candidate.provider,id:candidate.id,error:String(error?.message||error).slice(0,240)});
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({length:Math.min(3,selectedCandidates.length)},()=>hydrate()));
+  for(const item of hydrated.filter(Boolean)){sourceFootage.push(item.footage);sourceDiscovery.selected.push(item.selected);}
   if(!sourceFootage.length){
     // A retry may hit a transient provider/proxy failure even though an earlier
     // attempt already downloaded authorized clips. Rehydrate only matching
@@ -175,8 +340,7 @@ async function discoverMovingSourceFootage(){
         const snapshot=JSON.parse(await readFile(resolve(sourceFootageCacheRoot,entry.name),'utf8'));
         for(const item of Array.isArray(snapshot?.selected)?snapshot.selected:[]){
           const title=String(item.title||item.id||'');
-          if(profile.include&&!profile.include.test(title))continue;
-          if(profile.exclude?.test(title))continue;
+          if(!profile.matches(title))continue;
           const remoteKey=String(item.remoteKey||'');
           const digestMatch=remoteKey.match(/^source-cache\/([a-f0-9]{24})\.(mp4|webm|mov)$/i);
           if(!digestMatch)continue;
@@ -191,7 +355,7 @@ async function discoverMovingSourceFootage(){
           if(sourceFootage.some((clip)=>clip.id===id))continue;
           sourceFootage.push({id,uri:pathToFileURL(localPath).toString(),title,sourceUrl:String(item.sourceUrl||''),sourceId:String(item.sourceKey||id),license:String(item.license||`${item.provider||'source'} PUBLISHABLE_WITH_ATTRIBUTION; attribution required`),rightsStatus:'CLEARED',startSec:0,cropMode:'CENTER'});
           sourceDiscovery.selected.push({id,provider:item.provider||'cached',sourceKey:item.sourceKey||id,title,sourceUrl:String(item.sourceUrl||''),license:String(item.license||''),localBytes:info.size,remoteKey});
-          if(sourceFootage.length>=Number(process.env.SOURCE_FOOTAGE_MAX_CLIPS||12))break;
+          if(sourceFootage.length>=sourceClipLimit)break;
         }
         if(sourceFootage.length)break;
       }
@@ -200,7 +364,11 @@ async function discoverMovingSourceFootage(){
     }
   }
   await mkdir(resolve(sourceFootageCacheRoot),{recursive:true});
-  await writeFile(resolve(sourceFootageCacheRoot,`discovery-${createHash('sha256').update(`${topic}|${Date.now()}`).digest('hex').slice(0,16)}.json`),JSON.stringify(sourceDiscovery,null,2));
+  const snapshotText=JSON.stringify(sourceDiscovery,null,2);
+  await writeFile(resolve(sourceFootageCacheRoot,`discovery-${createHash('sha256').update(`${topic}|${Date.now()}`).digest('hex').slice(0,16)}.json`),snapshotText);
+  if(sourceDiscovery.selected.some((item)=>item.remoteKey)){
+    await mirrorJson(sourceDiscovery,sourceManifestKey).catch((error)=>sourceDiscovery.failed.push({provider:'r2-source-cache',error:`Manifest mirror deferred: ${String(error?.message||error).slice(0,240)}`}));
+  }
   if(!sourceFootage.length)throw new Error('SOURCE_FIRST_NO_PUBLISHABLE_FOOTAGE: no se encontró ningún clip de vídeo en movimiento con derechos publicables y descarga válida');
 }
 if(!Array.isArray(sourceFootage))sourceFootage=[];
@@ -223,6 +391,28 @@ if(sourceFirst&&!sourceFootage.length){
     sourceDiscovery.fallback='MIXED_MEDIA_GENERATIVE_VIDEO';
     sourceDiscovery.fallbackReason=String(error?.message||error).slice(0,240);
     console.warn(`[live-pipeline] source discovery unavailable in AUTO; continuing with VIDEO_ONLY generative motion: ${sourceDiscovery.fallbackReason}`);
+  }
+}
+if(sourceFirst&&sourceFootage.length){
+  // A finished edit may reuse a cleared clip only as a last-resort bridge,
+  // never as its visual backbone. Require enough distinct moving sources for
+  // the requested duration; AUTO can then use the explicit video-only motion
+  // fallback, while SOURCE_FIRST fails loudly instead of shipping repetition.
+  const durationHint=Math.max(10,Math.min(3600,Number(process.env.AUTO_YTB_REQUESTED_DURATION_SEC|| (isShort?45:180))));
+  const minimumSourceClips=isShort
+    ? Math.min(12,Math.max(6,Math.ceil(durationHint/5)))
+    : Math.min(16,Math.max(8,Math.ceil(durationHint/12)));
+  sourceDiscovery.minimumDistinctClips=minimumSourceClips;
+  sourceDiscovery.distinctClips=sourceFootage.length;
+  if(sourceFootage.length<minimumSourceClips){
+    const reason=`SOURCE_FIRST_INSUFFICIENT_DIVERSITY: ${sourceFootage.length} clips found, ${minimumSourceClips} distinct moving clips required for ${durationHint}s`;
+    if(requestedProductionMode!=='AUTO'||explicitSourceMode||Boolean(sourceFootagePath))throw new Error(reason);
+    sourceFirst=false;
+    sourcedOnly=false;
+    sourceDiscovery.mode='MIXED_MEDIA';
+    sourceDiscovery.fallback='MIXED_MEDIA_GENERATIVE_VIDEO';
+    sourceDiscovery.fallbackReason=reason;
+    console.warn(`[live-pipeline] source diversity gate switched AUTO to VIDEO_ONLY generative motion: ${reason}`);
   }
 }
 if(sourceFirst){
@@ -251,6 +441,7 @@ const runtime=createLiveRuntime(runtimeEnv);
 if(!runtime.db)throw new Error('DATABASE_URL is required for live pipeline durability');
 console.log(`[live-pipeline] runtime ready archetype=${runtime.archetypeDecision?.archetype??'unknown'} db=ready`);
 const db=runtime.db;
+runtimeDbForProgress=db;
 let productionRunId;
 
 function packagingGuidanceFromMetrics(metrics){
@@ -316,7 +507,9 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   const creativeRows=(await db.query(`select distinct on (feature_name,feature_value) feature_name,feature_value,sample_size,weighted_views,average_retention_delta,average_segment_retention,average_video_avp,average_share_rate,average_subscribers_per_thousand,average_roi,confidence,payload,observed_at from creative_feature_snapshots where channel_id=$1 and content_format=$2 and observed_at>=now()-interval '240 days' order by feature_name,feature_value,observed_at desc`,[channelId,contentFormat])).rows;
   const packagingLearning=packagingLearningFromRows(attributeRows),structuralLearning=structuralLearningFromRows(structuralRows),creativeLearning=buildCreativeLearningGuidance(creativeRows,{contentArchetype:runtime.archetypeDecision?.archetype}),learningMetrics=learningResult.rows[0];
   const packagingGuidance=packagingGuidanceFromMetrics(learningMetrics);
-  const baseTargetDurationSec=isShort?Number(channel.shortTargetDurationSec||45):Number(channel.targetDurationSec||660),configuredMax=Number(process.env.MAX_PRODUCTION_COST_USD||channel.maxProductionCostUsd||18),shortMaxOverride=Number(process.env.SHORT_MAX_PRODUCTION_COST_USD),shortMax=Number.isFinite(shortMaxOverride)&&shortMaxOverride>0?shortMaxOverride:Number(channel.shortMaxProductionCostUsd||Math.max(4,configuredMax*0.35)),baseMaxCostUsd=isShort?Math.min(configuredMax,shortMax):configuredMax;
+  const requestedDuration=Number(process.env.AUTO_YTB_REQUESTED_DURATION_SEC||0);
+  const requestedTargetDurationSec=Number.isFinite(requestedDuration)&&requestedDuration>0?Math.max(10,Math.min(180,Math.round(requestedDuration))):null;
+  const baseTargetDurationSec=requestedTargetDurationSec??(isShort?Number(channel.shortTargetDurationSec||45):Number(channel.targetDurationSec||660)),configuredMax=Number(process.env.MAX_PRODUCTION_COST_USD||channel.maxProductionCostUsd||18),shortMaxOverride=Number(process.env.SHORT_MAX_PRODUCTION_COST_USD),shortMax=Number.isFinite(shortMaxOverride)&&shortMaxOverride>0?shortMaxOverride:Number(channel.shortMaxProductionCostUsd||Math.max(9,configuredMax*0.5)),baseMaxCostUsd=isShort?Math.min(configuredMax,shortMax):configuredMax;
   const archetypeSceneDuration=isShort?Number(runtime.archetypeProfile?.targetSceneDurationSec?.short??0):Number(runtime.archetypeProfile?.targetSceneDurationSec?.long??0);
   const learnedProfile=productionProfileFromMetrics(learningMetrics,{targetDurationSec:baseTargetDurationSec,targetSceneDurationSec:archetypeSceneDuration||undefined,maxCostUsd:baseMaxCostUsd},contentFormat);
   if(creativeLearning.targetSceneDurationSec!=null){const bounded=isShort?Math.max(2.5,Math.min(8,creativeLearning.targetSceneDurationSec)):Math.max(5,Math.min(16,creativeLearning.targetSceneDurationSec));learnedProfile.targetSceneDurationSec=Math.round((learnedProfile.targetSceneDurationSec*0.55+bounded*0.45)*10)/10;}
@@ -327,9 +520,17 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   const contentIdeaId=ideaRow.rows[0].id;
   const structuralExperiment=selectStructuralExperiment({sampleSize:Number(learningMetrics?.sample_size??0),experimentSeed:`${channelId}:${contentFormat}:${contentIdeaId}:${topic}:${runtime.archetypeDecision?.archetype??'default'}`,allowCostExperiment:process.env.ALLOW_COST_EXPERIMENTS!=='false',learning:structuralLearning});
   const arm=structuralExperiment.selected,durationBounds=isShort?{min:20,max:180}:{min:480,max:900},sceneBounds=isShort?{min:2.5,max:8}:{min:5,max:16},costFloor=isShort?2:8;
-  const productionProfile={...learnedProfile,targetDurationSec:Math.round(Math.max(durationBounds.min,Math.min(durationBounds.max,learnedProfile.targetDurationSec*arm.targetDurationFactor))),targetSceneDurationSec:Math.round(Math.max(sceneBounds.min,Math.min(sceneBounds.max,learnedProfile.targetSceneDurationSec*arm.targetSceneDurationFactor))*10)/10,maxCostUsd:Math.round(Math.max(costFloor,Math.min(baseMaxCostUsd*1.25,learnedProfile.maxCostUsd*arm.maxCostFactor))*100)/100,scriptGuidance:[learnedProfile.scriptGuidance,arm.scriptGuidance].filter(Boolean).join('\n')||undefined,structuralExperiment,structuralLearning,creativeLearning,contentFormat,contentArchetype:runtime.archetypeDecision?.archetype??null};
+  const fastSourceOrVideoDuration=requestedTargetDurationSec!=null;
+  const fastSourceShort=sourceFirst&&isShort;
+  // Respect an explicit UI duration. The previous fast path always promoted
+  // source-first Shorts to 30 seconds, even when the creator requested 20–25;
+  // that added narration, encoding and QA work without improving the brief.
+  const fastShortTargetSec=Math.max(20,Math.min(60,requestedTargetDurationSec??Number(process.env.AUTO_YTB_FAST_SHORT_TARGET_SEC||30)));
+  const requestedTarget= requestedTargetDurationSec!=null ? requestedTargetDurationSec : null;
+  const productionProfile={...learnedProfile,targetDurationSec:requestedTarget??(fastSourceShort?fastShortTargetSec:Math.round(Math.max(durationBounds.min,Math.min(durationBounds.max,learnedProfile.targetDurationSec*arm.targetDurationFactor)))),targetSceneDurationSec:fastSourceShort?2.6:Math.round(Math.max(fastSourceOrVideoDuration&&isShort?5.5:sceneBounds.min,Math.min(sceneBounds.max,learnedProfile.targetSceneDurationSec*arm.targetSceneDurationFactor))*10)/10,maxCostUsd:Math.round(Math.max(costFloor,Math.min(baseMaxCostUsd*1.25,learnedProfile.maxCostUsd*arm.maxCostFactor))*100)/100,scriptGuidance:[learnedProfile.scriptGuidance,arm.scriptGuidance].filter(Boolean).join('\n')||undefined,structuralExperiment,structuralLearning,creativeLearning,contentFormat,contentArchetype:runtime.archetypeDecision?.archetype??null};
   const productionRepo=new ProductionRepository(db);
-  productionRunId=await productionRepo.createRun({contentIdeaId,state:runtime.archetypeProfile?.researchRequired===false?'SCRIPT':'RESEARCH',metadata:{topic,channelConfig:channel.id,channelKey,opportunityId,contentFormat,contentArchetype:runtime.archetypeDecision??null,packagingGuidance:packagingGuidance??null,productionProfile,packagingLearning,structuralLearning,creativeLearning,structuralExperiment,productionRouting:{requestedMode:requestedProductionMode,sourceFirst,sourcedOnly,archetype:routedArchetype?.archetype??null},sourceDiscovery}});
+  productionRunId=await productionRepo.createRun({contentIdeaId,state:runtime.archetypeProfile?.researchRequired===false?'SCRIPT':'RESEARCH',currentStage:runtime.archetypeProfile?.researchRequired===false?'SCRIPT':'RESEARCH',metadata:{topic,channelConfig:channel.id,channelKey,opportunityId,contentFormat,contentArchetype:runtime.archetypeDecision??null,packagingGuidance:packagingGuidance??null,productionProfile,packagingLearning,structuralLearning,creativeLearning,structuralExperiment,productionRouting:{requestedMode:requestedProductionMode,sourceFirst,sourcedOnly,archetype:routedArchetype?.archetype??null},sourceDiscovery}});
+  await persistProgress({productionRunId,state:'RESEARCH',message:'Producción persistida; comenzando investigación editorial.'});
 
   const requestedVoiceProvider=String(process.env.VOICE_PROVIDER||'').trim().toLowerCase();
   const activeVoiceProvider=requestedVoiceProvider==='auto'
@@ -338,7 +539,8 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   const configuredVoiceProvider=String(channel.voiceProfile?.provider||'').toLowerCase();
   const channelVoiceId=configuredVoiceProvider===activeVoiceProvider?channel.voiceProfile?.voiceId:'';
   const voiceId=resolveVoiceId({provider:activeVoiceProvider,language:channel.language,env:process.env,channelVoiceId});
-  const result=await runContentPipeline({projectId:productionRunId,topic,language:channel.language,contentFormat,targetDurationSec:productionProfile.targetDurationSec,targetSceneDurationSec:productionProfile.targetSceneDurationSec,voice:voiceId,maxCostUsd:productionProfile.maxCostUsd,search:runtime.search,model:runtime.model,voiceProvider:runtime.voice,imageProvider:runtime.image,videoProvider:runtime.video,thumbnailComposer:runtime.thumbnailComposer,store:runtime.store,renderer:runtime.renderer,publisher:runtime.publisher,contentArchetype:runtime.archetypeDecision,autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE==='true',videoOnly:String(process.env.AUTO_YTB_VIDEO_ONLY||'false').toLowerCase()==='true',sourcedOnly,visualMixPolicy:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',packagingGuidance:[packagingGuidance,creativeLearning.guidance].filter(Boolean).join('\n')||undefined,scriptGuidance:[productionProfile.scriptGuidance,sourceFootageGuidance].filter(Boolean).join('\n')||undefined,packagingLearning,sourceFootage,additionalCostUsd:()=>runtime.meter?.nonAssetCostUsd??0,minAttentionScore:Number(process.env.MIN_ATTENTION_SCORE||86),maxAttentionRevisionPasses:Number(process.env.MAX_ATTENTION_REVISION_PASSES||2)});
+  const result=await runContentPipeline({projectId:productionRunId,topic,language:channel.language,contentFormat,targetDurationSec:productionProfile.targetDurationSec,targetSceneDurationSec:productionProfile.targetSceneDurationSec,voice:voiceId,maxCostUsd:productionProfile.maxCostUsd,search:runtime.search,model:runtime.model,voiceProvider:runtime.voice,imageProvider:runtime.image,videoProvider:runtime.video,thumbnailComposer:runtime.thumbnailComposer,store:runtime.store,renderer:runtime.renderer,publisher:runtime.publisher,contentArchetype:runtime.archetypeDecision,autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE==='true',videoOnly:String(process.env.AUTO_YTB_VIDEO_ONLY||'false').toLowerCase()==='true',sourcedOnly,visualMixPolicy:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',packagingGuidance:[packagingGuidance,creativeLearning.guidance].filter(Boolean).join('\n')||undefined,scriptGuidance:[productionProfile.scriptGuidance,sourceFootageGuidance].filter(Boolean).join('\n')||undefined,packagingLearning,sourceFootage,additionalCostUsd:()=>runtime.meter?.nonAssetCostUsd??0,minAttentionScore:Number(process.env.MIN_ATTENTION_SCORE||86),maxAttentionRevisionPasses:Number(process.env.MAX_ATTENTION_REVISION_PASSES||2),onProgress:(progress)=>queueProgress({productionRunId,state:progress.state,message:progress.message})});
+  if(pendingProgressWrites.size)await Promise.allSettled([...pendingProgressWrites]);
   if(result.state!=='READY_FOR_REVIEW'){
     const blockers=result.events.filter((event)=>event.state==='BLOCKED').map((event)=>event.message).slice(-3).join(' | ')||`Pipeline ended in ${result.state}`;
     throw new Error(`PRODUCTION_PIPELINE_${result.state}:${blockers}`);
@@ -362,8 +564,11 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   if(result.qa)await productionRepo.addQaReport({productionRunId,passed:result.qa.passed,score:result.qa.score,containsSyntheticMedia:result.qa.containsSyntheticMedia,blockers:result.qa.blockers,report:{...result.qa,attention:result.attention??null,finalInspection:result.finalInspection??null,contentArchetype:result.manifest?.contentArchetype??null,executionPlan:result.manifest?.executionPlan??null}});
   if(result.externalId)await new PublicationRepository(db).create({productionRunId,channelId,youtubeVideoId:result.externalId,state:'private',contentFormat,containsSyntheticMedia:result.qa?.containsSyntheticMedia??false,metadata:{...renderPersistence,contentFormat,contentArchetype:result.manifest?.contentArchetype??null,executionPlan:result.manifest?.executionPlan??null,selectedPackagingId:result.manifest?.selectedPackagingId,packagingGuidance:packagingGuidance??null,productionProfile,packagingSelection:result.manifest?.packagingSelection??null,structuralLearning,creativeLearning,structuralExperiment,attention:result.attention??null,finalInspection:result.finalInspection??null}});
   if(opportunityId&&result.state==='READY_FOR_REVIEW')await db.query(`update opportunities set status='produced',recommended_format=coalesce(recommended_format,$2) where id=$1`,[opportunityId,contentFormat]);
+  const deferFastArchive=sourceFirst&&isShort&&String(process.env.AUTO_YTB_FAST_ARCHIVE??'defer').toLowerCase()==='defer';
   if(result.state==='READY_FOR_REVIEW'&&String(process.env.AUTO_ARCHIVE_DRIVE??'true').toLowerCase()!=='false'){
-    if(archiveConfigured()){
+    if(deferFastArchive){
+      console.log('[live-pipeline] fast source-first render ready; deferring library archive to postprocess job');
+    }else if(archiveConfigured()){
       console.log(`[live-pipeline] render ready; archiving run and artifacts to ${process.env.CONTENT_LIBRARY_PROVIDER||'cloudflare-r2'}`);
       await archiveProductionRun(productionRunId,configPath);
     }else{
@@ -371,4 +576,4 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
     }
   }
   console.log(JSON.stringify({productionRunId,contentFormat,contentArchetype:result.manifest?.contentArchetype?.id??runtime.archetypeDecision?.archetype??null,contentArchetypeDecision:runtime.archetypeDecision??null,executionPlan:result.manifest?.executionPlan??null,state:result.state,qa:result.qa?.score,qaBlockers:result.qa?.blockers??[],attention:result.attention?.score,attentionIssues:result.attention?.issues??[],attentionDimensions:result.attention?.dimensions??[],renderQa:result.finalInspection?.score,costUsd:durableCost,thumbnails:result.manifest?.thumbnails.length??0,renderUri:result.renderUri,youtubeVideoId:result.externalId??null,learnedPackaging:Boolean(packagingGuidance),creativeLearningScope:creativeLearning.scope,creativeGuidanceWinners:creativeLearning.winners,productionProfile,packagingSelection:result.manifest?.packagingSelection??null,structuralLearning,structuralExperiment,events:result.events.slice(-16)},null,2));
-}catch(error){if(productionRunId)await db.query(`update production_runs set state='BLOCKED',total_cost_usd=greatest(total_cost_usd,$3),metadata=metadata||$2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({error:error instanceof Error?error.message:String(error),contentFormat,contentArchetype:runtime.archetypeDecision??null,meter:runtime.meter?.snapshot?.()??null}),Number(runtime.meter?.totalCostUsd??0)]);throw error;}finally{await db.close();}
+}catch(error){if(productionRunId)await db.query(`update production_runs set state='BLOCKED',total_cost_usd=greatest(total_cost_usd,$3),metadata=metadata||$2::jsonb,updated_at=now() where id=$1`,[productionRunId,JSON.stringify({error:error instanceof Error?error.message:String(error),contentFormat,contentArchetype:runtime.archetypeDecision??null,meter:runtime.meter?.snapshot?.()??null}),Number(runtime.meter?.totalCostUsd??0)]);throw error;}finally{runtimeDbForProgress=null;await db.close();}

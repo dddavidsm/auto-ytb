@@ -18,8 +18,13 @@ export async function inspectMediaWithFfmpeg(input,options={}){
   const video=streams.find((stream)=>stream.codec_type==='video'),audio=streams.find((stream)=>stream.codec_type==='audio');
   const durationSeconds=Number(info.format?.duration||0),width=Number(video?.width||0),height=Number(video?.height||0),hasVideo=Boolean(video),hasAudio=Boolean(audio);
   let blackSeconds=0,longestBlackSeconds=0,silenceSeconds=0,longestSilenceSeconds=0;
-  if(hasVideo){const detected=await capture(ffmpeg,['-hide_banner','-nostats','-i',path,'-vf','blackdetect=d=0.8:pix_th=0.10','-an','-f','null','-']).catch(()=>({stdout:'',stderr:''}));const values=durations(detected.stderr,/black_duration:([0-9.]+)/g);blackSeconds=values.reduce((sum,value)=>sum+value,0);longestBlackSeconds=Math.max(0,...values);}
-  if(hasAudio){const detected=await capture(ffmpeg,['-hide_banner','-nostats','-i',path,'-af','silencedetect=n=-42dB:d=1.2','-vn','-f','null','-']).catch(()=>({stdout:'',stderr:''}));const values=durations(detected.stderr,/silence_duration:\s*([0-9.]+)/g);silenceSeconds=values.reduce((sum,value)=>sum+value,0);longestSilenceSeconds=Math.max(0,...values);}
+  // The source-first fast profile already enforces real video, audio presence,
+  // duration and dimensions during the render. Avoid two extra full decodes
+  // (blackdetect + silencedetect) on the basic container; they can cost more
+  // wall-clock time than the actual encode.
+  const deepChecks=input.deepChecks!==false;
+  if(hasVideo&&deepChecks){const detected=await capture(ffmpeg,['-hide_banner','-nostats','-i',path,'-vf','blackdetect=d=0.8:pix_th=0.10','-an','-f','null','-']).catch(()=>({stdout:'',stderr:''}));const values=durations(detected.stderr,/black_duration:([0-9.]+)/g);blackSeconds=values.reduce((sum,value)=>sum+value,0);longestBlackSeconds=Math.max(0,...values);}
+  if(hasAudio&&deepChecks){const detected=await capture(ffmpeg,['-hide_banner','-nostats','-i',path,'-af','silencedetect=n=-42dB:d=1.2','-vn','-f','null','-']).catch(()=>({stdout:'',stderr:''}));const values=durations(detected.stderr,/silence_duration:\s*([0-9.]+)/g);silenceSeconds=values.reduce((sum,value)=>sum+value,0);longestSilenceSeconds=Math.max(0,...values);}
   const issues=[];let score=100;
   if(!hasVideo){issues.push('missing-video-stream');score-=100;}
   if(input.requireAudio&&!hasAudio){issues.push('missing-audio-stream');score-=100;}

@@ -18,7 +18,8 @@ const manifest={
   executionPlan:{archetypeId:'EXPLAINER_DOCUMENTARY',scriptMode:'NARRATION',voiceMode:'SINGLE_NARRATOR',captionMode:'FULL_SPEECH',audioMode:'NARRATION_LED',visualMode:'EVIDENCE_FIRST'},
   script:{title:'Test',language:'en',targetDurationSec:2,thesis:'test',outro:'',beats:[{id:'b1',startSec:0,targetDurationSec:1,purpose:'hook',narration:'A visible caption proves the finishing pass.',onScreenText:'A visible caption',visualIntent:'A simple visual hook',sourceIds:[],retentionDevice:'open_loop'},{id:'b2',startSec:1,targetDurationSec:1,purpose:'payoff',narration:'The clean cut preserves the picture.',visualIntent:'A clear payoff',sourceIds:[],retentionDevice:'reveal'}]},
   scenes:[{id:'b1-s1',startSec:0,durationSec:1,kind:'motion_graphic',instruction:'Simple hook',sourceIds:[],generated:false},{id:'b2-s1',startSec:1,durationSec:1,kind:'motion_graphic',instruction:'Simple payoff',sourceIds:[],generated:false}],
-  captionPlan:{preset:'EDITORIAL_CLEAN',enabled:true,burnIn:true,source:'ON_SCREEN_CONTEXT',speakerAware:false,maxChars:36,maxDurationSeconds:2.4,position:'BOTTOM',safeBottomPercent:8,fontScale:0.9,emphasis:'KEY_PHRASES'},
+  voice:{alignment:(()=>{const text='A visible caption proves the finishing pass.';const characters=[...text],characterStartTimesSeconds=[],characterEndTimesSeconds=[];let cursor=0;for(const char of characters){characterStartTimesSeconds.push(cursor);cursor+=/\s/.test(char)?0.035:0.065;characterEndTimesSeconds.push(cursor);}return{characters,characterStartTimesSeconds,characterEndTimesSeconds};})()},
+  captionPlan:{preset:'EDITORIAL_CLEAN',enabled:true,burnIn:true,source:'VOICE_ALIGNMENT',speakerAware:false,maxChars:52,maxDurationSeconds:2.4,position:'BOTTOM',safeBottomPercent:8,fontScale:0.9,emphasis:'KEY_PHRASES'},
   editPlan:{preset:'DOCUMENTARY',transitionMode:'MOTIVATED',transitionDurationSeconds:0.12,punchInAnchors:true,punchInScale:1.02,filmLook:false,filmGrain:0},
 };
 await writeFile(manifestPath,JSON.stringify(manifest,null,2),'utf8');
@@ -29,6 +30,8 @@ const after=(await stat(base)).size;
 assert.notEqual(after,before,'editorial finish must rewrite the video');
 assert.equal(result.metadata.renderExecution.captionsBurned,true);
 assert.equal(result.metadata.renderExecution.captionCueCount,1);
+assert.equal(result.metadata.renderExecution.karaokeEnabled,true);
+assert.ok(result.metadata.renderExecution.karaokeWordCount>=6);
 assert.ok(result.metadata.renderExecution.punchInsApplied>=1);
 assert.equal(result.metadata.renderExecution.transitionsApplied,1);
 assert.equal(result.metadata.renderExecution.transitionsSkipped,0);

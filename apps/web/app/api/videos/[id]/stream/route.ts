@@ -13,10 +13,11 @@ export const dynamic='force-dynamic';
 function localPath(uri:string){if(uri.startsWith('file://'))return fileURLToPath(uri);if(uri.startsWith('/')||uri.startsWith('.'))return resolve(/* turbopackIgnore: true */ uri);return null;}
 function safeRenderPath(uri:string){const path=localPath(uri);if(!path)return null;const root=resolve(/* turbopackIgnore: true */ process.env.LOCAL_RENDER_ROOT||'.data/renders');const rel=relative(/* turbopackIgnore: true */ root,resolve(/* turbopackIgnore: true */ path));return rel.startsWith('..')||rel.includes(`..${process.platform==='win32'?'\\':'/'}`)?null:path;}
 
-async function remoteRender(request:Request,key:string){
+async function remoteRender(request:Request,key:string,storedUrl=''){
   const base=String(process.env.AUTO_YTB_MEDIA_PROXY_URL||'').trim(),token=String(process.env.CONTROL_PLANE_TOKEN||'').trim();
-  if(!base||!token||!key)return null;
-  const url=new URL(base);url.searchParams.set('key',key);
+  if(!token||(!base&&!storedUrl))return null;
+  const url=storedUrl?new URL(storedUrl):new URL(base);
+  if(!storedUrl)url.searchParams.set('key',key);
   const response=await fetch(url,{headers:{authorization:`Bearer ${token}`,range:request.headers.get('range')||''}});
   if(!response.ok)return null;
   const headers=new Headers(response.headers);headers.set('Cache-Control','private, no-store');
@@ -30,7 +31,7 @@ export async function GET(request:Request,context:{params:Promise<{id:string}>})
   const metadata=rows[0]?.metadata??{};const uri=String(metadata.renderUri??'');const path=safeRenderPath(uri);
   const info=path?await stat(/* turbopackIgnore: true */ path).catch(()=>null):null;
   if(!path||!info||!info.isFile()){
-    const remote=await remoteRender(request,String(metadata.remoteMediaKey??''));
+    const remote=await remoteRender(request,String(metadata.remoteMediaKey??''),String(metadata.remoteMediaUrl??''));
     return remote??NextResponse.json({error:'Render not found in persistent media storage'},{status:404});
   }
   const size=info.size,range=request.headers.get('range');let start=0,end=size-1;

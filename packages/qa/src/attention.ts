@@ -68,6 +68,7 @@ export function reviewAttentionBlueprint(input:{
   executionPlan?: ContentExecutionPlan;
   selectedPackagingId?: string;
   minScore?: number;
+  sourceOnly?: boolean;
 }): AttentionReview {
   const isShort=input.contentFormat==='SHORT_VERTICAL';
   const visualAction=input.executionPlan?.scriptMode==='VISUAL_ACTION';
@@ -114,14 +115,21 @@ export function reviewAttentionBlueprint(input:{
 
   const sceneDurations=input.scenes.map((scene)=>Math.max(0,Number(scene.durationSec??0))).filter(Boolean);
   const totalSceneSeconds=sceneDurations.reduce((a,b)=>a+b,0);
-  const visualVariantKeys=input.scenes.map((scene)=>scene.kind==='broll'
-    ?'broll:'+(scene.sourceFootageId??scene.id)
-    :'kind:'+scene.kind);
+  // A moving-video-only timeline legitimately uses the same medium for every
+  // shot. Measure the editorial visual variant (action/instruction), not just
+  // the asset kind, otherwise six different moving shots are misclassified as
+  // one repetitive visual and fail the attention gate.
+  const visualVariantKeys=input.scenes.map((scene)=>{
+    if(scene.kind==='broll')return'broll:'+(scene.sourceFootageId??scene.id);
+    const instruction=String(scene.instruction??'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ').trim().slice(0,96);
+    return`kind:${scene.kind}:${instruction}`;
+  });
   const visualKindCount=new Set(visualVariantKeys).size;
   const longestSceneSeconds=Math.max(0,...sceneDurations);
   const visualChangeRatePerMinute=totalSceneSeconds>0?input.scenes.length/(totalSceneSeconds/60):0;
   const sceneDurationCv=coefficientOfVariation(sceneDurations);
   const repeatedKindRun=maxRun(visualVariantKeys);
+  const sourceOnlyMotion=Boolean(input.sourceOnly)&&input.scenes.length>0&&input.scenes.every((scene)=>scene.kind==='broll');
   const sceneCap=isShort?9:24;
   let visualCommunicationScore=55;
   if(visualKindCount>=(isShort?2:3))visualCommunicationScore+=15;
@@ -179,7 +187,7 @@ export function reviewAttentionBlueprint(input:{
     {id:'hook-strength',score:round(hookScore),weight:18,message:`${visualAction?'Visual hook':'Hook'} ${firstHookSeconds===999?'missing':`${firstHookSeconds.toFixed(1)}s`} · ${first?.retentionDevice??'no retention device'}`},
     {id:'narrative-momentum',score:round(momentumScore),weight:14,message:`Retention devices ${(retentionDeviceShare*100).toFixed(0)}% · ${oversizedBeats} oversized beats`},
     {id:'story-arc',score:round(storyArcScore),weight:12,message:`Hook ${hasHook?'yes':'no'} · development ${hasDevelopment?'yes':'no'} · escalation ${hasEscalation?'yes':'no'} · reveal/payoff ${hasPayoff?'yes':'no'}`},
-    {id:'visual-communication',score:round(visualCommunicationScore),weight:13,message:`${visualKindCount} visual types · longest scene ${longestSceneSeconds.toFixed(1)}s`},
+    {id:'visual-communication',score:round(visualCommunicationScore),weight:13,message:`${visualKindCount} visual variants · longest scene ${longestSceneSeconds.toFixed(1)}s`},
     {id:'pattern-variation',score:round(patternVariationScore),weight:8,message:`${visualChangeRatePerMinute.toFixed(1)} visual changes/min · duration CV ${sceneDurationCv.toFixed(2)}`},
     {id:'payoff',score:round(payoffScore),weight:10,message:payoffIndex>=0?`Payoff/reveal at ${(payoffPosition*100).toFixed(0)}% of beat sequence`:'No payoff/reveal found'},
     {id:'clarity',score:round(clarityScore),weight:6,message:visualAction?'Visual/context text density is readable':`${averageWordsPerSentence.toFixed(1)} words/sentence average`},
@@ -193,7 +201,7 @@ export function reviewAttentionBlueprint(input:{
   if(promiseScore<70)add('critical','promise-mismatch','The title/thumbnail promise is not paid into quickly enough.',visualAction?'Make the opening action/image visibly deliver the packaging promise without relying on narration.':'Rewrite the opening so the viewer immediately understands why the clicked promise matters, without restating the title verbatim.');
   if(storyArcScore<75)add('major','flat-arc','The narrative lacks a complete escalation/reveal/payoff progression.',visualAction?'Reorder visible beats into hook action → complication/escalation → reveal → observable payoff.':'Reorder beats into hook → essential context/evidence → escalation/complication → reveal → payoff.');
   if(momentumScore<72)add('major','low-momentum','Too much of the script lacks curiosity, contrast or progressive revelation.',visualAction?'Make every visible beat change the situation, raise stakes, reveal information or move directly toward the payoff.':'Give each beat a reason to continue: a concrete question, contrast, consequence, reveal or unresolved information gap.');
-  if(visualCommunicationScore<72)add('critical','weak-visual-storytelling','Visual plan is too static, repetitive or underspecified.','Make every visual earn its screen time by explaining, proving, escalating or refreshing attention; replace decorative repeats with evidence, action, diagrams, motion or meaningful scene changes.');
+  if(visualCommunicationScore<72)add(sourceOnlyMotion?'major':'critical','weak-visual-storytelling',sourceOnlyMotion?'Moving source footage is valid but the catalogue or shot cadence could use more visual variety.':'Visual plan is too static, repetitive or underspecified.',sourceOnlyMotion?'Add more distinct licensed clips or tighter action-based cuts when available; never replace moving source footage with stills, cards or synthetic filler.':'Make every visual earn its screen time by explaining, proving, escalating or refreshing attention; replace decorative repeats with evidence, action, diagrams, motion or meaningful scene changes.');
   if(patternVariationScore<65)add('major','monotonous-pacing','The visual rhythm is likely to feel monotonous.','Vary scene duration and visual mode according to narrative importance; use pattern interrupts at structural transitions rather than arbitrary fixed intervals.');
   if(payoffScore<72)add('critical','weak-payoff','The video does not clearly resolve the curiosity it creates.',visualAction?'End on an observable result/reaction/consequence that resolves the opening curiosity before any CTA.':'Strengthen the final reveal/payoff so the viewer receives a concrete answer, consequence or emotional resolution before any CTA.');
   if(clarityScore<70)add('major','dense-language',visualAction?'On-screen context is too dense to read at viewing speed.':'Narration is harder to process than necessary.',visualAction?'Reduce on-screen text to short contextual phrases; the visuals/action should carry the story.':'Shorten sentences, remove stacked clauses and make each sentence advance one clear idea.');

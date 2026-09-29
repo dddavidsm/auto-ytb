@@ -4,10 +4,10 @@ const children = new Map();
 let stopping = false;
 let exitCode = 0;
 
-function start(name, args, { restart = false } = {}) {
+function start(name, args, { restart = false, envOverrides = {} } = {}) {
   const child = spawn(process.execPath, args, {
     cwd: process.cwd(),
-    env: { ...process.env },
+    env: { ...process.env, ...envOverrides },
     stdio: 'inherit',
     windowsHide: true,
   });
@@ -28,7 +28,7 @@ function start(name, args, { restart = false } = {}) {
     console.error(`[container] ${name} exited code=${code ?? 'none'} signal=${signal ?? 'none'}`);
     if (restart) {
       setTimeout(() => {
-        if (!stopping && !children.has(name)) start(name, args, { restart });
+        if (!stopping && !children.has(name)) start(name, args, { restart, envOverrides });
       }, 15_000).unref();
     }
   });
@@ -51,9 +51,13 @@ process.once('SIGINT', () => shutdown('SIGINT'));
 start('web', ['scripts/control-plane-web.mjs', 'start']);
 
 if (String(process.env.RUN_BACKGROUND_WORKERS ?? '').toLowerCase() === 'true') {
-  start('worker', ['scripts/worker.mjs'], { restart: true });
+  // Keep interactive production independent from post-processing, analytics
+  // and maintenance jobs. Both workers still use the DB lease, so they never
+  // claim the same job, while a finished render can return immediately.
+  start('worker', ['scripts/worker.mjs'], { restart: true, envOverrides: { WORKER_ROLE: 'interactive' } });
+  start('background-worker', ['scripts/worker.mjs'], { restart: true, envOverrides: { WORKER_ROLE: 'background' } });
   start('scheduler', ['scripts/scheduler.mjs'], { restart: true });
-  console.log('[container] autonomous worker and scheduler enabled');
+  console.log('[container] autonomous interactive/background workers and scheduler enabled');
 } else {
   console.log('[container] autonomous worker and scheduler disabled by RUN_BACKGROUND_WORKERS');
 }
