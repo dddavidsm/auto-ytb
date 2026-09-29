@@ -509,7 +509,15 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   const packagingGuidance=packagingGuidanceFromMetrics(learningMetrics);
   const requestedDuration=Number(process.env.AUTO_YTB_REQUESTED_DURATION_SEC||0);
   const requestedTargetDurationSec=Number.isFinite(requestedDuration)&&requestedDuration>0?Math.max(10,Math.min(180,Math.round(requestedDuration))):null;
-  const baseTargetDurationSec=requestedTargetDurationSec??(isShort?Number(channel.shortTargetDurationSec||45):Number(channel.targetDurationSec||660)),configuredMax=Number(process.env.MAX_PRODUCTION_COST_USD||channel.maxProductionCostUsd||18),shortMaxOverride=Number(process.env.SHORT_MAX_PRODUCTION_COST_USD),shortMax=Number.isFinite(shortMaxOverride)&&shortMaxOverride>0?shortMaxOverride:Number(channel.shortMaxProductionCostUsd||Math.max(9,configuredMax*0.5)),baseMaxCostUsd=isShort?Math.min(configuredMax,shortMax):configuredMax;
+  const baseTargetDurationSec=requestedTargetDurationSec??(isShort?Number(channel.shortTargetDurationSec||45):Number(channel.targetDurationSec||660));
+  const configuredMax=Number(process.env.MAX_PRODUCTION_COST_USD||channel.maxProductionCostUsd||18);
+  const shortMaxOverride=Number(process.env.SHORT_MAX_PRODUCTION_COST_USD);
+  const shortMax=Number.isFinite(shortMaxOverride)&&shortMaxOverride>0?shortMaxOverride:Number(channel.shortMaxProductionCostUsd||Math.max(9,configuredMax*0.5));
+  // A source-first short gets the reduced cap, but AUTO may switch to the
+  // video-only generative path when no publishable moving footage is found.
+  // Once that fallback happens, use the normal production cap instead of
+  // blocking a valid generative run against the source-first budget.
+  const baseMaxCostUsd=isShort&&sourceFirst?Math.min(configuredMax,shortMax):configuredMax;
   const archetypeSceneDuration=isShort?Number(runtime.archetypeProfile?.targetSceneDurationSec?.short??0):Number(runtime.archetypeProfile?.targetSceneDurationSec?.long??0);
   const learnedProfile=productionProfileFromMetrics(learningMetrics,{targetDurationSec:baseTargetDurationSec,targetSceneDurationSec:archetypeSceneDuration||undefined,maxCostUsd:baseMaxCostUsd},contentFormat);
   if(creativeLearning.targetSceneDurationSec!=null){const bounded=isShort?Math.max(2.5,Math.min(8,creativeLearning.targetSceneDurationSec)):Math.max(5,Math.min(16,creativeLearning.targetSceneDurationSec));learnedProfile.targetSceneDurationSec=Math.round((learnedProfile.targetSceneDurationSec*0.55+bounded*0.45)*10)/10;}
