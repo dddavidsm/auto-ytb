@@ -525,7 +525,23 @@ export async function runContentPipeline(input: {
 
   const generatedScenes=scenes.filter((candidate)=>candidate.generated);
   const generatedAssets:Array<AssetRecord|undefined>=Array.from({length:generatedScenes.length});
-  const generationConcurrency=Math.max(1,Math.min(4,Math.floor(Number(process.env.AUTO_YTB_VIDEO_CONCURRENCY||3))));
+  const generationConcurrency=Math.max(1,Math.min(2,Math.floor(Number(process.env.AUTO_YTB_VIDEO_CONCURRENCY||2))));
+  const transientVideoFailure=(error:unknown)=>/\b429\b|quota|rate[ -]?limit|resource exhausted|too many requests/i.test(String(error instanceof Error?error.message:error??''));
+  const wait=(milliseconds:number)=>new Promise((resolve)=>setTimeout(resolve,milliseconds));
+  const generateVideoWithRetry=async(request:Parameters<NonNullable<typeof input.videoProvider>['generate']>[0])=>{
+    let lastError:unknown;
+    for(let attempt=0;attempt<3;attempt+=1){
+      try{return await input.videoProvider!.generate(request);}
+      catch(error){
+        lastError=error;
+        if(!transientVideoFailure(error)||attempt===2)throw error;
+        const delay=15_000*(attempt+1);
+        event('ASSETS',`Proveedor de vídeo limitado temporalmente; reintentando en ${Math.round(delay/1000)}s (${attempt+1}/2).`);
+        await wait(delay);
+      }
+    }
+    throw lastError instanceof Error?lastError:new Error(String(lastError??'Video provider failed'));
+  };
   const generateScene=async(scene:Scene):Promise<AssetRecord>=>{
     const beat=beatForScene(scene);
     const beatContext=beat?.narration?.replace(/\s+/g,' ').trim().slice(0,520);
@@ -539,8 +555,8 @@ export async function runContentPipeline(input: {
     if(scene.kind==='ai_video'){
       let videoError:unknown;
       if(!videoFallbackDisabled)try{
-        generated=await input.videoProvider!.generate({ prompt:visualPrompt, durationSeconds: Math.min(scene.durationSec, 8), aspectRatio });
-      }catch(error){videoError=error;videoFallbackDisabled=true;}
+         generated=await generateVideoWithRetry({ prompt:visualPrompt, durationSeconds: Math.min(scene.durationSec, 8), aspectRatio });
+       }catch(error){videoError=error;videoFallbackDisabled=true;}
       if(videoError||videoFallbackDisabled){
         const reason=String(videoError instanceof Error?videoError.message:videoError??'video provider disabled after an earlier failure').slice(0,240);
         if(videoOnly)throw new Error(`VIDEO_ONLY_PROVIDER_FAILED:${scene.id}:${reason}`);

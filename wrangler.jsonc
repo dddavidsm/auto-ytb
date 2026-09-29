@@ -51,6 +51,7 @@
     "AUTO_YTB_VIDEO_ONLY": "true",
     "AUTO_YTB_PRODUCTION_MODE": "AUTO",
     "SOURCE_FOOTAGE_MAX_CLIPS": "16",
+    "AUTO_YTB_VIDEO_CONCURRENCY": "2",
     "AUTO_YTB_SOURCE_CACHE_MIRROR": "true",
     "AUTO_YTB_MEDIA_PROXY_URL": "https://auto-ytb-production.taipbeats.workers.dev/__internal/media",
     "AUTO_YTB_SOURCE_LOCKED_FAST_PATH": "true",
