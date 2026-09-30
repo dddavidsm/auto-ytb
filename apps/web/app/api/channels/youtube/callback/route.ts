@@ -1,13 +1,13 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { encryptChannelRefreshToken, currentSession, youtubeChannelOauthConfig } from '../../../../../lib/auth';
 import { query } from '../../../../../lib/db';
 
 export const runtime = 'nodejs';
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const session = await currentSession();
   if (!session) return NextResponse.redirect(new URL('/login', request.url));
-  const url = new URL(request.url);
+  const url = request.nextUrl;
   const state = url.searchParams.get('state') || '';
   const expected = request.cookies.get('auto_ytb_youtube_oauth_state')?.value || '';
   if (!state || state !== expected) return NextResponse.redirect(new URL('/channels?error=oauth_state', request.url));
