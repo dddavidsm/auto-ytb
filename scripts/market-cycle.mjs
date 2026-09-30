@@ -90,6 +90,7 @@ try{
     const status=score.decision==='PRODUCE'?'candidate':score.decision==='RESEARCH'?'research':score.decision==='WATCH'?'watch':'rejected';
     const representative=[...clusterVideos].sort((a,b)=>b.viewsPerHour-a.viewsPerHour)[0];
     const canonical=cluster.terms.slice(0,7).join(' ')||cluster.label.slice(0,120);
+    const evidence=clusterVideos.slice(0,12).map((video)=>({source:'YouTube',videoId:video.id,title:video.title,channelId:video.channelId,channelTitle:video.channelTitle,publishedAt:video.publishedAt,views:video.viewCount,viewsPerHour:Math.round(video.viewsPerHour),url:`https://www.youtube.com/watch?v=${encodeURIComponent(video.id)}`}));
     const topicResult=await db.query(`insert into topics (canonical_name,niche,language) values ($1,$2,$3) on conflict (canonical_name) do update set niche=excluded.niche,language=excluded.language returning id`,[canonical,niche,process.env.YOUTUBE_RELEVANCE_LANGUAGE??'en']);
     const topicId=topicResult.rows[0].id;
 
@@ -105,9 +106,9 @@ try{
     let opportunityId;
     if(existing.rows[0]&&existing.rows[0].status!=='produced'){
       opportunityId=existing.rows[0].id;
-      await db.query(`update opportunities set angle=$2,status=$3,score=$4,grade=$5,decision=$6,signals=$7::jsonb,risks=$8::jsonb,rationale=$9::jsonb,detected_at=now(),expires_at=now()+interval '72 hours' where id=$1`,[opportunityId,representative?.title??cluster.label,status,score.finalScore,score.grade,score.decision,JSON.stringify(signals),JSON.stringify({...risks,totalPenalty:score.riskPenalty}),JSON.stringify(rationale)]);
+      await db.query(`update opportunities set angle=$2,status=$3,score=$4,grade=$5,decision=$6,signals=$7::jsonb,risks=$8::jsonb,rationale=$9::jsonb,evidence=$10::jsonb,score_breakdown=$11::jsonb,confidence=$12,detected_at=now(),expires_at=now()+interval '72 hours' where id=$1`,[opportunityId,representative?.title??cluster.label,status,score.finalScore,score.grade,score.decision,JSON.stringify(signals),JSON.stringify({...risks,totalPenalty:score.riskPenalty}),JSON.stringify(rationale),JSON.stringify(evidence),JSON.stringify(score),breadthConfidence]);
     } else {
-      const inserted=await db.query(`insert into opportunities (topic_id,angle,status,score,grade,decision,signals,risks,rationale,expires_at) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,now()+interval '72 hours') returning id`,[topicId,representative?.title??cluster.label,status,score.finalScore,score.grade,score.decision,JSON.stringify(signals),JSON.stringify({...risks,totalPenalty:score.riskPenalty}),JSON.stringify(rationale)]);
+      const inserted=await db.query(`insert into opportunities (topic_id,angle,status,score,grade,decision,signals,risks,rationale,evidence,score_breakdown,confidence,expires_at) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12,now()+interval '72 hours') returning id`,[topicId,representative?.title??cluster.label,status,score.finalScore,score.grade,score.decision,JSON.stringify(signals),JSON.stringify({...risks,totalPenalty:score.riskPenalty}),JSON.stringify(rationale),JSON.stringify(evidence),JSON.stringify(score),breadthConfidence]);
       opportunityId=inserted.rows[0].id;
     }
     persisted.push({opportunityId,topic:canonical,angle:representative?.title??cluster.label,score:score.finalScore,grade:score.grade,decision:score.decision,clusterSize:clusterVideos.length,uniqueChannels,medianViewsPerHour:Math.round(clusterMedianVph)});
