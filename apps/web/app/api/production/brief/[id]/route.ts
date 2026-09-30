@@ -44,11 +44,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       productionMetadata = recovered[0].metadata;
     }
   }
-  const latestEventStage = events.map((event) => stageFrom(event.detail?.stage || event.event_type)).find(Boolean) || '';
-  const latestProgress = events.map((event) => Number(event.detail?.progressPercent)).find((value) => Number.isFinite(value) && value >= 0 && value <= 100);
-  const currentStage = stageFrom(productionCurrentStage) || latestEventStage || 'BRIEF_ACCEPTED';
+  const eventStages = events.map((event) => stageFrom(event.detail?.stage || event.event_type)).filter(Boolean);
+  const latestEventStage = eventStages[0] || '';
+  const currentStage = [stageFrom(productionCurrentStage), ...eventStages].filter(Boolean).sort((a, b) => stageNames.indexOf(b) - stageNames.indexOf(a))[0] || 'BRIEF_ACCEPTED';
+  const progressValues = events.map((event) => Number(event.detail?.progressPercent)).filter((value) => Number.isFinite(value) && value >= 0 && value <= 100);
+  const latestProgress = progressValues.length ? Math.max(...progressValues) : undefined;
   const lastSignalAt = job.heartbeat_at || job.updated_at || job.created_at;
-  return NextResponse.json({ ok: true, job: { id: job.id, state: job.state, attempts: job.attempts, maxAttempts: job.max_attempts, error: job.state === 'running' ? null : job.last_error, createdAt: job.created_at, updatedAt: job.updated_at, heartbeatAt: job.heartbeat_at, lastSignalAt, completedAt: job.completed_at, productionRunId, productionState, currentStage, progressPercent: latestProgress ?? progressFor(String(job.state), currentStage), metadata: productionMetadata, brief: job.payload?.ui ?? null }, events });
+  return NextResponse.json({ ok: true, job: { id: job.id, state: job.state, attempts: job.attempts, maxAttempts: job.max_attempts, error: job.state === 'running' ? null : job.last_error, createdAt: job.created_at, updatedAt: job.updated_at, heartbeatAt: job.heartbeat_at, lastSignalAt, completedAt: job.completed_at, productionRunId, productionState, currentStage, progressPercent: latestProgress ?? progressFor(String(job.state), currentStage), metadata: productionMetadata, brief: job.payload?.ui ?? null }, stageGuide: stageNames.map((stage, index) => ({ stage, order: index + 1, progress: Math.round((index / (stageNames.length - 1)) * 100) })), events });
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {

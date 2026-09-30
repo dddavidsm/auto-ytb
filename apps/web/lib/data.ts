@@ -73,7 +73,7 @@ export async function loadRun(id:string){
 }
 
 export async function loadGalleryRuns(){
-  return query(`select pr.id,pr.state,pr.total_cost_usd::float,pr.metadata,pr.created_at,pr.updated_at,ci.working_title,ci.premise,ci.format,o.angle,q.score::float as qa_score,q.passed as qa_passed,p.state as publication_state,e.total_revenue_usd::float,e.profit_usd::float,e.roi::float,
+  return query(`select pr.id,pr.state,pr.total_cost_usd::float,pr.metadata,pr.created_at,pr.updated_at,ci.working_title,ci.premise,ci.format,o.angle,q.score::float as qa_score,q.passed as qa_passed,p.id as publication_id,p.state as publication_state,e.total_revenue_usd::float,e.profit_usd::float,e.roi::float,
     media.providers,media.asset_count,media.video_asset_count
     from production_runs pr
     join content_ideas ci on ci.id=pr.content_idea_id
@@ -82,6 +82,7 @@ export async function loadGalleryRuns(){
     left join lateral (select * from publications x where x.production_run_id=pr.id order by x.updated_at desc limit 1) p on true
     left join lateral (select * from video_economics x where x.production_run_id=pr.id order by x.captured_at desc limit 1) e on true
     left join lateral (select string_agg(distinct coalesce(provider,'unknown'), ', ') as providers,count(*)::int as asset_count,count(*) filter(where asset_type ilike '%video%' or asset_type ilike '%render%')::int as video_asset_count from production_assets where production_run_id=pr.id) media on true
-    where coalesce(pr.metadata->>'renderUri','')<>'' or coalesce(pr.metadata->>'remoteMediaKey','')<>''
+    where pr.deleted_at is null
+      and (coalesce(pr.metadata->>'renderUri','')<>'' or coalesce(pr.metadata->>'remoteMediaKey','')<>'')
     order by pr.created_at desc limit 48`);
 }

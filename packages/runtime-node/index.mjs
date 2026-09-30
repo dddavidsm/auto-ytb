@@ -605,9 +605,14 @@ export class FfmpegRenderer {
          const sourceDuration = await this.probeDuration(source);
          const availableDuration = Math.max(0, (clipEnd ?? sourceDuration) - clipStart);
          const sourceBacked = asset?.provider === 'user-source-footage';
+         // A cleared moving source may be shorter than the narration beat after
+         // voice alignment. The previous guard only allowed looping one legacy
+         // window strategy, so valid source-first runs could fail with
+         // RENDER_PLAN_INVALID even though the asset was real video. Loop only
+         // source-backed moving footage; never turn an image into motion.
          const repeatMovingSource = sourceBacked
            && availableDuration + 0.05 < duration
-           && String(asset?.metadata?.windowStrategy ?? '').startsWith('source-first-full-window-reuse');
+           && asset?.metadata?.allowRepeatMovingSource !== false;
          if (availableDuration + 0.05 < duration && !repeatMovingSource) throw new Error(`RENDER_PLAN_INVALID: scene ${scene.id} requests ${duration.toFixed(3)}s but source provides ${availableDuration.toFixed(3)}s`);
          // A short, rights-cleared moving source may be reused to cover a
          // longer narration beat. This repeats real motion only; it never

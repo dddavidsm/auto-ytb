@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createHmac, createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { query } from './db';
@@ -108,6 +108,9 @@ export function readGoogleCompletionTicket(token:string|undefined|null){
   return payload;
 }
 export function sessionCookieOptions(){return{httpOnly:true as const,sameSite:'lax' as const,secure:process.env.NODE_ENV==='production',path:'/',maxAge:MAX_AGE_SECONDS};}
+function channelTokenKey(){return createHash('sha256').update(secret()).digest();}
+export function encryptChannelRefreshToken(value:string){const iv=randomBytes(12);const cipher=createCipheriv('aes-256-gcm',channelTokenKey(),iv);const ciphertext=Buffer.concat([cipher.update(value,'utf8'),cipher.final()]);return `v1.${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${ciphertext.toString('base64url')}`;}
+export function youtubeChannelOauthConfig(request?:Request){const base=controlGoogleConfig();const redirect=(process.env.YOUTUBE_CHANNEL_OAUTH_REDIRECT_URI||`${publicAppOrigin(request)}/api/channels/youtube/callback`).trim();return{clientId:base.clientId,clientSecret:base.clientSecret,redirectUri:redirect};}
 export function readSessionToken(token:string|undefined|null):SessionPayload|null{
   const payload=readSignedPayload<SessionPayload>(token);
   return payload&&payload.scope==='control-plane'&&payload.exp>Math.floor(Date.now()/1000)?payload:null;

@@ -27,16 +27,18 @@ async function remoteRender(request:Request,key:string,storedUrl=''){
 export async function GET(request:Request,context:{params:Promise<{id:string}>}){
   if(!(await hasSession()))return NextResponse.json({error:'Unauthorized'},{status:401});
   const {id}=await context.params;
-  const rows=await query<{metadata:any}>(`select metadata from production_runs where id=$1`,[id]);
+  const download=new URL(request.url).searchParams.get('download')==='1';
+  const rows=await query<{metadata:any}>(`select metadata from production_runs where id=$1 and deleted_at is null`,[id]);
   const metadata=rows[0]?.metadata??{};const uri=String(metadata.renderUri??'');const path=safeRenderPath(uri);
   const info=path?await stat(/* turbopackIgnore: true */ path).catch(()=>null):null;
   if(!path||!info||!info.isFile()){
     const remote=await remoteRender(request,String(metadata.remoteMediaKey??''),String(metadata.remoteMediaUrl??''));
+    if(remote&&download)remote.headers.set('Content-Disposition',`attachment; filename="auto-ytb-${id}.mp4"`);
     return remote??NextResponse.json({error:'Render not found in persistent media storage'},{status:404});
   }
   const size=info.size,range=request.headers.get('range');let start=0,end=size-1;
   if(range){const match=/bytes=(\d*)-(\d*)/.exec(range);if(match){start=match[1]?Number(match[1]):0;end=match[2]?Number(match[2]):Math.min(size-1,start+8*1024*1024-1);}}
   if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<start||start>=size)return new Response(null,{status:416,headers:{'Content-Range':`bytes */${size}`}});
   end=Math.min(end,size-1);const stream=createReadStream(/* turbopackIgnore: true */ path,{start,end});
-  return new Response(Readable.toWeb(stream) as ReadableStream,{status:range?206:200,headers:{'Content-Type':'video/mp4','Accept-Ranges':'bytes','Content-Length':String(end-start+1),'Content-Range':`bytes ${start}-${end}/${size}`,'Cache-Control':'private, no-store'}});
+  return new Response(Readable.toWeb(stream) as ReadableStream,{status:range?206:200,headers:{'Content-Type':'video/mp4','Content-Disposition':download?`attachment; filename="auto-ytb-${id}.mp4"`:'inline','Accept-Ranges':'bytes','Content-Length':String(end-start+1),'Content-Range':`bytes ${start}-${end}/${size}`,'Cache-Control':'private, no-store'}});
 }

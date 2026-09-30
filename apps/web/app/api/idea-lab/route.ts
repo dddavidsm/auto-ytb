@@ -24,7 +24,7 @@ export async function GET() {
   if (!(await currentSession())) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const ideas = await query<any>(`select o.id,o.angle,o.status,o.score::float,o.grade,o.decision,o.signals,o.risks,o.rationale,o.detected_at,o.recommended_format,t.canonical_name,t.niche,t.language,
     coalesce((select jsonb_agg(jsonb_build_object('id',j.id,'state',j.state,'kind',j.kind,'updatedAt',j.updated_at) order by j.created_at desc) from jobs j where j.opportunity_id=o.id and j.kind='produce_opportunity' limit 3),'[]'::jsonb) as jobs
-    from opportunities o left join topics t on t.id=o.topic_id where o.signals ? 'ideaLab' order by o.detected_at desc limit 60`);
+    from opportunities o left join topics t on t.id=o.topic_id where o.signals ? 'ideaLab' order by o.detected_at desc limit 8`);
   return NextResponse.json({ ok: true, ideas: uniqueIdeas(ideas) });
 }
 

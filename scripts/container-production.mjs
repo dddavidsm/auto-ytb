@@ -48,6 +48,22 @@ function shutdown(signal = 'SIGTERM') {
 process.once('SIGTERM', () => shutdown('SIGTERM'));
 process.once('SIGINT', () => shutdown('SIGINT'));
 
+// Apply idempotent database migrations before exposing the web control plane.
+// Workers Builds runs this inside the Cloudflare container; nothing is executed
+// on the creator's workstation. A failed migration must stop the container so
+// production never runs against a partially upgraded schema.
+const migration = spawn(process.execPath, ['scripts/migrate.mjs'], {
+  cwd: process.cwd(),
+  env: process.env,
+  stdio: 'inherit',
+  windowsHide: true,
+});
+const migrationCode = await new Promise((resolveMigration) => {
+  migration.once('error', () => resolveMigration(1));
+  migration.once('exit', (code) => resolveMigration(code ?? 1));
+});
+if (migrationCode !== 0) throw new Error(`Database migration failed with exit code ${migrationCode}`);
+
 start('web', ['scripts/control-plane-web.mjs', 'start']);
 
 if (String(process.env.RUN_BACKGROUND_WORKERS ?? '').toLowerCase() === 'true') {

@@ -1,10 +1,11 @@
 import Link from 'next/link';
 import { requireSession } from '../../lib/auth';
 import { loadGalleryRuns } from '../../lib/data';
+import GalleryActions from './gallery-actions';
 
 export const dynamic = 'force-dynamic';
 
-const styles = `.gallery-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.gallery-player{border-radius:16px;overflow:hidden;aspect-ratio:16/9;display:grid;place-items:center}.gallery-player video{width:100%;height:100%;object-fit:contain;background:#111}.gallery-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:16px}.gallery-stats div{background:var(--surface-2);border-radius:10px;padding:9px}.gallery-stats span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.gallery-stats strong{display:block;font-size:12px;margin-top:4px;word-break:break-word}.gallery-actions{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:14px}@media(max-width:820px){.gallery-grid{grid-template-columns:1fr}.gallery-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}`;
+const styles = `.gallery-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.gallery-player{border-radius:16px;overflow:hidden;aspect-ratio:16/9;display:grid;place-items:center}.gallery-player video{width:100%;height:100%;object-fit:contain;background:#111}.gallery-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:16px}.gallery-stats div{background:var(--surface-2);border-radius:10px;padding:9px}.gallery-stats span{display:block;color:var(--muted);font-size:10px;text-transform:uppercase}.gallery-stats strong{display:block;font-size:12px;margin-top:4px;word-break:break-word}.gallery-actions{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:14px}.gallery-actions-stack{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.gallery-action-message{flex-basis:100%}.pill.danger{border:1px solid #f0b6b6;color:#a32626;background:#fff5f5}@media(max-width:820px){.gallery-grid{grid-template-columns:1fr}.gallery-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}`;
 
 function editoriallyConsistent(run: any) {
   let metadata: any = run.metadata ?? {};
@@ -50,6 +51,7 @@ export default async function GalleryPage() {
               <div className="row" style={{ marginTop: 14 }}><div><h3>{run.working_title || run.angle || run.id}</h3><div className="meta">{run.premise || 'Producción persistida'}</div></div><span className={`pill ${isReady ? 'good' : 'warn'}`}>{isReady ? 'LISTO PARA REVISAR' : String(run.state || 'PENDIENTE')}</span></div>
               <div className="gallery-stats"><div><span>Estado</span><strong>{run.state}</strong></div><div><span>Formato</span><strong>{run.format}</strong></div><div><span>Duración</span><strong>{seconds}{seconds === '—' ? '' : ' s'}</strong></div><div><span>Resolución</span><strong>{resolution}</strong></div><div><span>Vídeo real</span><strong>{run.video_asset_count ?? 0} clips</strong></div><div><span>Recursos</span><strong>{run.asset_count ?? 0}</strong></div><div><span>Proveedor</span><strong>{run.providers || 'No indicado'}</strong></div><div><span>Coste</span><strong>{run.total_cost_usd == null ? '—' : `$${Number(run.total_cost_usd).toFixed(2)}`}</strong></div><div><span>Publicación</span><strong>{run.publication_state || 'NO PUBLICADO'}</strong></div><div><span>QA</span><strong>{qaScore == null ? '—' : `${Math.round(Number(qaScore))}/100`}</strong></div></div>
               <div className="gallery-actions"><Link className="run-link" href={`/videos/${run.id}`}>Abrir revisión →</Link><span className="fine">ID: {run.id}</span></div>
+              <GalleryActions id={run.id} publicationId={run.publication_id} />
             </article>;
           })}</div> : <section className="card empty"><h3>Aún no hay vídeos finales en la galería</h3><p>Las producciones solo aparecerán cuando el proveedor entregue clips de vídeo, la narración y el control de calidad los hayan validado.</p><Link href="/create" className="primary">Crear producción real</Link></section>}
         </main>

@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 
 const items=[
-  ['/','Inicio','⌂'],['/radar','Radar','◈'],['/idea-lab','Ideas','✦'],['/create','Crear vídeo','＋'],['/gallery','Galería','▣'],['/series','Series','◌'],['/reference-lab','Referencias','◎'],
+  ['/','Inicio','⌂'],['/radar','Radar','◈'],['/idea-lab','Ideas','✦'],['/create','Crear vídeo','＋'],['/gallery','Galería','▣'],['/series','Series','◌'],['/reference-lab','Referencias','◎'],['/reference-analyzer','Analizar vídeo','⌕'],['/channels','Canales','♧'],
 ] as const;
 
 export default function GlobalNav(){

@@ -13,6 +13,10 @@ export async function GET() {
     from opportunities o join topics t on t.id=o.topic_id
     where coalesce(o.expires_at,now()+interval '1 day') > now()
       and coalesce(o.decision,'WATCH') in ('PRODUCE','RESEARCH','WATCH','REVIEW')
-    order by o.score desc, o.detected_at desc limit 60`);
-  return NextResponse.json({ ok: true, opportunities });
+      and not (o.signals ? 'ideaLab')
+      and coalesce(o.signals->>'source','') <> 'control-plane-ui'
+      and coalesce(o.confidence,0) >= 70
+      and jsonb_array_length(coalesce(o.evidence,'[]'::jsonb)) > 0
+    order by o.score desc, o.confidence desc, o.detected_at desc limit 8`);
+  return NextResponse.json({ ok: true, opportunities, qualityGate: { maxItems: 8, minimumConfidence: 70, requiresEvidence: true } });
 }

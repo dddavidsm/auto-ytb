@@ -91,6 +91,13 @@ async function execute(job){
     await runNode('scripts/auto-publish.mjs',[`--production-run-id=${productionRunId}`,`--channel-config=${payload.channelConfigPath??'config/channels/future-tech-business.example.json'}`],channelEnv(payload));
     return{productionRunId};
   }
+  if(job.kind==='upload_private_production'){
+    const productionRunId=String(payload.productionRunId??'').trim();
+    if(!productionRunId)throw new Error('upload_private_production requires productionRunId');
+    await runNode('scripts/upload-private-production.mjs',[`--production-run-id=${productionRunId}`],channelEnv(payload));
+    const row=(await db.query(`select p.id as publication_id,p.youtube_video_id from publications p where p.production_run_id=$1 order by p.updated_at desc limit 1`,[productionRunId])).rows[0]??null;
+    return{productionRunId,publicationId:row?.publication_id??null,externalId:row?.youtube_video_id??null,platform:'youtube'};
+  }
   if(job.kind==='bootstrap_channel_brand'){const candidateId=String(payload.candidateId??'').trim(),channelId=String(payload.channelId??job.channel_id??'').trim();if(!candidateId&&!channelId)throw new Error('bootstrap_channel_brand requires candidateId or channelId');await runNode('scripts/bootstrap-channel-brand.mjs',[candidateId?`--candidate-id=${candidateId}`:`--channel-id=${channelId}`]);return{};}
   if(job.kind==='bootstrap_series'){const candidateId=String(payload.candidateId??'').trim();if(!candidateId)throw new Error('bootstrap_series requires candidateId');await runNode('scripts/bootstrap-series.mjs',[`--candidate-id=${candidateId}`]);await runNode('scripts/series-automation-profile-sync.mjs',[]);return{seriesCandidateId:candidateId};}
   if(job.kind==='analytics_sync'){const scoped=channelEnv(payload),channelId=String(payload.channelId??job.channel_id??'').trim();if(!channelId)throw new Error('analytics_sync requires a channelId');const days=Number(payload.days??28);await runNode('scripts/analytics-sync-channel.mjs',[`--days=${days}`,`--channel-id=${channelId}`],scoped);await runNode('scripts/economics-sync.mjs',[],scoped);await runNode('scripts/creative-learning-sync.mjs',[`--days=${Math.max(days,180)}`,`--channel-id=${channelId}`],scoped);return{};}
