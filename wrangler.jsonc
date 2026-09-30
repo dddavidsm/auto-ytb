@@ -10,7 +10,7 @@
         "class_name": "AutoYtbProductionWebContainer",
       "image": "./Dockerfile",
     "instance_type": "standard-4",
-      "max_instances": 1,
+      "max_instances": 2,
       "rollout_step_percentage": 100
     }
   ],
@@ -82,9 +82,12 @@
     "IMAGE_PROVIDER": "gemini",
     "IMAGE_MODEL": "gemini-3.1-flash-image",
     "GEMINI_IMAGE_SIZE": "1K",
-    "VIDEO_PROVIDER": "gemini",
+    "VIDEO_PROVIDER": "auto",
+    "VIDEO_PROVIDER_PRIORITY": "minimax,gemini,higgsfield",
     "VIDEO_MODEL": "veo-3.1-fast-generate-preview",
     "GEMINI_VIDEO_RESOLUTION": "720p",
+    "MINIMAX_H3_RESOLUTION": "768P",
+    "MINIMAX_H3_CONTEXT_IR": "false",
     "OBJECT_STORE": "local",
     "RENDERER": "ffmpeg",
     "FFMPEG_BIN": "ffmpeg",

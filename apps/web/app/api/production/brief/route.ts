@@ -27,6 +27,8 @@ export async function POST(request: Request) {
   const opportunityId = safeText(body?.opportunityId, '', 80);
   const contentFormat = ['SHORT_VERTICAL', 'SHORT_HORIZONTAL', 'LONG_HORIZONTAL'].includes(requestedFormat) ? requestedFormat : inferFormat(prompt);
   const requestedMode = safeText(body?.productionMode, 'AUTO', 40).toUpperCase();
+  const sourceMode = safeText(body?.sourceMode, requestedMode, 40).toUpperCase();
+  const visualStyle = safeText(body?.visualStyle, 'documentary', 80);
   // AUTO-YTB is a video product: never accept a request that silently permits
   // stills, slides or generated-image filler inside the final video.
   const videoOnly = true;
@@ -37,7 +39,7 @@ export async function POST(request: Request) {
   const jobKey = `ui-production:${briefId}`;
   const topic = prompt.slice(0, 240);
   const workingTitle = prompt.slice(0, 180);
-  const opportunitySignals = { source: 'control-plane-ui', userPrompt: prompt, requestedMode, aspectRatio, durationSec, qualityMode, videoOnly };
+  const opportunitySignals = { source: 'control-plane-ui', userPrompt: prompt, requestedMode, sourceMode, visualStyle, aspectRatio, durationSec, qualityMode, videoOnly };
   const formatRecommendation = { primary: contentFormat, scores: { LONG_HORIZONTAL: contentFormat === 'LONG_HORIZONTAL' ? 100 : 0, SHORT_VERTICAL: contentFormat === 'SHORT_VERTICAL' ? 100 : 0 }, reason: 'Explicit control-plane request' };
   const graph = createUniversalProductionGraph([contentFormat, 'PACKAGING', 'ANALYTICS']);
 
@@ -74,7 +76,7 @@ export async function POST(request: Request) {
        // interactive fast track at the ceiling instead of writing an invalid
        // value that makes the whole request fail before it can be queued.
        const jobPriority = fastTrack ? 100 : 85;
-       const payload = { topic: productionTopic, angle: productionAngle, channelId: channel.id, channelKey: channel.channel_key, channelConfigPath: channel.config_path || 'config/channels/future-tech-business.example.json', credentialsRef: channel.credentials_ref || 'PRIMARY', budgetDate: new Date().toISOString().slice(0, 10), score: 100, productionPriority: jobPriority, learningBoost: 0, reservedCostUsd: 0, contentFormat: productionFormat, formatRecommendation: { ...formatRecommendation, primary: productionFormat }, derivativeStrategy: 'NONE', styleFingerprint: { source: 'control-plane-ui', format: productionFormat }, brandContext: {}, seriesContext: seriesProfile ? { ...seriesProfile, seriesKey: String(seriesProfile.seriesName || workingTitle).slice(0, 120), automationProfileVersion: 'idea-lab-v1' } : null, ui: { briefId, requestedMode, aspectRatio, durationSec, qualityMode, videoOnly, prompt, opportunityId: opportunity.id, fastTrack } };
+      const payload = { topic: productionTopic, angle: productionAngle, channelId: channel.id, channelKey: channel.channel_key, channelConfigPath: channel.config_path || 'config/channels/future-tech-business.example.json', credentialsRef: channel.credentials_ref || 'PRIMARY', budgetDate: new Date().toISOString().slice(0, 10), score: 100, productionPriority: jobPriority, learningBoost: 0, reservedCostUsd: 0, contentFormat: productionFormat, formatRecommendation: { ...formatRecommendation, primary: productionFormat }, derivativeStrategy: 'NONE', styleFingerprint: { source: 'control-plane-ui', format: productionFormat, visualStyle, sourceMode }, brandContext: {}, seriesContext: seriesProfile ? { ...seriesProfile, seriesKey: String(seriesProfile.seriesName || workingTitle).slice(0, 120), automationProfileVersion: 'idea-lab-v1' } : null, ui: { briefId, requestedMode, sourceMode, visualStyle, aspectRatio, durationSec, qualityMode, videoOnly, prompt, opportunityId: opportunity.id, fastTrack } };
        const job = (await client.query(`insert into jobs (job_key,kind,channel_id,opportunity_id,state,priority,max_attempts,payload) values ($1,'produce_opportunity',$2,$3,'queued',$4,$5,$6::jsonb) returning id,state,created_at`, [jobKey, channel.id, opportunity.id, jobPriority, Math.max(1, Math.min(20, Number(process.env.JOB_MAX_ATTEMPTS || 4))), JSON.stringify(payload)])).rows[0];
       await client.query(`insert into job_events (job_id,event_type,detail) values ($1,'ui_request_queued',$2::jsonb)`, [job.id, JSON.stringify({ briefId, opportunityId: opportunity.id, contentIdeaId: idea.id, channelKey: channel.channel_key })]);
       return { job, channelKey: channel.channel_key };

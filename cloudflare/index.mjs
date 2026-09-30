@@ -9,7 +9,7 @@ const runtimeVariables = [
   'TEXT_MODEL_PROVIDER', 'TEXT_MODEL_RESEARCH', 'TEXT_MODEL_CREATIVE', 'TEXT_MODEL_VISION', 'GEMINI_TEXT_MODEL', 'TEXT_MODEL_API_KEY', 'TEXT_MODEL_BASE_URL',
   'VOICE_PROVIDER', 'VOICE_ID', 'GEMINI_VOICE_ID', 'ELEVENLABS_VOICE_ID', 'ELEVENLABS_VOICE_ID_ES', 'ELEVENLABS_VOICE_ID_EN', 'VOICE_MODEL', 'ELEVENLABS_VOICE_MODEL', 'VOICE_TIMESTAMPS', 'GEMINI_TRANSCRIBE_MODEL', 'VOICE_ALIGNMENT_STRICT', 'VOICE_ALIGNMENT_MIN_COVERAGE', 'VOICE_API_KEY', 'ELEVENLABS_API_KEY',
   'IMAGE_PROVIDER', 'IMAGE_MODEL', 'GEMINI_IMAGE_SIZE', 'IMAGE_API_KEY',
-  'VIDEO_PROVIDER', 'VIDEO_MODEL', 'GEMINI_VIDEO_RESOLUTION', 'VIDEO_API_KEY', 'HIGGSFIELD_VIDEO_MODEL', 'HIGGSFIELD_API_BASE_URL', 'HIGGSFIELD_USD_PER_SECOND', 'HF_CREDENTIALS', 'HF_API_KEY_ID', 'HF_API_KEY_SECRET', 'RUNWAY_API_KEY',
+  'VIDEO_PROVIDER', 'VIDEO_PROVIDER_PRIORITY', 'VIDEO_MODEL', 'GEMINI_VIDEO_RESOLUTION', 'VIDEO_API_KEY', 'HIGGSFIELD_VIDEO_MODEL', 'HIGGSFIELD_API_BASE_URL', 'HIGGSFIELD_USD_PER_SECOND', 'HF_CREDENTIALS', 'HF_API_KEY_ID', 'HF_API_KEY_SECRET', 'RUNWAY_API_KEY', 'MINIMAX_API_KEY', 'MINIMAX_H3_MODEL', 'MINIMAX_VIDEO_MODEL', 'MINIMAX_API_BASE_URL', 'MINIMAX_H3_API_BASE_URL', 'MINIMAX_H3_RESOLUTION', 'MINIMAX_H3_CONTEXT_IR', 'MINIMAX_H3_POLL_MS', 'MINIMAX_H3_TIMEOUT_MS', 'MINIMAX_H3_USD_PER_SECOND',
   'OBJECT_STORE', 'RENDERER', 'FFMPEG_BIN', 'FFPROBE_BIN', 'LOCAL_STORAGE_ROOT', 'LOCAL_RENDER_ROOT', 'LOCAL_THUMBNAIL_ROOT', 'LOCAL_BRAND_ROOT',
   'MIN_ATTENTION_SCORE', 'MAX_ATTENTION_REVISION_PASSES', 'AUDIO_TARGET_LUFS', 'AUDIO_TRUE_PEAK_DB', 'AUDIO_LOUDNESS_RANGE', 'AUDIO_LIBRARY_MANIFEST', 'AUDIO_MAX_COST_USD_PER_VIDEO', 'AUDIO_MUSIC_ENABLED', 'AUDIO_SFX_ENABLED', 'AUDIO_REQUIRE_ZERO_MARGINAL_COST',
   'CONTENT_LIBRARY_ENABLED', 'CONTENT_LIBRARY_PROVIDER', 'DRIVE_ROOT_FOLDER', 'DRIVE_ROOT_FOLDER_ID', 'DRIVE_CLIENT_ID', 'DRIVE_CLIENT_SECRET', 'DRIVE_REFRESH_TOKEN', 'DRIVE_REDIRECT_URI',
@@ -134,22 +134,36 @@ export default {
       if (expected && supplied === expected) headers.set('x-auto-ytb-control-authorized', '1');
     }
     headers.set('x-auto-ytb-public-origin', url.origin);
-    return instance.fetch(new Request(request, { headers }));
+    return fetchContainerWithRetry(instance, new Request(request, { headers }));
   },
   async scheduled(_controller, workerEnv) {
     const instance = getContainer(workerEnv.AUTOYTB_WEB, 'production-web-v26');
     const state = await instance.getState();
-    if (state.status === 'stopped' || state.status === 'stopped_with_code') {
-      // ContainerProxy#fetch owns the idempotent start lifecycle. Calling
-      // start() here races with a user request arriving at the same time and
-      // can exceed max_instances=1. A harmless internal request both starts
-      // the container and lets the application initialise its worker safely.
-      await instance.fetch(new Request('http://auto-ytb-internal/robots.txt', { headers: { 'x-auto-ytb-scheduler': '1' } }));
-    }
+    // Do not start a stopped instance from the scheduler. ContainerProxy#fetch
+    // owns the idempotent start lifecycle; starting here races with a user
+    // request and is the direct cause of intermittent "no Container instance"
+    // responses when the account is at its concurrency limit.
     instance.renewActivityTimeout();
     console.log(`AUTO-YTB autonomous container activity renewed (${state.status})`);
   },
 };
+
+async function fetchContainerWithRetry(instance, request) {
+  const attempts = 3;
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await instance.fetch(request.clone());
+    } catch (error) {
+      lastError = error;
+      const message = String(error instanceof Error ? error.message : error);
+      if (!/no Container instance|container instance|provision|concurr|starting/i.test(message) || attempt === attempts - 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
+    }
+  }
+  console.error('AUTO-YTB container request unavailable after retries', lastError);
+  return new Response('El motor de producción está arrancando. Reintenta en unos segundos.', { status: 503, headers: { 'retry-after': '3', 'cache-control': 'no-store' } });
+}
 
 async function handleMedia(request, workerEnv, url) {
   const expected = String(workerEnv.CONTROL_PLANE_TOKEN || '');

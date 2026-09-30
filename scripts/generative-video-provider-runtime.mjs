@@ -2,6 +2,7 @@ import {
   FailoverGenerativeVideoProvider,
   GeminiVideoProvider,
   createHiggsfieldVideoProviderFromEnv,
+  createMiniMaxH3VideoProviderFromEnv,
 } from '../packages/providers/dist/index.js';
 
 const clean = (value) => String(value ?? '').trim();
@@ -19,6 +20,15 @@ function geminiRateUsdPerSecond(env, model, resolution) {
 
 function hasHiggsfieldCredentials(env) {
   return Boolean(clean(env.HF_CREDENTIALS)) || (Boolean(clean(env.HF_API_KEY_ID)) && Boolean(clean(env.HF_API_KEY_SECRET)));
+}
+
+function hasMiniMaxCredentials(env) {
+  return Boolean(clean(env.MINIMAX_API_KEY));
+}
+
+function createMiniMaxProvider(store, env) {
+  if (!hasMiniMaxCredentials(env)) return null;
+  return createMiniMaxH3VideoProviderFromEnv(store, env);
 }
 
 function createGeminiGenerativeProvider(store, env) {
@@ -92,8 +102,9 @@ function orderedProviderNames(env, requested) {
     .map((value) => value.trim())
     .filter(Boolean);
   if (explicit.length) return [...new Set(explicit)];
-  if (requested === 'higgsfield') return ['higgsfield', 'gemini'];
-  return ['gemini', 'higgsfield'];
+  if (requested === 'higgsfield') return ['higgsfield', 'minimax', 'gemini'];
+  if (requested === 'minimax') return ['minimax', 'gemini', 'higgsfield'];
+  return ['minimax', 'gemini', 'higgsfield'];
 }
 
 export function describeGenerativeVideoRuntime(provider) {
@@ -115,15 +126,17 @@ export function describeGenerativeVideoRuntime(provider) {
 
 export function createGenerativeVideoProviderRuntime(store, env = process.env) {
   const requested = clean(env.VIDEO_PROVIDER || 'auto').toLowerCase();
-  if (!['auto', 'gemini', 'higgsfield'].includes(requested)) {
+  if (!['auto', 'gemini', 'higgsfield', 'minimax'].includes(requested)) {
     throw new Error(`UNSUPPORTED_GENERATIVE_VIDEO_PROVIDER:${requested}`);
   }
 
   const available = new Map();
   const gemini = createGeminiGenerativeProvider(store, env);
   const higgsfield = createHiggsfieldGenerativeProvider(store, env);
+  const minimax = createMiniMaxProvider(store, env);
   if (gemini) available.set('gemini', gemini);
   if (higgsfield) available.set('higgsfield', higgsfield);
+  if (minimax) available.set('minimax', minimax);
 
   const failoverEnabled = requested === 'auto' || truthy(env.VIDEO_PROVIDER_FAILOVER_ENABLED);
   const selectedNames = failoverEnabled
@@ -134,9 +147,11 @@ export function createGenerativeVideoProviderRuntime(store, env = process.env) {
   if (!providers.length) {
     const missing = requested === 'higgsfield'
       ? 'HF_CREDENTIALS_OR_HF_API_KEY_ID_SECRET'
+      : requested === 'minimax'
+        ? 'MINIMAX_API_KEY'
       : requested === 'gemini'
         ? 'GEMINI_API_KEY'
-        : 'GEMINI_API_KEY_OR_HIGGSFIELD_SERVER_CREDENTIALS';
+        : 'MINIMAX_API_KEY_OR_GEMINI_API_KEY_OR_HIGGSFIELD_SERVER_CREDENTIALS';
     throw new Error(`NO_GENERATIVE_VIDEO_PROVIDER_READY:${missing}`);
   }
 

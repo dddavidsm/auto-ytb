@@ -14,7 +14,7 @@ import { withContinuityBridgeVideo } from './continuity-video.mjs';
 import { withLicensedSoundtrack } from './soundtrack.mjs';
 import { withArchetypeEditorialFinish } from './editorial-finish.mjs';
 import { inferContentArchetype } from '@auto-ytb/os';
-import { TavilySearchProvider, OpenAIResponsesTextModel, GeminiGenerateContentTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, RunwayVideoProvider, HiggsfieldVideoProvider, GoogleDriveLibraryProvider, CloudflareR2LibraryProvider, GeminiGoogleSearchProvider, GeminiVoiceProvider, GeminiImageProvider, GeminiVisionProvider, GeminiAudioQualityProvider, GeminiVideoProvider } from '@auto-ytb/providers';
+import { TavilySearchProvider, OpenAIResponsesTextModel, GeminiGenerateContentTextModel, ElevenLabsVoiceProvider, RunwayMediaProvider, RunwayVideoProvider, HiggsfieldVideoProvider, MiniMaxH3VideoProvider, GoogleDriveLibraryProvider, CloudflareR2LibraryProvider, GeminiGoogleSearchProvider, GeminiVoiceProvider, GeminiImageProvider, GeminiVisionProvider, GeminiAudioQualityProvider, GeminiVideoProvider } from '@auto-ytb/providers';
 import { GoogleOAuthTokenProvider, YouTubePublisher, YouTubeAnalyticsClient } from '@auto-ytb/youtube';
 
 const reqFrom=(env,name)=>{const value=env[name]?.trim();if(!value)throw new Error(`Missing required environment variable ${name}`);return value;};
@@ -84,7 +84,15 @@ export function createLiveRuntime(env=process.env){
     else throw new Error(`Unsupported VOICE_PROVIDER: ${provider}`);
   }
 
-  let image;let video;const imageProvider=String(env.IMAGE_PROVIDER||'gemini').toLowerCase();const videoProvider=String(env.VIDEO_PROVIDER||'gemini').toLowerCase();
+  let image;let video;const imageProvider=String(env.IMAGE_PROVIDER||'gemini').toLowerCase();let videoProvider=String(env.VIDEO_PROVIDER||'gemini').toLowerCase();
+  if(videoProvider==='auto'){
+    const hasMiniMax=String(env.MINIMAX_API_KEY||'').trim().length>0;
+    const hasGemini=geminiKey.length>0;
+    const hasHiggsfield=String(env.HF_CREDENTIALS||((env.HF_API_KEY_ID&&env.HF_API_KEY_SECRET)?`${env.HF_API_KEY_ID}:${env.HF_API_KEY_SECRET}`:'')).trim().length>0;
+    const priority=String(env.VIDEO_PROVIDER_PRIORITY||'minimax,gemini,higgsfield').split(',').map((value)=>value.trim().toLowerCase()).filter(Boolean);
+    const available={minimax:hasMiniMax,gemini:hasGemini,higgsfield:hasHiggsfield};
+    videoProvider=priority.find((name)=>available[name])||'none';
+  }
   if(imageProvider==='gemini'){
     const imageModel=env.IMAGE_MODEL||'gemini-3.1-flash-image';const raw=new GeminiImageProvider({apiKey:geminiKey||reqFrom(env,'GEMINI_API_KEY'),store,model:imageModel,imageSize:env.GEMINI_IMAGE_SIZE||'1K',endpoint:geminiEndpoint});image=bindMediaProviderToBrand(bindImageProviderToContentArchetype(meterImageProvider(raw,meter,{model:imageModel}),archetypeProfile),brandContext);
   }else if(imageProvider==='runway'){
@@ -100,6 +108,11 @@ export function createLiveRuntime(env=process.env){
     if(!credentials)throw new Error('Higgsfield video is configured but HF_CREDENTIALS (or HF_API_KEY_ID/HF_API_KEY_SECRET) is missing');
     const model=env.HIGGSFIELD_VIDEO_MODEL||env.VIDEO_MODEL||'wan/v2.7/text-to-video';
     const raw=new HiggsfieldVideoProvider({credentials,store,model,baseUrl:env.HIGGSFIELD_API_BASE_URL||'https://api.higgsfield.ai',pollMs:numFrom(env,'HIGGSFIELD_POLL_MS',5000),timeoutMs:numFrom(env,'HIGGSFIELD_TIMEOUT_MS',900000),estimatedUsdPerSecond:env.HIGGSFIELD_USD_PER_SECOND?Number(env.HIGGSFIELD_USD_PER_SECOND):null});
+    const archetypeVideo=bindVideoProviderToContentArchetype(meterVideoProvider(raw,meter,{model}),archetypeProfile);const capture=withCaptureAesthetic(archetypeVideo,archetypeProfile,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});video=bindMediaProviderToBrand(capture,brandContext);
+  }else if(videoProvider==='minimax'){
+    const minimaxKey=String(env.MINIMAX_API_KEY||'').trim();if(!minimaxKey)throw new Error('MiniMax H3 video is configured but MINIMAX_API_KEY is missing');
+    const model=env.MINIMAX_H3_MODEL||env.MINIMAX_VIDEO_MODEL||'MiniMax-H3';
+    const raw=new MiniMaxH3VideoProvider({apiKey:minimaxKey,store,model,baseUrl:env.MINIMAX_API_BASE_URL||env.MINIMAX_H3_API_BASE_URL||'https://api.minimax.io',resolution:env.MINIMAX_H3_RESOLUTION||'768P',pollMs:numFrom(env,'MINIMAX_H3_POLL_MS',3000),timeoutMs:numFrom(env,'MINIMAX_H3_TIMEOUT_MS',900000),estimatedUsdPerSecond:env.MINIMAX_H3_USD_PER_SECOND?Number(env.MINIMAX_H3_USD_PER_SECOND):null,useContextIr:String(env.MINIMAX_H3_CONTEXT_IR||'false')==='true'});
     const archetypeVideo=bindVideoProviderToContentArchetype(meterVideoProvider(raw,meter,{model}),archetypeProfile);const capture=withCaptureAesthetic(archetypeVideo,archetypeProfile,{store,ffmpeg:env.FFMPEG_BIN||'ffmpeg'});video=bindMediaProviderToBrand(capture,brandContext);
   }else if(videoProvider!=='none')throw new Error(`Unsupported VIDEO_PROVIDER: ${videoProvider}`);
   const visionProvider=String(env.VISION_PROVIDER||'gemini').toLowerCase()==='gemini'&&geminiKey?new GeminiVisionProvider({apiKey:geminiKey,model:env.VISION_MODEL||env.GEMINI_VISION_MODEL||env.GEMINI_TEXT_MODEL||'gemini-3.8-flash',endpoint:geminiEndpoint}):undefined;const audioQualityProvider=String(env.AUDIO_QC_PROVIDER||'gemini').toLowerCase()==='gemini'&&geminiKey?new GeminiAudioQualityProvider({apiKey:geminiKey,model:env.AUDIO_QC_MODEL||env.GEMINI_TEXT_MODEL||'gemini-3.8-flash',endpoint:geminiEndpoint}):undefined;
