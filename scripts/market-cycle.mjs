@@ -11,8 +11,23 @@ const durationSeconds=(iso)=>{const match=/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$
 async function createYouTubeClient(){
   const apiKey=process.env.YOUTUBE_API_KEY?.trim();
   if(apiKey)return new YouTubeClient(apiKey);
-  const provider=new GoogleOAuthTokenProvider({clientId:req('YOUTUBE_CLIENT_ID'),clientSecret:req('YOUTUBE_CLIENT_SECRET'),refreshToken:req('YOUTUBE_REFRESH_TOKEN')});
-  return new YouTubeClient({accessToken:await provider.getAccessToken()});
+  const clientId=process.env.YOUTUBE_CLIENT_ID?.trim();
+  const clientSecret=process.env.YOUTUBE_CLIENT_SECRET?.trim();
+  const refreshToken=process.env.YOUTUBE_REFRESH_TOKEN?.trim();
+  if(clientId&&clientSecret&&refreshToken){const provider=new GoogleOAuthTokenProvider({clientId,clientSecret,refreshToken});return new YouTubeClient({accessToken:await provider.getAccessToken()});}
+  return null;
+}
+const decodePublicJson=(value)=>{try{return JSON.parse(`"${value}"`);}catch{return String(value).replaceAll('\\"','"').replaceAll('\\u0026','&');}};
+const parsePublicCount=(value)=>{const text=String(value||'').replace(/,/g,'').trim().toUpperCase();const match=/([0-9.]+)\s*([KMB])?/.exec(text);if(!match)return 0;const multiplier=match[2]==='K'?1e3:match[2]==='M'?1e6:match[2]==='B'?1e9:1;return Math.round(Number(match[1])*multiplier)||0;};
+const publicAgeDate=(value)=>{const text=String(value||'').toLowerCase();const match=/(\d+)\s*(second|minute|hour|day|week|month|year)/.exec(text);if(!match)return new Date().toISOString();const units={second:1,minute:60,hour:3600,day:86400,week:604800,month:2592000,year:31536000};return new Date(Date.now()-Number(match[1])*(units[match[2]]||86400)*1000).toISOString();};
+async function publicSearchVideos(searchQuery,maxResults){
+  const url=`https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery)}`;
+  const response=await fetch(url,{headers:{accept:'text/html','user-agent':'Mozilla/5.0 AUTO-YTB public radar'}});
+  if(!response.ok)throw new Error(`YouTube public search ${response.status}`);
+  const html=await response.text();const output=[];const seen=new Set();
+  const matches=html.matchAll(/"videoId":"([^"]+)"([\s\S]{0,2200}?)(?:"title":\{"runs":\[\{"text":"([^"]+)"|"title":\{"simpleText":"([^"]+)")/g);
+  for(const match of matches){const id=match[1];if(seen.has(id))continue;const block=match[2];const title=decodePublicJson(match[3]||match[4]||'').trim();if(!id||!title)continue;const channelId=block.match(/"channelId":"([^"]+)"/)?.[1]||`public-${id}`;const channelTitle=decodePublicJson(block.match(/"ownerText":\{"runs":\[\{"text":"([^"]+)"/)?.[1]||'YouTube public search');const viewText=block.match(/"viewCountText":\{"simpleText":"([^"]+)"/)?.[1]||block.match(/"viewCountText":\{"runs":\[\{"text":"([^"]+)"/)?.[1]||'';const publishedText=block.match(/"publishedTimeText":\{"simpleText":"([^"]+)"/)?.[1]||'';output.push({id,title,channelId,channelTitle,publishedAt:publicAgeDate(publishedText),duration:'PT0S',viewCount:parsePublicCount(viewText),likeCount:0,commentCount:0,seedQueries:[searchQuery],publicSource:true});seen.add(id);if(output.length>=maxResults)break;}
+  return output;
 }
 const niche=process.env.PRIMARY_CHANNEL_KEY||'future-tech-business';
 const maxQueries=Math.max(1,Math.min(12,Math.floor(num('MARKET_CYCLE_MAX_QUERIES',5))));
@@ -22,6 +37,7 @@ const minClusterSize=Math.max(2,Math.floor(num('MARKET_CYCLE_MIN_CLUSTER_SIZE',2
 const clusterThreshold=clamp(num('MARKET_CYCLE_CLUSTER_THRESHOLD',45),20,90);
 const db=new NodePostgresSqlClient(req('DATABASE_URL'),{ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:false}:undefined});
 const client=await createYouTubeClient();
+const discoveryMode=client?'youtube-data-api':'youtube-public-search';
 const seeds=JSON.parse(await readFile(`${process.cwd()}/config/niche-seeds.json`,'utf8'));
 const priors=JSON.parse(await readFile(`${process.cwd()}/config/niche-priors.json`,'utf8'));
 const prior=priors.find((item)=>item.id===niche);
@@ -33,8 +49,8 @@ try{
   const discovered=new Map();
   const publishedAfter=new Date(Date.now()-recentDays*86_400_000);
   for(const query of queries){
-    const search=await client.searchVideos({query,regionCode:process.env.YOUTUBE_REGION??'US',relevanceLanguage:process.env.YOUTUBE_RELEVANCE_LANGUAGE??'en',publishedAfter,maxResults,order:'viewCount'});
-    const enriched=await client.enrichVideos(search);
+    const search=client?await client.searchVideos({query,regionCode:process.env.YOUTUBE_REGION??'US',relevanceLanguage:process.env.YOUTUBE_RELEVANCE_LANGUAGE??'en',publishedAfter,maxResults,order:'viewCount'}):await publicSearchVideos(query,maxResults);
+    const enriched=client?await client.enrichVideos(search):search;
     for(const video of enriched){
       const current=discovered.get(video.id);
       if(!current||video.viewCount>current.viewCount) discovered.set(video.id,{...video,seedQueries:[...(current?.seedQueries??[]),query]});
@@ -114,5 +130,5 @@ try{
     persisted.push({opportunityId,topic:canonical,angle:representative?.title??cluster.label,score:score.finalScore,grade:score.grade,decision:score.decision,clusterSize:clusterVideos.length,uniqueChannels,medianViewsPerHour:Math.round(clusterMedianVph)});
   }
   persisted.sort((a,b)=>b.score-a.score);
-  console.log(JSON.stringify({niche,queries,videosAnalyzed:videos.length,clusters:clusters.length,searchBudget:client.searchBudget.snapshot(),opportunities:persisted.slice(0,20)},null,2));
+  console.log(JSON.stringify({niche,discoveryMode,queries,videosAnalyzed:videos.length,clusters:clusters.length,searchBudget:client?.searchBudget?.snapshot()??{mode:'public-search',quotaCost:0},opportunities:persisted.slice(0,20)},null,2));
 } finally {await db.close();}
