@@ -544,12 +544,18 @@ export async function runContentPipeline(input: {
   };
   const generateScene=async(scene:Scene):Promise<AssetRecord>=>{
     const beat=beatForScene(scene);
+    const shotIndex=Math.max(0,generatedScenes.findIndex((candidate)=>candidate.id===scene.id));
+    const shotDirection=VIDEO_ONLY_SHOT_DIRECTIONS[shotIndex%VIDEO_ONLY_SHOT_DIRECTIONS.length];
     const beatContext=beat?.narration?.replace(/\s+/g,' ').trim().slice(0,520);
     const visualPrompt=[
+      `Editorial topic: "${input.topic.replace(/\s+/g,' ').trim().slice(0,240)}".`,
+      `This is shot ${shotIndex+1} of ${generatedScenes.length}; it must be a distinct visual chapter, not a reuse of another shot.`,
       scene.instruction,
       beatContext?`Production beat context for subject/cast grounding: ${beatContext}`:'',
+      beat?.purpose?`Narrative role: ${beat.purpose}. Build visible progress for this role.`:'',
+      beat?.onScreenText?`Key on-screen concept to depict visually (never render it as text): ${beat.onScreenText}`:'',
       `Compose natively for ${aspectRatio}; keep the focal subject readable on a phone screen. The visual must explain, prove, escalate or refresh the viewer promise rather than act as generic decoration.`,
-      scene.kind === 'ai_video' ? 'Depict one concrete observable action from this beat with a clear before→during→after state change; use motivated camera movement, subject movement or transformation. Do not make a still image with a zoom, floating text, fake UI or unrelated montage.' : '',
+      scene.kind === 'ai_video' ? `Depict one concrete observable action from this beat with a clear before→during→after state change. ${shotDirection} Use a new subject/action/angle/scale from adjacent shots. Do not make a still image with a zoom, floating text, fake UI, diagram, slideshow, generic stock substitute or unrelated montage.` : '',
     ].filter(Boolean).join(' ');
     let generated:BinaryAsset|undefined;
     if(scene.kind==='ai_video'){
@@ -568,6 +574,9 @@ export async function runContentPipeline(input: {
       }
     }else generated=await input.imageProvider!.generate({ prompt:visualPrompt, aspectRatio });
     if(!generated)throw new Error(`Scene ${scene.id} produced no visual asset`);
+    if(videoOnly&&scene.kind==='ai_video'&&!String(generated.mimeType??'').toLowerCase().startsWith('video/')){
+      throw new Error(`VIDEO_ONLY_MEDIA_TYPE_REJECTED:${scene.id}:${generated.mimeType??'unknown'}`);
+    }
     return {...generated,sceneId:scene.id,generated:true,sourceIds:scene.sourceIds,metadata:{...(generated.metadata??{}),sourceRefs:scene.sourceRefs??[],visualValue:scene.visualValue??null,selectionReason:scene.selectionReason??null,beatContext:beatContext??null}};
   };
   let nextGeneratedIndex=0;

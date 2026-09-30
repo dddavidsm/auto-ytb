@@ -33,6 +33,7 @@ const requestedFormat=String(arg('format',channel.preferredFormat==='SHORT_VERTI
 const contentFormat=['SHORT_VERTICAL','SHORT_HORIZONTAL'].includes(requestedFormat)?requestedFormat:'LONG_HORIZONTAL';
 const isShort=contentFormat!=='LONG_HORIZONTAL';
 const requestedProductionMode=String(process.env.AUTO_YTB_PRODUCTION_MODE||'AUTO').trim().toUpperCase();
+const qualityMode=String(process.env.AUTO_YTB_QUALITY_MODE||'MAX_QUALITY').trim().toUpperCase();
 const liveJobId=String(process.env.AUTO_YTB_JOB_ID||'').trim();
 const channelNiche=[channel.id,channel.positioning,...(channel.themes??[]),...(channel.channelType==='UMBRELLA_OPPORTUNITY_DRIVEN'?['documentary','explainer','factual','research','evidence-led']:[])].filter(Boolean).join(' ');
 const routedArchetype=inferContentArchetype({topic,contentFormat,channelNiche});
@@ -206,8 +207,9 @@ async function discoverMovingSourceFootage(){
         }
         if(!info?.isFile()||info.size<1024)continue;
         const id=String(item.id||`cached-${digestMatch[1]}`);
-        sourceFootage.push({id,uri:pathToFileURL(localPath).toString(),title,sourceUrl:String(item.sourceUrl||''),sourceId:String(item.sourceKey||id),license:String(item.license||`${item.provider||'source'} PUBLISHABLE_WITH_ATTRIBUTION; attribution required`),rightsStatus:'CLEARED',startSec:0,cropMode:'CENTER'});
-        sourceDiscovery.selected.push({id,provider:item.provider||'r2-cache',sourceKey:item.sourceKey||id,title,sourceUrl:String(item.sourceUrl||''),license:String(item.license||''),localBytes:info.size,remoteKey});
+        const duration=Number(item.durationSeconds??item.usableDurationSeconds??0);
+        sourceFootage.push({id,uri:pathToFileURL(localPath).toString(),title,sourceUrl:String(item.sourceUrl||''),sourceId:String(item.sourceKey||id),license:String(item.license||`${item.provider||'source'} PUBLISHABLE_WITH_ATTRIBUTION; attribution required`),rightsStatus:'CLEARED',startSec:0,...(duration>0?{endSec:duration}:{}),cropMode:'CENTER'});
+        sourceDiscovery.selected.push({id,provider:item.provider||'r2-cache',sourceKey:item.sourceKey||id,title,sourceUrl:String(item.sourceUrl||''),license:String(item.license||''),durationSeconds:duration||null,localBytes:info.size,remoteKey});
       }
       if(sourceFootage.length>=sourceClipLimit){sourceDiscovery.cacheHit=true;sourceDiscovery.providers.push({provider:'r2-source-cache',capability:'durable-moving-footage',totalResults:sourceFootage.length});return;}
     }
@@ -235,9 +237,10 @@ async function discoverMovingSourceFootage(){
         const info=await stat(localPath).catch(()=>null);
         if(!info?.isFile()||info.size<1024)continue;
         const id=String(item.id||`cached-${digestMatch[1]}`);
+        const duration=Number(item.durationSeconds??item.usableDurationSeconds??0);
         cachedKeys.add(digestMatch[1]);
-        sourceFootage.push({id,uri:pathToFileURL(localPath).toString(),title,sourceUrl:String(item.sourceUrl||''),sourceId:String(item.sourceKey||id),license:String(item.license||`${item.provider||'source'} PUBLISHABLE_WITH_ATTRIBUTION; attribution required`),rightsStatus:'CLEARED',startSec:0,cropMode:'CENTER'});
-        sourceDiscovery.selected.push({id,provider:item.provider||'cached',sourceKey:item.sourceKey||id,title,sourceUrl:String(item.sourceUrl||''),license:String(item.license||''),localBytes:info.size,remoteKey});
+        sourceFootage.push({id,uri:pathToFileURL(localPath).toString(),title,sourceUrl:String(item.sourceUrl||''),sourceId:String(item.sourceKey||id),license:String(item.license||`${item.provider||'source'} PUBLISHABLE_WITH_ATTRIBUTION; attribution required`),rightsStatus:'CLEARED',startSec:0,...(duration>0?{endSec:duration}:{}),cropMode:'CENTER'});
+        sourceDiscovery.selected.push({id,provider:item.provider||'cached',sourceKey:item.sourceKey||id,title,sourceUrl:String(item.sourceUrl||''),license:String(item.license||''),durationSeconds:duration||null,localBytes:info.size,remoteKey});
       }
       if(sourceFootage.length>=sourceClipLimit)break;
     }
@@ -320,7 +323,7 @@ async function discoverMovingSourceFootage(){
       const duration=Number(candidate.usableDurationSeconds??candidate.durationSeconds??0);
       const license=String(candidate?.metadata?.license||`${candidate.provider} ${candidate.rightsTier}; attribution required`).replace(/\s+/g,' ').trim();
       const footage={id:`discovered-${safeFilePart(candidate.id)}`,uri:cached.uri,title:String(candidate?.metadata?.title||candidate.id),sourceUrl:String(candidate.sourceUrl||candidate?.metadata?.sourceUrl||''),sourceId:String(candidate.sourceKey||candidate.id),license,rightsStatus:'CLEARED',startSec:0,...(duration>0?{endSec:duration}:{}),cropMode:'CENTER'};
-      hydrated[index]={footage,selected:{id:footage.id,provider:candidate.provider,sourceKey:candidate.sourceKey||candidate.id,title:footage.title,sourceUrl:footage.sourceUrl,license,localBytes:cached.size,remoteKey:remote?.key??null}};
+      hydrated[index]={footage,selected:{id:footage.id,provider:candidate.provider,sourceKey:candidate.sourceKey||candidate.id,title:footage.title,sourceUrl:footage.sourceUrl,license,durationSeconds:duration||null,localBytes:cached.size,remoteKey:remote?.key??null}};
     }catch(error){
       sourceDiscovery.failed.push({provider:candidate.provider,id:candidate.id,error:String(error?.message||error).slice(0,240)});
       }
@@ -352,9 +355,10 @@ async function discoverMovingSourceFootage(){
           const info=await stat(localPath).catch(()=>null);
           if(!info?.isFile()||info.size<1024)continue;
           const id=String(item.id||`cached-${digestMatch[1]}`);
+          const duration=Number(item.durationSeconds??item.usableDurationSeconds??0);
           if(sourceFootage.some((clip)=>clip.id===id))continue;
-          sourceFootage.push({id,uri:pathToFileURL(localPath).toString(),title,sourceUrl:String(item.sourceUrl||''),sourceId:String(item.sourceKey||id),license:String(item.license||`${item.provider||'source'} PUBLISHABLE_WITH_ATTRIBUTION; attribution required`),rightsStatus:'CLEARED',startSec:0,cropMode:'CENTER'});
-          sourceDiscovery.selected.push({id,provider:item.provider||'cached',sourceKey:item.sourceKey||id,title,sourceUrl:String(item.sourceUrl||''),license:String(item.license||''),localBytes:info.size,remoteKey});
+          sourceFootage.push({id,uri:pathToFileURL(localPath).toString(),title,sourceUrl:String(item.sourceUrl||''),sourceId:String(item.sourceKey||id),license:String(item.license||`${item.provider||'source'} PUBLISHABLE_WITH_ATTRIBUTION; attribution required`),rightsStatus:'CLEARED',startSec:0,...(duration>0?{endSec:duration}:{}),cropMode:'CENTER'});
+          sourceDiscovery.selected.push({id,provider:item.provider||'cached',sourceKey:item.sourceKey||id,title,sourceUrl:String(item.sourceUrl||''),license:String(item.license||''),durationSeconds:duration||null,localBytes:info.size,remoteKey});
           if(sourceFootage.length>=sourceClipLimit)break;
         }
         if(sourceFootage.length)break;
@@ -436,7 +440,7 @@ function archiveProductionRun(runId, channelConfigPath){
 }
 // Content-archetype inference must see the selected channel domain. Without this context a
 // factual AI/business opportunity can fall through to GENERAL_STORY (creative fiction).
-const runtimeEnv={...process.env,AUTO_YTB_CONTENT_TOPIC:topic,AUTO_YTB_CONTENT_FORMAT:contentFormat,AUTO_YTB_CHANNEL_NICHE:channelNiche,...(sourceFirst?{VIDEO_PROVIDER:'none',...(isShort?{IMAGE_PROVIDER:'none'}:{})}:{}),AUTO_YTB_PRODUCTION_MODE:requestedProductionMode};
+const runtimeEnv={...process.env,AUTO_YTB_CONTENT_TOPIC:topic,AUTO_YTB_CONTENT_FORMAT:contentFormat,AUTO_YTB_CHANNEL_NICHE:channelNiche,AUTO_YTB_QUALITY_MODE:qualityMode,...(sourceFirst?{VIDEO_PROVIDER:'none',...(isShort?{IMAGE_PROVIDER:'none'}:{})}:{}),AUTO_YTB_PRODUCTION_MODE:requestedProductionMode};
 const runtime=createLiveRuntime(runtimeEnv);
 if(!runtime.db)throw new Error('DATABASE_URL is required for live pipeline durability');
 console.log(`[live-pipeline] runtime ready archetype=${runtime.archetypeDecision?.archetype??'unknown'} db=ready`);
@@ -537,7 +541,7 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   const requestedTarget= requestedTargetDurationSec!=null ? requestedTargetDurationSec : null;
   const productionProfile={...learnedProfile,targetDurationSec:requestedTarget??(fastSourceShort?fastShortTargetSec:Math.round(Math.max(durationBounds.min,Math.min(durationBounds.max,learnedProfile.targetDurationSec*arm.targetDurationFactor)))),targetSceneDurationSec:fastSourceShort?2.6:Math.round(Math.max(fastSourceOrVideoDuration&&isShort?5.5:sceneBounds.min,Math.min(sceneBounds.max,learnedProfile.targetSceneDurationSec*arm.targetSceneDurationFactor))*10)/10,maxCostUsd:Math.round(Math.max(costFloor,Math.min(baseMaxCostUsd*1.25,learnedProfile.maxCostUsd*arm.maxCostFactor))*100)/100,scriptGuidance:[learnedProfile.scriptGuidance,arm.scriptGuidance].filter(Boolean).join('\n')||undefined,structuralExperiment,structuralLearning,creativeLearning,contentFormat,contentArchetype:runtime.archetypeDecision?.archetype??null};
   const productionRepo=new ProductionRepository(db);
-  productionRunId=await productionRepo.createRun({contentIdeaId,state:runtime.archetypeProfile?.researchRequired===false?'SCRIPT':'RESEARCH',currentStage:runtime.archetypeProfile?.researchRequired===false?'SCRIPT':'RESEARCH',metadata:{topic,channelConfig:channel.id,channelKey,opportunityId,contentFormat,contentArchetype:runtime.archetypeDecision??null,packagingGuidance:packagingGuidance??null,productionProfile,packagingLearning,structuralLearning,creativeLearning,structuralExperiment,productionRouting:{requestedMode:requestedProductionMode,sourceFirst,sourcedOnly,archetype:routedArchetype?.archetype??null},sourceDiscovery}});
+  productionRunId=await productionRepo.createRun({contentIdeaId,state:runtime.archetypeProfile?.researchRequired===false?'SCRIPT':'RESEARCH',currentStage:runtime.archetypeProfile?.researchRequired===false?'SCRIPT':'RESEARCH',metadata:{topic,channelConfig:channel.id,channelKey,opportunityId,contentFormat,qualityMode,contentArchetype:runtime.archetypeDecision??null,packagingGuidance:packagingGuidance??null,productionProfile,packagingLearning,structuralLearning,creativeLearning,structuralExperiment,productionRouting:{requestedMode:requestedProductionMode,sourceFirst,sourcedOnly,archetype:routedArchetype?.archetype??null},sourceDiscovery}});
   await persistProgress({productionRunId,state:'RESEARCH',message:'Producción persistida; comenzando investigación editorial.'});
 
   const requestedVoiceProvider=String(process.env.VOICE_PROVIDER||'').trim().toLowerCase();
@@ -547,7 +551,12 @@ const learningResult=await db.query(`select count(distinct ls.publication_id)::i
   const configuredVoiceProvider=String(channel.voiceProfile?.provider||'').toLowerCase();
   const channelVoiceId=configuredVoiceProvider===activeVoiceProvider?channel.voiceProfile?.voiceId:'';
   const voiceId=resolveVoiceId({provider:activeVoiceProvider,language:channel.language,env:process.env,channelVoiceId});
-  const result=await runContentPipeline({projectId:productionRunId,topic,language:channel.language,contentFormat,targetDurationSec:productionProfile.targetDurationSec,targetSceneDurationSec:productionProfile.targetSceneDurationSec,voice:voiceId,maxCostUsd:productionProfile.maxCostUsd,search:runtime.search,model:runtime.model,voiceProvider:runtime.voice,imageProvider:runtime.image,videoProvider:runtime.video,thumbnailComposer:runtime.thumbnailComposer,store:runtime.store,renderer:runtime.renderer,publisher:runtime.publisher,contentArchetype:runtime.archetypeDecision,autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE==='true',videoOnly:String(process.env.AUTO_YTB_VIDEO_ONLY||'false').toLowerCase()==='true',sourcedOnly,visualMixPolicy:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',packagingGuidance:[packagingGuidance,creativeLearning.guidance].filter(Boolean).join('\n')||undefined,scriptGuidance:[productionProfile.scriptGuidance,sourceFootageGuidance].filter(Boolean).join('\n')||undefined,packagingLearning,sourceFootage,additionalCostUsd:()=>runtime.meter?.nonAssetCostUsd??0,minAttentionScore:Number(process.env.MIN_ATTENTION_SCORE||86),maxAttentionRevisionPasses:Number(process.env.MAX_ATTENTION_REVISION_PASSES||2),onProgress:(progress)=>queueProgress({productionRunId,state:progress.state,message:progress.message})});
+  const qualityGuidance=qualityMode==='MAX_QUALITY'
+    ? 'MAX_QUALITY contract: every beat must contain a concrete subject, action, consequence and deliberate camera choice. Reject generic filler, repeated compositions, stock-like substitutes and visuals that merely decorate the narration.'
+    : qualityMode==='DRAFT'
+      ? 'DRAFT contract: keep the structure concise while preserving semantic alignment and the no-stills video contract.'
+      : 'STANDARD contract: prioritize clear semantic coverage, shot variation and a clean editorial finish within the configured budget.';
+  const result=await runContentPipeline({projectId:productionRunId,topic,language:channel.language,contentFormat,targetDurationSec:productionProfile.targetDurationSec,targetSceneDurationSec:productionProfile.targetSceneDurationSec,voice:voiceId,maxCostUsd:productionProfile.maxCostUsd,search:runtime.search,model:runtime.model,voiceProvider:runtime.voice,imageProvider:runtime.image,videoProvider:runtime.video,thumbnailComposer:runtime.thumbnailComposer,store:runtime.store,renderer:runtime.renderer,publisher:runtime.publisher,contentArchetype:runtime.archetypeDecision,autoUploadPrivate:process.env.AUTO_UPLOAD_PRIVATE==='true',videoOnly:String(process.env.AUTO_YTB_VIDEO_ONLY||'false').toLowerCase()==='true',sourcedOnly,visualMixPolicy:sourceFirst?'SOURCE_FIRST':'MIXED_MEDIA',packagingGuidance:[packagingGuidance,creativeLearning.guidance].filter(Boolean).join('\n')||undefined,scriptGuidance:[productionProfile.scriptGuidance,sourceFootageGuidance,qualityGuidance].filter(Boolean).join('\n')||undefined,packagingLearning,sourceFootage,additionalCostUsd:()=>runtime.meter?.nonAssetCostUsd??0,minAttentionScore:Number(process.env.MIN_ATTENTION_SCORE||86),maxAttentionRevisionPasses:Number(process.env.MAX_ATTENTION_REVISION_PASSES||2),onProgress:(progress)=>queueProgress({productionRunId,state:progress.state,message:progress.message})});
   if(pendingProgressWrites.size)await Promise.allSettled([...pendingProgressWrites]);
   if(result.state!=='READY_FOR_REVIEW'){
     const blockers=result.events.filter((event)=>event.state==='BLOCKED').map((event)=>event.message).slice(-3).join(' | ')||`Pipeline ended in ${result.state}`;
