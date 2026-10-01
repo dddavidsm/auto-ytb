@@ -21,6 +21,21 @@ function inferSourceType(url:string,title=''):SearchResult['sourceType']{
     return 'reference';
   }catch{return 'unknown';}
 }
+function stripMarkup(value:string){return String(value||'').replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').replace(/&#39;|&apos;/gi,"'").replace(/&lt;/gi,'<').replace(/&gt;/gi,'>').replace(/\s+/g,' ').trim();}
+function stableSearchId(value:string){let hash=2166136261;for(const char of value){hash^=char.charCodeAt(0);hash=Math.imul(hash,16777619);}return(hash>>>0).toString(36);}
+function decodeBingUrl(value:string){try{const url=new URL(stripMarkup(value),'https://www.bing.com');const encoded=url.searchParams.get('u');if(encoded?.startsWith('a1'))return BufferAny.from(encoded.slice(2).replace(/-/g,'+').replace(/_/g,'/'),'base64').toString('utf8');return url.href;}catch{return stripMarkup(value);}}
+async function publicBingSearch(query:string,limit:number,fetchFn:typeof fetch):Promise<SearchResult[]>{
+  const response=await fetchFn(`https://www.bing.com/search?q=${encodeURIComponent(query)}&count=${Math.min(20,Math.max(8,limit))}&setlang=en-US`,{headers:{'user-agent':'Mozilla/5.0 AUTO-YTB research fallback'}});
+  if(!response.ok)throw new Error(`Public research search failed (${response.status})`);
+  const html=await response.text();const results:SearchResult[]=[];const seen=new Set<string>();
+  for(const item of html.match(/<li[^>]*class=["'][^"']*b_algo[^"']*["'][\s\S]*?<\/li>/gi)??[]){
+    const link=item.match(/<h2[\s\S]*?<a[^>]+href=["']([^"']+)["'][\s\S]*?>([\s\S]*?)<\/a>/i);if(!link)continue;
+    const url=decodeBingUrl(link[1]);if(!/^https?:\/\//i.test(url)||/\.bing\.com\//i.test(url)||seen.has(url))continue;
+    const title=stripMarkup(link[2]);const snippet=stripMarkup(item.match(/<p[^>]*>([\s\S]*?)<\/p>/i)?.[1]??'');if(!title||!snippet)continue;
+    seen.add(url);results.push({id:`public-bing-${results.length}-${stableSearchId(url)}`,title,url,snippet,sourceType:inferSourceType(url,title)});if(results.length>=limit)break;
+  }
+  return results;
+}
 function geminiImageAspectRatio(value:string){const map:Record<string,string>={'1:1':'ASPECT_RATIO_ONE_BY_ONE','2:3':'ASPECT_RATIO_TWO_BY_THREE','3:2':'ASPECT_RATIO_THREE_BY_TWO','3:4':'ASPECT_RATIO_THREE_BY_FOUR','4:3':'ASPECT_RATIO_FOUR_BY_THREE','4:5':'ASPECT_RATIO_FOUR_BY_FIVE','5:4':'ASPECT_RATIO_FIVE_BY_FOUR','9:16':'ASPECT_RATIO_NINE_BY_SIXTEEN','16:9':'ASPECT_RATIO_SIXTEEN_BY_NINE','9:21':'ASPECT_RATIO_NINE_BY_TWENTY_ONE','21:9':'ASPECT_RATIO_TWENTY_ONE_BY_NINE'};return map[value]??value;}
 async function request(fetchFn:typeof fetch,url:string,apiKey:string,init:RequestInit={},attempts=4,timeoutMs=120000){
   let last='';for(let i=0;i<attempts;i+=1){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);let response:Response;try{response=await fetchFn(url,{...init,signal:init.signal??controller.signal,headers:{'x-goog-api-key':apiKey,...(init.headers??{})}});}catch(error){if(controller.signal.aborted)throw new Error(`Gemini API request timed out after ${timeoutMs}ms: ${url}`);throw error;}finally{clearTimeout(timer);}if(response.ok)return response;last=`${response.status}: ${(await response.text()).slice(0,800)}`;if(![429,500,502,503,504].includes(response.status))break;await sleep(Math.min(8000,500*2**i));}throw new Error(`Gemini API request failed ${last}`);
@@ -75,10 +90,14 @@ export class GeminiGoogleSearchProvider implements SearchProvider{
   constructor(private readonly options:{apiKey:string;model?:string;endpoint?:string;fetchFn?:typeof fetch}){}
   async search(query:string,options?:{limit?:number;recencyDays?:number;domains?:string[]}):Promise<SearchResult[]>{
     const fetchFn=this.options.fetchFn??fetch;const limit=Math.max(1,Math.min(20,options?.limit??8));const constraints=[options?.recencyDays?`Prefer sources published in the last ${options.recencyDays} days.`:'',options?.domains?.length?`Prefer these domains: ${options.domains.join(', ')}.`:''].filter(Boolean).join(' ');
-    const response=await request(fetchFn,`${baseUrl(this.options.endpoint)}/interactions`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json','Api-Revision':'2026-05-20'},body:JSON.stringify({model:this.options.model??'gemini-3.7-flash',input:`Research this query for a factual video dossier: ${query}. ${constraints} Return a concise synthesis grounded in web sources.`,tools:[{type:'google_search'}]})});
-    const json=await response.json() as any;const seen=new Set<string>();const results:SearchResult[]=[];
-    for(const block of findBlocks(json,'text')){const blockText=String(block.text??'');for(const annotation of block.annotations??[]){if(annotation?.type!=='url_citation'||!annotation.url||seen.has(annotation.url))continue;seen.add(annotation.url);const title=String(annotation.title||new URL(annotation.url).hostname);const start=Number(annotation.start_index??annotation.startIndex??0),end=Number(annotation.end_index??annotation.endIndex??blockText.length);results.push({id:`gemini-${results.length}-${encodeURIComponent(annotation.url).slice(-36)}`,title,url:String(annotation.url),snippet:blockText.slice(Math.max(0,start),Math.max(start,end)).trim()||blockText.slice(0,500),sourceType:inferSourceType(String(annotation.url),title)});if(results.length>=limit)return results;}}
-    return results;
+    try{
+      const response=await request(fetchFn,`${baseUrl(this.options.endpoint)}/interactions`,this.options.apiKey,{method:'POST',headers:{'content-type':'application/json','Api-Revision':'2026-05-20'},body:JSON.stringify({model:this.options.model??'gemini-3.7-flash',input:`Research this query for a factual video dossier: ${query}. ${constraints} Return a concise synthesis grounded in web sources.`,tools:[{type:'google_search'}]})});
+      const json=await response.json() as any;const seen=new Set<string>();const results:SearchResult[]=[];
+      for(const block of findBlocks(json,'text')){const blockText=String(block.text??'');for(const annotation of block.annotations??[]){if(annotation?.type!=='url_citation'||!annotation.url||seen.has(annotation.url))continue;seen.add(annotation.url);const title=String(annotation.title||new URL(annotation.url).hostname);const start=Number(annotation.start_index??annotation.startIndex??0),end=Number(annotation.end_index??annotation.endIndex??blockText.length);results.push({id:`gemini-${results.length}-${encodeURIComponent(annotation.url).slice(-36)}`,title,url:String(annotation.url),snippet:blockText.slice(Math.max(0,start),Math.max(start,end)).trim()||blockText.slice(0,500),sourceType:inferSourceType(String(annotation.url),title)});if(results.length>=limit)return results;}}
+      if(results.length)return results;
+      console.warn(`[research] Gemini returned no citations for "${query.slice(0,100)}"; using public Bing fallback`);
+    }catch(error){console.warn(`[research] Gemini search unavailable for "${query.slice(0,100)}"; using public Bing fallback: ${String(error instanceof Error?error.message:error).slice(0,180)}`);}
+    return publicBingSearch(query,limit,fetchFn);
   }
 }
 
